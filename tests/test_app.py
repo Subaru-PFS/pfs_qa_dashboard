@@ -84,3 +84,16 @@ def testVerdictGridEscapesReasons():
     assert 'title="nLines&lt;100 &amp; &quot;medFwhm&quot;"' in grid
     # Negative control: the raw text, which would end the attribute at its first quote, is not there.
     assert reasons not in grid
+
+
+def testProvenanceAndVisitTextAreEscaped():
+    """The provenance and the visit summary show data from qadb and the thresholds file as text, not markup."""
+    store = _liveStore([[_image(1001, "<i>arc</i>", "t1")]])
+    store.provenance = {"collection": "<b>c</b>", "thresholdLayers": ["a & b"]}
+    dashboard = Dashboard(store)
+    bar = dashboard.provenanceBar().object
+    assert "&lt;b&gt;c&lt;/b&gt;" in bar and "a &amp; b" in bar
+    summary = dashboard._visitSummary(1001)
+    assert "&lt;i&gt;arc&lt;/i&gt;" in summary
+    # Negative control: the raw markup is not there to be rendered.
+    assert "<b>c</b>" not in bar and "<i>arc</i>" not in summary

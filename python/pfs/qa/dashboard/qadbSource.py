@@ -38,12 +38,13 @@ def metricsTableFromQadb(tables: Mapping[str, pd.DataFrame], layers: Mapping[str
     if iq.empty:
         return pd.DataFrame()
     summary, metrics = tables["dmLineResidualSummary"], tables["dmLineResidualMetrics"]
-    hasLines = not summary.empty and not metrics.empty
+    # A read can hold line verdicts and no line metrics (no species with enough lines): keep the verdicts.
+    hasLines = not summary.empty
     return buildMetricsTable(
         iq.drop(columns="decidedAt"),
         layers["iqQaMetrics"],
         summary.drop(columns="decidedAt") if hasLines else None,
-        metrics.drop(columns="decidedAt") if hasLines else None,
+        metrics.drop(columns="decidedAt", errors="ignore") if hasLines else None,
         tables["visitTimes"],
         layers["dmLineResidualMetrics"],
     )
@@ -68,6 +69,10 @@ def writeSnapshot(tables: Mapping[str, pd.DataFrame], directory: Path | str, pro
     """Write what `pfs.drp.qa.qadb.reader.readQadb` read to ``directory``: ``<table>.parquet`` each, and ``provenance.json``."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
+    # The directory is this read only: a table an earlier snapshot there held, and this one doesn't, goes.
+    for stale in directory.glob("*.parquet"):
+        if stale.stem not in tables:
+            stale.unlink()
     for name, frame in tables.items():
         frame.to_parquet(directory / f"{name}.parquet")
     (directory / "provenance.json").write_text(json.dumps(dict(provenance), indent=2, default=str) + "\n")

@@ -273,3 +273,44 @@ def testOpdbFailureKeepsTheNewImages(clock, layers):
     opdb.down = False
     assert store.refresh()
     assert store.visits().set_index("visit").loc[1002, "sequenceKey"] == 78
+
+
+def testLineVerdictsWithoutLineMetricsAreKept(clock, layers):
+    """A read can hold line verdicts and no line metrics (no species with enough lines): the verdicts count."""
+    qadb = FakeQadb()
+    qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1")])
+    withSummary = dict(qadb.read(None))
+    withSummary["dmLineResidualSummary"] = pd.DataFrame(
+        {
+            "visit": [1001],
+            "arm": ["b"],
+            "spectrograph": [1],
+            "qaStatus": ["WARN"],
+            "qaReason": ["calib NeI: too few lines"],
+            "recommendedAction": ["INSUFFICIENT_DATA"],
+            "decidedAt": ["t1"],
+        }
+    )
+    store = QadbMetricsStore(lambda since: withSummary, layers, {}, minInterval=0, clock=clock)
+    images = store.images().set_index("visit")
+    assert images.loc[1001, "status"] == "WARN" and images.loc[1001, "lineStatus"] == "WARN"
+    # Negative control: without the summary the image is the IQ verdict alone.
+    bare = QadbMetricsStore(qadb.read, layers, {}, minInterval=0, clock=clock)
+    assert bare.images().set_index("visit").loc[1001, "status"] == "PASS"
+
+
+def testSnapshotHoldsOnlyItsOwnRead(tmp_path, clock, layers):
+    """Writing a snapshot over an older one leaves none of the older one's tables behind."""
+    qadb = FakeQadb()
+    qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1")])
+    opdb = FakeOpdb({1001: 77})
+    tables = dict(qadb.read(None))
+    tables["opdbVisitTimes"], tables["notes"] = opdb.read([1001])
+    directory = writeSnapshot(tables, tmp_path / "snap", {})
+    assert (directory / "opdbVisitTimes.parquet").exists()
+
+    writeSnapshot(qadb.read(None), directory, {})
+    store = QadbMetricsStore.fromSnapshot(directory)
+    assert not store.hasOpdb
+    # Negative control: the qadb tables of the new read are there.
+    assert (directory / "iqQaMetrics.parquet").exists() and len(store.images()) == 1

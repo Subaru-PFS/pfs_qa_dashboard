@@ -564,15 +564,16 @@ class Dashboard(param.Parameterized):
         prov = self.store.provenance
         thresholds = prov.get("thresholds", {})
         pipeline = thresholds.get("pipelineVersions") or {}
+        esc = lambda value: html.escape(str(value))  # noqa: E731
         parts = [
-            f"<b>Collection</b> {prov.get('collection', '?')}",
-            f"<b>Thresholds</b> {thresholds.get('file', '?')} v{thresholds.get('version', '?')} "
-            f"(derived {thresholds.get('derivedOn', '?')} from runs "
-            f"{', '.join(str(r) for r in thresholds.get('referenceRuns') or [])})",
-            f"<b>Layers</b> {' + '.join(prov.get('thresholdLayers', []))}",
-            "<b>Pipeline</b> " + ", ".join(f"{k} {v}" for k, v in pipeline.items()),
-            f"<b>drp_qa</b> {prov.get('drpQaVersion', '?')}",
-            f"<b>Built</b> {prov.get('builtAt', '?')}",
+            f"<b>Collection</b> {esc(prov.get('collection', '?'))}",
+            f"<b>Thresholds</b> {esc(thresholds.get('file', '?'))} v{esc(thresholds.get('version', '?'))} "
+            f"(derived {esc(thresholds.get('derivedOn', '?'))} from runs "
+            f"{esc(', '.join(str(r) for r in thresholds.get('referenceRuns') or []))})",
+            f"<b>Layers</b> {esc(' + '.join(prov.get('thresholdLayers', [])))}",
+            "<b>Pipeline</b> " + esc(", ".join(f"{k} {v}" for k, v in pipeline.items())),
+            f"<b>drp_qa</b> {esc(prov.get('drpQaVersion', '?'))}",
+            f"<b>Built</b> {esc(prov.get('builtAt', '?'))}",
         ]
         warnings = []
         if not self.store.hasOpdb:
@@ -582,13 +583,13 @@ class Dashboard(param.Parameterized):
                 + ("" if self.visits["timeExpStart"].notna().any() else ", and there are none here")
                 + ", and there are no observers' notes."
             )
-        html = '<div style="font-size:0.85em;line-height:1.5">' + " · ".join(parts) + "</div>"
+        markup = '<div style="font-size:0.85em;line-height:1.5">' + " · ".join(parts) + "</div>"
         for warning in warnings:
-            html += (
+            markup += (
                 '<div style="font-size:0.85em;margin-top:4px;padding:4px 8px;border-left:4px solid '
                 f'{STATUS_COLORS["WARN"]};background:rgba(230,161,0,0.08)">⚠ {warning}</div>'
             )
-        return pn.pane.HTML(html, sizing_mode="stretch_width")
+        return pn.pane.HTML(markup, sizing_mode="stretch_width")
 
     def _imagesOf(self, visit: int) -> pd.DataFrame:
         return self.images[self.images["visit"] == visit]
@@ -629,8 +630,8 @@ class Dashboard(param.Parameterized):
         )
         return (
             f"<div style='font-size:1.4em;font-weight:700'>Visit {visit} {_badge(self._visitStatus(visit))}</div>"
-            f"{when}<div>{info['obsType']} · {info['seqName']} · sequence {info['sequenceKey']} "
-            f"({info['sequenceSource']})</div><div style='margin-top:4px'>{chips}</div>"
+            f"{when}<div>{html.escape(str(info['obsType']))} · {html.escape(str(info['seqName']))} · "
+            f"sequence {info['sequenceKey']} ({info['sequenceSource']})</div><div style='margin-top:4px'>{chips}</div>"
         )
 
     def _notesHtml(self, visit: int) -> str:

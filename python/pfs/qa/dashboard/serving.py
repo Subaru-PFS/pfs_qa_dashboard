@@ -209,7 +209,7 @@ def _lineRows(
     if context:
         metrics = metrics.merge(summary[[*keys, *context]].drop_duplicates(keys), on=keys, how="left")
     rows = metrics.assign(source="dmLineResidualMetrics", population="", reason="")
-    if thresholds:
+    if thresholds and not metrics.empty:
         rows[["warn", "fail", "population"]] = _lineLimits(metrics, thresholds)
     verdicts = summary[["visit", "arm", "spectrograph", "qaStatus", "qaReason", "recommendedAction"]]
     verdicts = verdicts.rename(columns={"qaStatus": "status"})
