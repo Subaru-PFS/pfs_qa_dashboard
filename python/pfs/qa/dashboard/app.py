@@ -1,4 +1,4 @@
-"""The QA dashboard prototype: a Panel app over the metrics table (PIPE2D-1924).
+"""The QA dashboard: a Panel app over the metrics table.
 
 Three tabs:
 
@@ -69,7 +69,7 @@ TRENDS = (
 #: The pipeline's figures, by dataset type, as fetched into ``detailDir/<visit>/``.
 PDF_TYPES = ("extQaStats", "extQaImage", "dmQaResidualPlot", "dmQaCombinedResidualPlot")
 
-#: What the 2026-10-20 search found (PIPE2D-1924), shown where a visit has no detail files.
+#: What the 2026-10-20 search found, shown where a visit has no detail files.
 DETAIL_SEARCH = (
     "Searched 2026-10-20 on pfsa-usr02 `/work/datastore`: `u/wtg/qa-thresholds/010` holds "
     "`dmLineResidualData` and `iqQaData` but no PDFs (extractionQa and dmResiduals were not run "
@@ -1146,7 +1146,7 @@ class Dashboard(param.Parameterized):
         if self.store.live:
             pn.state.add_periodic_callback(self.refresh, period=int(self.refreshSeconds * 1000))
         return pn.template.FastListTemplate(
-            title="PFS QA dashboard (PIPE2D-1924)",
+            title="PFS QA dashboard",
             main=[self.provenanceBar(), self.tabs],
             accent="#3b6ea8",
             theme_toggle=True,

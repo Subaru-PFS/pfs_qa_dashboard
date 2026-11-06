@@ -376,7 +376,7 @@ def taskThresholds() -> tuple[dict[str, list], dict[str, str]]:
             sources[key] = f"{name} defaults, read from source"
     layers = {}
     for key, config in configs.items():
-        # The task's own layers: thresholdsFile, then extraThresholdsFiles (the IIS file, PIPE2D-1954).
+        # The task's own layers: thresholdsFile, then extraThresholdsFiles (the IIS file).
         files = [thresholdsPath(name) for name in thresholdsNames(config)]
         sources[key] += "; " + " + ".join([*(path.name for path in files), "config fields"])
         if key == "iqQaMetrics":

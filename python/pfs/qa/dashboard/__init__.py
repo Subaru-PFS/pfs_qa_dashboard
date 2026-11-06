@@ -1,4 +1,4 @@
-"""The PFS QA dashboard (PIPE2D-1924).
+"""The PFS QA dashboard.
 
 drp_qa's `pfs.drp.qa.qadb.reader` reads a collection's QA results from qadb;
 `qadbSource` builds them into the metrics table (and writes and reads snapshots

@@ -1,4 +1,4 @@
-"""The metrics table of a collection in qadb, kept up to date while a run is observed (PIPE2D-1924).
+"""The metrics table of a collection in qadb, kept up to date while a run is observed.
 
 `QadbMetricsStore` is a `store.MetricsStore` whose `refresh` reads from qadb
 only the images loaded since the last read (`pfs.drp.qa.qadb.reader.readQadb`'s ``since``)

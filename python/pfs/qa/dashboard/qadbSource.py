@@ -1,6 +1,6 @@
-"""Turn what drp_qa reads back from qadb into the dashboard's metrics table (PIPE2D-1924).
+"""Turn what drp_qa reads back from qadb into the dashboard's metrics table.
 
-During a run qaActor loads every visit it judges into qadb (INSTRM-3040);
+During a run qaActor loads every visit it judges into qadb;
 `pfs.drp.qa.qadb.reader.readQadb` reads them back in the Butler tables' shapes,
 and `metricsTableFromQadb` builds them into the metrics table
 (`serving.buildMetricsTable`). A run judged after the fact is loaded into a qadb

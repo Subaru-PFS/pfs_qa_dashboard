@@ -17,8 +17,8 @@ __all__ = ["VERDICT_SOURCES", "MetricsStore", "emptyMetricsTable", "visitTimelin
 #: Sources whose verdicts roll up into an image's status.
 VERDICT_SOURCES = ("iqQaMetrics", "dmLineResidualSummary")
 
-# Worst verdict of an image over VERDICT_SOURCES. Standing in for the visit
-# rollup of PIPE2D-1923 (qaVisitSummary), which should store it in the metrics table.
+# Worst verdict of an image over VERDICT_SOURCES. Standing in for a stored visit
+# rollup (qaVisitSummary), which should put it in the metrics table.
 _RANK = "CASE status WHEN 'FAIL' THEN 3 WHEN 'WARN' THEN 2 WHEN 'PASS' THEN 1 ELSE 0 END"
 _IMAGES_SQL = f"""
 SELECT visit, arm, spectrograph,
