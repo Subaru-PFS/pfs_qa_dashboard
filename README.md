@@ -58,3 +58,8 @@ uv run --no-project --with ruff==0.14.13 ruff check . && uv run --no-project --w
 ```
 
 CI runs both, against the drp_qa named by `DRP_QA_REF` in `.github/workflows/tests.yml`.
+
+## Versions
+
+Releases are `vMAJOR.MINOR.PATCH` git tags ([Semantic Versioning](https://semver.org)), with `version` in
+`pyproject.toml` to match; user-visible changes go under `## [Unreleased]` in `CHANGELOG.md` until then.
