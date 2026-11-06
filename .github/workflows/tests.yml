@@ -1,0 +1,59 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The drp_qa the dashboard reads qadb and judges with (pfs.drp.qa.qadb.reader,
+  # pfs.drp.qa.metrics). Until drp_qa#112 merges it is that PR's branch; then a
+  # weekly tag.
+  DRP_QA_REF: tickets/PIPE2D-1924
+
+jobs:
+  tests:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # drp_qa and pfs_utils are not installable from PyPI, and drp_qa's own
+      # install would pull pfs_utils' dependencies from git: put drp_qa's
+      # python/ on PYTHONPATH, and install pfs_utils without its dependencies,
+      # as drp_qa's CI does.
+      - uses: actions/checkout@v4
+        with:
+          repository: Subaru-PFS/drp_qa
+          ref: ${{ env.DRP_QA_REF }}
+          path: drp_qa
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps "pfs-utils @ git+https://github.com/Subaru-PFS/pfs_utils.git"
+          python -m pip install numpy pandas pyarrow pyyaml scipy sqlalchemy duckdb panel holoviews \
+            datashader matplotlib pytest
+
+      - name: Run tests
+        env:
+          PYTHONPATH: python:drp_qa/python
+        run: pytest -v tests
