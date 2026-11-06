@@ -15,9 +15,8 @@ concurrency:
 
 env:
   # The drp_qa the dashboard reads qadb and judges with (pfs.drp.qa.qadb.reader,
-  # pfs.drp.qa.metrics). Until drp_qa#112 merges it is that PR's branch; then a
-  # weekly tag.
-  DRP_QA_REF: tickets/PIPE2D-1924
+  # pfs.drp.qa.metrics): a release tag, the first that has both.
+  DRP_QA_REF: 0.1.3
 
 jobs:
   tests:

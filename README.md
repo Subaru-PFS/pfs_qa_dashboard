@@ -61,5 +61,5 @@ CI runs both, against the drp_qa named by `DRP_QA_REF` in `.github/workflows/tes
 
 ## Versions
 
-Releases are `vMAJOR.MINOR.PATCH` git tags ([Semantic Versioning](https://semver.org)), with `version` in
+Releases are `MAJOR.MINOR.PATCH` git tags ([Semantic Versioning](https://semver.org)), with `version` in
 `pyproject.toml` to match; user-visible changes go under `## [Unreleased]` in `CHANGELOG.md` until then.
