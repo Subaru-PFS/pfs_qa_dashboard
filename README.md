@@ -15,7 +15,7 @@ LSST/PFS stack, or their checkouts' `python/` on `PYTHONPATH`. For example, stac
 ```bash
 PYTHONPATH=python:<drp_qa>/python:<pfs_utils>/python uv run --no-project --python 3.12 \
     --with numpy,pandas,pyarrow,pyyaml,scipy,sqlalchemy,duckdb,panel,holoviews,datashader,'psycopg[binary]' \
-    python bin/qaDashboard.py ...
+    python bin/qaDashboard.py {serve,snapshot} ...
 ```
 
 **Live, from qadb.** qaActor loads every visit it judges into qadb. The dashboard reads a collection
@@ -32,19 +32,19 @@ visit is judged, so each refresh re-reads them for the latest 300 visits. Withou
 
 ```bash
 # Read-only users; credentials in ~/.pgpass
-python bin/qaDashboard.py --collection qaActor/reductions --first-visit <first visit of the run> \
+python bin/qaDashboard.py serve --collection qaActor/reductions --first-visit <first visit of the run> \
     --qadb-host 127.0.0.1 --qadb-port 5436 --opdb-host 127.0.0.1 --opdb-port 5432 [--refresh 30]
 ```
 
-**Offline, from a snapshot.** `--write-snapshot <dir>` reads the collection once and writes what was read, one
+**Offline, from a snapshot.** `snapshot --out <dir>` reads the collection once and writes what was read, one
 parquet file per table (with the opdb's times and notes, given `--opdb-host`), and `provenance.json` (the thresholds
-file and drp_qa version, the databases and the time read). `--snapshot <dir>` serves it without a database. A run
+file and drp_qa version, the databases and the time read). `serve --snapshot <dir>` serves it without a database. A run
 judged after the fact is loaded into a qadb first (drp_qa's `bin.src/loadQadb.py`; a local copy will do).
 
 ```bash
-python bin/qaDashboard.py --collection <collection> --write-snapshot <dir> [--qadb-... as above]
+python bin/qaDashboard.py snapshot --collection <collection> --out <dir> [--qadb-... as above]
 # --detail-dir/<visit>/ may hold fetched PDFs and dmLineResidualData
-python bin/qaDashboard.py --snapshot <dir> [--detail-dir <dir>] [--start-visit <visit>]
+python bin/qaDashboard.py serve --snapshot <dir> [--detail-dir <dir>] [--start-visit <visit>]
 ```
 
 The server listens on localhost:5006; add `--address 0.0.0.0 --allow-origin <host>` to serve the network.

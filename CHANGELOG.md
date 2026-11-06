@@ -14,10 +14,10 @@ All notable changes to this project are documented here. The format follows
   (verdict heat map and trends over a visit or HST range, each value with its thresholds) and Visit (a check ×
   camera verdict grid, each value's distance past FAIL, the pipeline's PDFs, line residuals rasterised with
   Datashader) tabs, over one long-format metrics table queried with DuckDB.
-- **Live from qadb** (`--collection`): reads a collection through drp_qa's `pfs.drp.qa.qadb.reader` and every
+- **Live from qadb** (`qaDashboard.py serve --collection`): reads a collection through drp_qa's `pfs.drp.qa.qadb.reader` and every
   `--refresh` seconds only the images loaded since, one read for every session; the Live tab follows the latest
   visit.
 - **The opdb** (`--opdb-host`): each visit's IIC sequence, SpS start time and observers' notes, the notes re-read for
   recent visits.
-- **Snapshots** (`--write-snapshot DIR`, `--snapshot DIR`): one read saved as parquet with `provenance.json`, served
-  without a database.
+- **Snapshots** (`qaDashboard.py snapshot --out DIR`, then `serve --snapshot DIR`): one read saved as parquet with
+  `provenance.json`, served without a database.
