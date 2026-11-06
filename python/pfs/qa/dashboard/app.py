@@ -69,14 +69,6 @@ TRENDS = (
 #: The pipeline's figures, by dataset type, as fetched into ``detailDir/<visit>/``.
 PDF_TYPES = ("extQaStats", "extQaImage", "dmQaResidualPlot", "dmQaCombinedResidualPlot")
 
-#: What the 2026-10-20 search found, shown where a visit has no detail files.
-DETAIL_SEARCH = (
-    "Searched 2026-10-20 on pfsa-usr02 `/work/datastore`: `u/wtg/qa-thresholds/010` holds "
-    "`dmLineResidualData` and `iqQaData` but no PDFs (extractionQa and dmResiduals were not run "
-    "there); `drpActor/reductions`, `qaActor/reductions` and `PFS/defaults` hold none of them for "
-    "visits 140005, 140141 and 134336. `dmLineResidualData` was fetched for those three visits only."
-)
-
 _STATUS_RANK = {status: rank for rank, status in enumerate(IMAGE_STATUS_ORDER)}
 
 
@@ -1047,10 +1039,9 @@ class Dashboard(param.Parameterized):
                     pdfs
                     or [
                         pn.pane.Markdown(
-                            f"**No PDFs fetched for visit {visit}.** The pipeline writes "
+                            f"**No PDFs for visit {visit}.** The pipeline's "
                             + ", ".join(f"`{kind}`" for kind in PDF_TYPES)
-                            + "; the dashboard would show them here, fetched from the Butler for this dataId "
-                            "only when this tab opens and cached on the dataset UUID.\n\n" + DETAIL_SEARCH
+                            + " show here when they are in `--detail-dir`/<visit>/."
                         )
                     ]
                 ),
@@ -1096,11 +1087,9 @@ class Dashboard(param.Parameterized):
                 )
             else:
                 lineDetail = pn.pane.Markdown(
-                    f"**No line residuals fetched for visit {visit}.** Here: `dmLineResidualData` (one row "
-                    "per line or trace centroid, ~5×10⁴–3×10⁵ per detector) drawn as detector position × "
-                    "residual against `detectorMap_calib` or the visit's detectorMap, rasterised "
-                    "server-side with Datashader. Read from the Butler for this dataId only.\n\n"
-                    + DETAIL_SEARCH
+                    f"**No line residuals for visit {visit}.** `dmLineResidualData` (one row per line or "
+                    "trace centroid) shows here, rasterised by detector position, when it is in "
+                    "`--detail-dir`/<visit>/."
                 )
 
             return pn.Column(
