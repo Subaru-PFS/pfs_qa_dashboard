@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **One page** — the app is the provenance strip and the verdicts so far: the images counted by status, worst
+  first, the visits' range and HST span, and the latest visit judged with its status and HST time. The views are
+  built up on this one at a time, from what is wanted.
+
+### Removed
+
+- **The prototype's Live, Run and Visit tabs**, `serve --detail-dir` and `--start-visit`, and the HoloViews and
+  Datashader dependencies. They stay at tag `0.1.0`.
+
 ## [0.1.0] - 2026-11-06
 
 ### Added

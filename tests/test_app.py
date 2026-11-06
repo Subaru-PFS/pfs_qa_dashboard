@@ -1,18 +1,13 @@
 """Tests of the dashboard app (`pfs.qa.dashboard.app`) over a live store fed by a stand-in for qadb."""
 
-import holoviews as hv
 import pandas as pd
-import panel as pn
 
-from pfs.qa.dashboard.app import Dashboard, verdictGrid
+from pfs.qa.dashboard.app import Dashboard, verdictCounts
 from pfs.qa.dashboard.live import QadbMetricsStore
 from pfs.qa.dashboard.serving import taskThresholds
 
-# As the app's main does.
-hv.extension("bokeh")
 
-
-def _image(visit, obsType, decidedAt):
+def _image(visit, obsType, decidedAt, status="PASS", reason=""):
     return {
         "visit": visit,
         "arm": "b",
@@ -24,8 +19,8 @@ def _image(visit, obsType, decidedAt):
         **dict.fromkeys(
             ("medFwhm", "medDxCenter", "dxCenterRms", "pctFlagged", "linesPerFiber", "nLines"), float("nan")
         ),
-        "qaStatus": "PASS",
-        "qaReason": "",
+        "qaStatus": status,
+        "qaReason": reason,
         "calexpRun": "",
         "decidedAt": decidedAt,
     }
@@ -56,44 +51,52 @@ def _liveStore(loads):
     return QadbMetricsStore(read, taskThresholds()[0], {}, minInterval=0)
 
 
-def testRunTabFollowsLiveVisits():
-    """The Run tab's visit range and exposure types take in visits loaded after it was built."""
+def testVerdictCountsEveryStatusWorstFirst():
+    images = pd.DataFrame({"status": ["PASS", "PASS", "WARN", "FAIL", "PASS"]})
+    counts = verdictCounts(images)
+    assert list(counts.index) == ["FAIL", "WARN", "PASS", "UNKNOWN"]
+    assert counts.to_dict() == {"FAIL": 1, "WARN": 1, "PASS": 3, "UNKNOWN": 0}
+    # Negative control: an empty table counts nothing, but still names every status.
+    assert verdictCounts(images.iloc[:0]).to_dict() == {"FAIL": 0, "WARN": 0, "PASS": 0, "UNKNOWN": 0}
+
+
+def testSummaryFollowsLiveVisits():
+    """The summary counts the visits loaded after it was built, and names the latest with its HST time."""
     loads = [[_image(1001, "bias", "t1")]]
     dashboard = Dashboard(_liveStore(loads))
-    runTab = dashboard.runTab()
-    [visitRange] = runTab.select(pn.widgets.IntRangeSlider)
-    [obsType] = [w for w in runTab.select(pn.widgets.MultiChoice) if w.name == "Exposure type"]
-    # One visit: the slider still needs an end past its start.
-    assert visitRange.end > visitRange.start
-    assert visitRange.value == (1001, 1001)
+    before = dashboard.summaryHtml()
+    assert "1 PASS images" not in before  # the count is the tile's value, the label names the status
+    assert (
+        ">1<" in before and "PASS images" in before and "latest visit ✓ PASS, 2026-11-01 19:01 HST" in before
+    )
 
-    obsType.value = []  # the user leaves out biases
-    loads.append([_image(1002, "arc", "t2")])
+    loads.append([_image(1002, "arc", "t2", "FAIL", "nLines<100")])
     dashboard.refresh()
-    assert visitRange.end == 1002 and visitRange.value == (1001, 1002)
-    assert obsType.options == ["arc", "bias"]
-    assert obsType.value == ["arc"]
-    # Negative control: the type the user left out stays out.
-    assert "bias" not in obsType.value
+    after = dashboard.summaryHtml()
+    assert dashboard.dataVersion == 1
+    assert "FAIL images" in after and "latest visit ✕ FAIL, 2026-11-01 19:02 HST" in after
+    assert "visits, 1001–1002" in after
+    # Negative control: the earlier summary did not know the second visit.
+    assert "1002" not in before
 
 
-def testVerdictGridEscapesReasons():
-    reasons = 'nLines<100 & "medFwhm"'
-    images = pd.DataFrame({"arm": ["b"], "spectrograph": [1], "status": ["WARN"], "reasons": [reasons]})
-    grid = verdictGrid(images)
-    assert 'title="nLines&lt;100 &amp; &quot;medFwhm&quot;"' in grid
-    # Negative control: the raw text, which would end the attribute at its first quote, is not there.
-    assert reasons not in grid
+def testRefreshWithoutNewLoadsChangesNothing():
+    dashboard = Dashboard(_liveStore([[_image(1001, "bias", "t1")]]))
+    dashboard.refresh()
+    assert dashboard.dataVersion == 0
 
 
-def testProvenanceAndVisitTextAreEscaped():
-    """The provenance and the visit summary show data from qadb and the thresholds file as text, not markup."""
+def testProvenanceAndSummaryAreEscaped():
+    """The provenance and the summary show data from qadb and the thresholds file as text, not markup."""
     store = _liveStore([[_image(1001, "<i>arc</i>", "t1")]])
     store.provenance = {"collection": "<b>c</b>", "thresholdLayers": ["a & b"]}
     dashboard = Dashboard(store)
     bar = dashboard.provenanceBar().object
     assert "&lt;b&gt;c&lt;/b&gt;" in bar and "a &amp; b" in bar
-    summary = dashboard._visitSummary(1001)
-    assert "&lt;i&gt;arc&lt;/i&gt;" in summary
     # Negative control: the raw markup is not there to be rendered.
-    assert "<b>c</b>" not in bar and "<i>arc</i>" not in summary
+    assert "<b>c</b>" not in bar
+
+
+def testEmptyStoreSaysSo():
+    dashboard = Dashboard(_liveStore([]))
+    assert "No visit in qadb yet" in dashboard.summaryHtml()
