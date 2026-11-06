@@ -1,0 +1,115 @@
+[project]
+name = "pfs-qa-dashboard"
+version = "0.1.0"
+description = "Browser dashboard of the PFS image QA gate, live from qadb"
+authors = [{ name = "Subaru PFS DRP Team" }]
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "PFS Collaboration" }
+classifiers = [
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+
+# drp_qa (pfs.drp.qa) and pfs_utils are needed too. Neither is installable from
+# PyPI: they come from the LSST/PFS stack or from checkouts on PYTHONPATH.
+dependencies = [
+    "numpy >= 2.0",
+    "pandas",
+    "pyarrow",
+    "pyyaml",
+    "scipy",
+    "sqlalchemy",
+    "duckdb",
+    "panel",
+    "holoviews",
+    "datashader",
+    "psycopg[binary]",
+]
+
+[project.optional-dependencies]
+dev = ["ruff==0.14.13", "pytest>=8.0.0"]
+
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["pfs.qa*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 110
+src = ["python"]
+
+[tool.ruff.lint]
+# Selected rule sets (https://docs.astral.sh/ruff/rules/)
+select = [
+    "E", # pycodestyle errors
+    "W", # pycodestyle warnings
+    "F", # Pyflakes (catches unused imports, undefined variables)
+    "I", # isort (automatically sorts and groups your imports)
+    "N", # pep8-naming (enforces standard Class/variable naming)
+    "D", # pydocstyle (docstring compliance)
+    "UP", # pyupgrade (forces clean, modern Python 3.12 syntax upgrades)
+    "B", # flake8-bugbear (flags common design flaws and sneaky bugs)
+    "C4", # flake8-comprehensions (optimizes list/dict allocations)
+    "SIM", # flake8-simplify (suggests structural code simplifications)
+    "RUF", # Ruff-specific quality checks
+]
+
+ignore = [
+    # Missing-docstring rules we don't enforce.
+    "D100", # Missing docstring in public module (optional, turn off for strict requirements)
+    "D101",
+    "D102",
+    "D103",
+    "D104", # Missing docstring in public package
+    "D105",
+    "D107",
+    # LSST/PFS house style is camelCase for modules, methods, arguments and
+    # variables, which pep8-naming flags by design. Carried over from the
+    # former setup.cfg [flake8] ignore list.
+    "N802", # Function name should be lowercase
+    "N803", # Argument name should be lowercase
+    "N806", # Variable in function should be lowercase
+    "N812", # Lowercase imported as non-lowercase
+    "N813", # CamelCase imported as lowercase
+    "N815", # mixedCase variable in class scope
+    "N816", # mixedCase variable in global scope
+    "N999", # Invalid module name (e.g. dmLineResiduals.py, imageQualityQa.py)
+    # Reserved for the EM/TRY rule sets, which are not selected above.
+    "EM101",
+    "TRY003",
+    # Greek letters and typographic dashes are intentional in plot labels and
+    # docstrings for a scientific package (e.g. "2.5σ", "b–r").
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    # `ruff format` already enforces `line-length` for code. What E501 still
+    # catches is what the formatter deliberately will not split: long regex
+    # patterns, report/plot-title strings and URLs. Breaking those up hurts
+    # readability and, for regexes, invites transcription errors. Ruff's own
+    # docs recommend disabling E501 when the formatter is in use.
+    "E501",
+]
+
+[tool.ruff.lint.pydocstyle]
+# Enforces the NumPy docstring convention you requested
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+# Relax strict rules and docstring requirements inside your unit tests
+"tests/**/*.py" = ["D101", "D102", "D103", "S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pfs"]
+
+# ==============================================================================
+# PYTEST CONFIGURATION
+# ==============================================================================
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --import-mode=importlib"
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
