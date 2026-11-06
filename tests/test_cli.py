@@ -82,3 +82,24 @@ def testSnapshotWritesWhatServeReads(tmp_path, monkeypatch):
     # Negative control: a snapshot needs somewhere to go.
     with pytest.raises(SystemExit):
         _cli().makeParser().parse_args(["snapshot", "--collection", "c"])
+
+
+def testServeRefusesADirectoryThatIsNotASnapshot(tmp_path, monkeypatch, capsys):
+    """``serve --snapshot`` names the snapshot command when the directory holds no snapshot."""
+    cli = _cli()
+    served = []
+    monkeypatch.setattr(cli, "serve", served.append)
+    with pytest.raises(SystemExit):
+        cli.main(["serve", "--snapshot", str(tmp_path / "missing")])
+    error = capsys.readouterr().err
+    assert "is not a snapshot" in error and "qaDashboard.py snapshot" in error
+    assert not served
+
+    # Negative control: a directory the snapshot command wrote is served.
+    monkeypatch.setitem(
+        sys.modules, "pfs.utils.database.qadb", types.SimpleNamespace(QaDB=lambda **kwargs: object())
+    )
+    monkeypatch.setattr(pfs.drp.qa.qadb.reader, "readQadb", _read)
+    cli.main(["snapshot", "--collection", "c", "--out", str(tmp_path / "snap")])
+    cli.main(["serve", "--snapshot", str(tmp_path / "snap")])
+    assert served and served[0].snapshot == tmp_path / "snap"

@@ -81,7 +81,17 @@ def makeParser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    args = makeParser().parse_args(argv)
+    parser = makeParser()
+    args = parser.parse_args(argv)
+    if args.command == "serve" and args.snapshot is not None:
+        missing = [
+            name for name in ("provenance.json", "iqQaMetrics.parquet") if not (args.snapshot / name).exists()
+        ]
+        if missing:
+            parser.error(
+                f"{args.snapshot} is not a snapshot (no {', '.join(missing)}): write one with "
+                f"`qaDashboard.py snapshot --collection <collection> --out {args.snapshot}`"
+            )
     if args.command == "snapshot":
         snapshot(args)
     else:
