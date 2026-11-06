@@ -18,7 +18,7 @@ PYTHONPATH=python:<drp_qa>/python:<pfs_utils>/python uv run --no-project --pytho
     python bin/qaDashboard.py ...
 ```
 
-**Live, from qadb.** qaActor loads every visit it judges into qadb (INSTRM-3040). The dashboard reads a collection
+**Live, from qadb.** qaActor loads every visit it judges into qadb. The dashboard reads a collection
 back (`pfs.drp.qa.qadb.reader.readQadb`) and every `--refresh` seconds reads only the images loaded since
 (`qa_gate.decided_at`), so the Live tab follows the latest visit and the Run tab's range grows with the run. One read
 serves every browser session. An image judged in more than one RUN of the collection shows the latest. Each
