@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-06
+
 ### Changed
 
 - **One page** — the app is the provenance strip and the verdicts so far: the images counted by status, worst
