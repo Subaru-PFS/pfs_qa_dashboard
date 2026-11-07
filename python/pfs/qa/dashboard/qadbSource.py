@@ -13,7 +13,7 @@ as qadb holds no IIC sequence.
 """
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 
 import pandas as pd
@@ -23,16 +23,17 @@ from pfs.qa.dashboard.serving import buildMetricsTable, inferSequences
 __all__ = ["metricsTableFromQadb", "readSnapshot", "withSequences", "writeSnapshot"]
 
 
-def metricsTableFromQadb(tables: Mapping[str, pd.DataFrame], layers: Mapping[str, Sequence]) -> pd.DataFrame:
+def metricsTableFromQadb(tables: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     """Return the metrics table for what `pfs.drp.qa.qadb.reader.readQadb` read; empty when it read no image.
+
+    Each value's limits are those of the thresholds its image cites, read with
+    the images (``thresholds``). A read without them (a snapshot written before
+    they were read back) has values and verdicts, and no limits.
 
     Parameters
     ----------
     tables : mapping
         From `pfs.drp.qa.qadb.reader.readQadb`.
-    layers : mapping
-        The thresholds each task judges with, as `serving.taskThresholds`
-        returns them, to record each metric's limits beside its stored value.
     """
     iq = tables["iqQaMetrics"]
     if iq.empty:
@@ -42,11 +43,10 @@ def metricsTableFromQadb(tables: Mapping[str, pd.DataFrame], layers: Mapping[str
     hasLines = not summary.empty
     return buildMetricsTable(
         iq.drop(columns="decidedAt"),
-        layers["iqQaMetrics"],
+        tables.get("thresholds"),
         summary.drop(columns="decidedAt") if hasLines else None,
         metrics.drop(columns="decidedAt", errors="ignore") if hasLines else None,
         tables["visitTimes"],
-        layers["dmLineResidualMetrics"],
     )
 
 
