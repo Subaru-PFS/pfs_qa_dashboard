@@ -14,13 +14,16 @@ with.
 ## Running it
 
 The dashboard needs drp_qa (`pfs.drp.qa`, with `pfs.drp.qa.qadb.reader`) and pfs_utils importable: set up in the
-LSST/PFS stack, or their checkouts' `python/` on `PYTHONPATH`. For example, stack-free with uv:
+LSST/PFS stack, or their checkouts' `python/` on `PYTHONPATH`. Stack-free, [uv](https://docs.astral.sh/uv/) makes
+`.venv` from `pyproject.toml` on its own Python, apart from the system's:
 
 ```bash
-PYTHONPATH=python:<drp_qa>/python:<pfs_utils>/python uv run --no-project --python 3.12 \
-    --with numpy,pandas,pyarrow,pyyaml,scipy,sqlalchemy,duckdb,panel,'psycopg[binary]' \
-    python bin/qaDashboard.py {serve,snapshot} ...
+uv sync --python 3.12 --managed-python
+PYTHONPATH=<drp_qa>/python:<pfs_utils>/python .venv/bin/python bin/qaDashboard.py {serve,snapshot} ...
 ```
+
+or, without a venv, `uv run --no-project --python 3.12 --with numpy,pandas,pyarrow,pyyaml,scipy,sqlalchemy,duckdb,panel,'psycopg[binary]'`
+with `python:` first on `PYTHONPATH`.
 
 **Live, from qadb.** qaActor loads every visit it judges into qadb. The dashboard reads a collection
 back (`pfs.drp.qa.qadb.reader.readQadb`) and every `--refresh` seconds reads only the images loaded since
