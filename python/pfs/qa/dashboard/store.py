@@ -87,7 +87,7 @@ class MetricsStore:
 
     def _query(self, sql: str, **params) -> pd.DataFrame:
         frame = self._db.execute(sql, params).df()
-        # Plain object strings: HoloViews reshapes columns, which Arrow-backed strings refuse.
+        # Plain object strings, which every pane and test handles alike; Arrow-backed strings trip some.
         strings = frame.select_dtypes(include=["string"]).columns
         return frame.astype(dict.fromkeys(strings, object))
 

@@ -1,6 +1,10 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "pfs-qa-dashboard"
-version = "0.1.0"
+version = "0.2.0"
 description = "Browser dashboard of the PFS image QA gate, live from qadb"
 authors = [{ name = "Subaru PFS DRP Team" }]
 readme = "README.md"
@@ -23,8 +27,6 @@ dependencies = [
     "sqlalchemy",
     "duckdb",
     "panel",
-    "holoviews",
-    "datashader",
     "psycopg[binary]",
 ]
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 r"""The QA dashboard: serve it live from qadb or from a snapshot, or save a snapshot of a qadb read.
 
-Stack-free; needs panel, holoviews, datashader and duckdb, and psycopg for qadb.
+Stack-free; needs panel and duckdb, and psycopg for qadb.
 
 Examples::
 
@@ -11,11 +11,10 @@ Examples::
         --qadb-host 127.0.0.1 --qadb-port 5436 --opdb-host 127.0.0.1 --opdb-port 5432
     # Read it once into a snapshot (parquet and provenance.json), then serve that offline
     python bin/qaDashboard.py snapshot --collection qaActor/reductions --opdb-host 127.0.0.1 --out run31-qadb
-    python bin/qaDashboard.py serve --snapshot run31-qadb --detail-dir detail
+    python bin/qaDashboard.py serve --snapshot run31-qadb
 
 then open http://localhost:5006. To serve the local network, add
-``--address 0.0.0.0 --allow-origin <this host's name or IP>``. ``--detail-dir/<visit>/`` may hold the
-visit's fetched PDFs (``extQaStats*.pdf``, ...) and ``dmLineResidualData*.parquet``.
+``--address 0.0.0.0 --allow-origin <this host's name or IP>``.
 """
 
 import argparse
@@ -54,7 +53,6 @@ def makeParser() -> argparse.ArgumentParser:
         "--snapshot", type=Path, metavar="DIR", help="a snapshot written by the snapshot command"
     )
     serve.add_argument("--refresh", type=float, default=30.0, help="seconds between qadb reads (default 30)")
-    serve.add_argument("--detail-dir", type=Path, help="per-visit detail files")
     serve.add_argument("--port", type=int, default=5006)
     serve.add_argument(
         "--address", default="localhost", help="interface to listen on; 0.0.0.0 for the local network"
@@ -64,9 +62,6 @@ def makeParser() -> argparse.ArgumentParser:
         nargs="*",
         default=[],
         help="extra host[:port] names browsers may use for this server ('*' for any), with --address 0.0.0.0",
-    )
-    serve.add_argument(
-        "--start-visit", type=int, help="visit the Live replay starts at (or the first after it)"
     )
     serve.add_argument("--show", action="store_true", help="open a browser")
 
@@ -145,7 +140,7 @@ def serve(args: argparse.Namespace) -> None:
     origins += [origin if ":" in origin else f"{origin}:{args.port}" for origin in args.allow_origin]
     print(f"Serving on {args.address}:{args.port}, for {', '.join(origins)}", flush=True)
     pn.serve(
-        lambda: createApp(store, args.detail_dir, args.start_visit, args.refresh),
+        lambda: createApp(store, args.refresh),
         address=args.address,
         port=args.port,
         show=args.show,
