@@ -16,8 +16,8 @@ concurrency:
 env:
   # The drp_qa the dashboard reads qadb with (pfs.drp.qa.qadb.reader, with its thresholds
   # tables) and matches images to entries with (pfs.drp.qa.metrics.gate): a release tag, the
-  # first that has both. TODO(PIPE2D-1988): the ticket branch until that drp_qa is released.
-  DRP_QA_REF: tickets/PIPE2D-1988
+  # first that has both.
+  DRP_QA_REF: 0.1.4
 
 jobs:
   tests:
