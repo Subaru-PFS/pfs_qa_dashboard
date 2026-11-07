@@ -14,9 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The drp_qa the dashboard reads qadb and judges with (pfs.drp.qa.qadb.reader,
-  # pfs.drp.qa.metrics): a release tag, the first that has both.
-  DRP_QA_REF: 0.1.3
+  # The drp_qa the dashboard reads qadb with (pfs.drp.qa.qadb.reader, with its thresholds
+  # tables) and matches images to entries with (pfs.drp.qa.metrics.gate): a release tag, the
+  # first that has both.
+  DRP_QA_REF: 0.1.4
 
 jobs:
   tests:

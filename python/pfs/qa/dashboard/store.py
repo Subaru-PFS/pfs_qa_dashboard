@@ -53,6 +53,9 @@ class MetricsStore:
         What the app's provenance bar shows (``collection``, ``thresholds``, ...).
     notes : `pandas.DataFrame`, optional
         opdb's notes on the visits (`pfs.qa.dashboard.serving.noteRows`); none by default.
+    thresholdsFiles : `pandas.DataFrame`, optional
+        The thresholds files the images cite, as `pfs.drp.qa.qadb.reader.readQadb` returns
+        them (``thresholdsFiles``), for the provenance strip; none by default.
     """
 
     #: Whether `refresh` can bring new visits (`pfs.qa.dashboard.live.QadbMetricsStore` over qadb).
@@ -69,10 +72,12 @@ class MetricsStore:
         table: pd.DataFrame | None = None,
         provenance: Mapping | None = None,
         notes: pd.DataFrame | None = None,
+        thresholdsFiles: pd.DataFrame | None = None,
     ):
         self.table = emptyMetricsTable() if table is None else table
         self.provenance = dict(provenance or {})
         self.noteTable = pd.DataFrame(columns=NOTE_COLUMNS) if notes is None else notes
+        self.thresholdsFiles = pd.DataFrame() if thresholdsFiles is None else thresholdsFiles
         self._db = duckdb.connect()
         self._register()
 

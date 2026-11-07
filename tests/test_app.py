@@ -2,9 +2,8 @@
 
 import pandas as pd
 
-from pfs.qa.dashboard.app import Dashboard, verdictCounts
+from pfs.qa.dashboard.app import Dashboard, thresholdsLines, verdictCounts
 from pfs.qa.dashboard.live import QadbMetricsStore
-from pfs.qa.dashboard.serving import taskThresholds
 
 
 def _image(visit, obsType, decidedAt, status="PASS", reason=""):
@@ -48,7 +47,7 @@ def _liveStore(loads):
             ),
         }
 
-    return QadbMetricsStore(read, taskThresholds()[0], {}, minInterval=0)
+    return QadbMetricsStore(read, {}, minInterval=0)
 
 
 def testVerdictCountsEveryStatusWorstFirst():
@@ -86,15 +85,33 @@ def testRefreshWithoutNewLoadsChangesNothing():
     assert dashboard.dataVersion == 0
 
 
-def testProvenanceAndSummaryAreEscaped():
-    """The provenance and the summary show data from qadb and the thresholds file as text, not markup."""
+def testProvenanceAndSummaryAreEscaped(makeThresholdsFiles):
+    """The provenance and the summary show data from qadb and the thresholds files as text, not markup."""
     store = _liveStore([[_image(1001, "<i>arc</i>", "t1")]])
-    store.provenance = {"collection": "<b>c</b>", "thresholdLayers": ["a & b"]}
+    store.provenance = {"collection": "<b>c</b>"}
+    store.thresholdsFiles = makeThresholdsFiles((1, "a & b.yaml"))
     dashboard = Dashboard(store)
     bar = dashboard.provenanceBar().object
-    assert "&lt;b&gt;c&lt;/b&gt;" in bar and "a &amp; b" in bar
+    assert "&lt;b&gt;c&lt;/b&gt;" in bar and "a &amp; b.yaml" in bar
     # Negative control: the raw markup is not there to be rendered.
     assert "<b>c</b>" not in bar
+
+
+def testProvenanceNamesTheThresholdsCited(makeThresholdsFiles):
+    """The strip names the files qadb cites, as they appear; without any, it says so and warns."""
+    store = _liveStore([[_image(1001, "arc", "t1")]])
+    dashboard = Dashboard(store)
+    bare = dashboard.provenanceBar().object
+    assert "no thresholds cited" in bare and "qadb cites no thresholds" in bare
+    store.thresholdsFiles = makeThresholdsFiles(
+        (1, "iqQaThresholds-run25.yaml"), (2, "dmLineResidualThresholds-run25.yaml")
+    )
+    bar = dashboard.provenanceBar().object
+    assert "iqQaThresholds-run25.yaml, derived 2026-10-19 from runs 25, 29 with drp_stella w.2026.41" in bar
+    assert "dmLineResidualThresholds-run25.yaml" in bar and "qadb cites no thresholds" not in bar
+    # Negative control: the lines are data, one per file, in id order.
+    lines = thresholdsLines(store.thresholdsFiles)
+    assert len(lines) == 2 and lines[0].startswith("iqQaThresholds") and thresholdsLines(pd.DataFrame()) == []
 
 
 def testEmptyStoreSaysSo():

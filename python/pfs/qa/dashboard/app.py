@@ -6,7 +6,9 @@ views are built up on this one at a time; the prototype's Live, Run and Visit ta
 at tag 0.1.0.
 
 Everything shown comes from the metrics table (`live.QadbMetricsStore`, read from qadb
-or a snapshot of it); the app computes no metric and holds no threshold of its own.
+or a snapshot of it); the app computes no metric and holds no threshold of its own: the
+limits are the thresholds qadb records each image was judged with, found for each value by
+the gate's `judge`, and the provenance strip names those files.
 """
 
 import html
@@ -18,7 +20,7 @@ import param
 from pfs.qa.dashboard.schema import IMAGE_STATUS_ORDER
 from pfs.qa.dashboard.store import MetricsStore, visitTimeline
 
-__all__ = ["Dashboard", "createApp", "verdictCounts"]
+__all__ = ["Dashboard", "createApp", "thresholdsLines", "verdictCounts"]
 
 #: Status colours (Okabe-Ito-like, distinguishable with the common colour-vision deficiencies).
 STATUS_COLORS = {"PASS": "#3a9a5b", "WARN": "#e6a100", "FAIL": "#d1495b", "UNKNOWN": "#9aa0a6", "": "#c7ccd1"}
@@ -39,6 +41,37 @@ def verdictCounts(images: pd.DataFrame) -> pd.Series:
 
 def _esc(value) -> str:
     return html.escape(str(value))
+
+
+def thresholdsLines(thresholdsFiles: pd.DataFrame) -> list[str]:
+    """Return one line per thresholds file the images cite, for the provenance strip.
+
+    ``iqQaThresholds-run25.yaml, derived 2026-10-19 from runs 25, 29 with drp_stella
+    w.2026.41-6-ge56938d2, obs_pfs w.2026.40, datamodel w.2026.40 (124 entries)``, from
+    `pfs.drp.qa.qadb.reader.readQadb`'s ``thresholdsFiles``; nothing for none.
+    """
+    if thresholdsFiles is None or thresholdsFiles.empty:
+        return []
+    lines = []
+    for row in thresholdsFiles.sort_values("thresholdsId").to_dict("records"):
+        derived = row.get("derivedOn")
+        runs = row.get("referenceRuns")
+        pipeline = ", ".join(
+            f"{product} {row[column]}"
+            for product, column in (
+                ("drp_stella", "drpStellaVersion"),
+                ("obs_pfs", "obsPfsVersion"),
+                ("datamodel", "datamodelVersion"),
+            )
+            if pd.notna(row.get(column))
+        )
+        line = str(row.get("name", "?"))
+        line += f", derived {pd.Timestamp(derived):%Y-%m-%d}" if pd.notna(derived) else ", derived ?"
+        line += f" from runs {str(runs).replace(',', ', ')}" if pd.notna(runs) else ""
+        line += f" with {pipeline}" if pipeline else ""
+        line += f" ({int(row['nEntries'])} entries)" if pd.notna(row.get("nEntries")) else ""
+        lines.append(line)
+    return lines
 
 
 def _tile(label: str, value: str, color: str | None = None, mark: str = "") -> str:
@@ -95,21 +128,24 @@ class Dashboard(param.Parameterized):
 
     # ---- panes -----------------------------------------------------------------------------------
 
+    @param.depends("dataVersion")
     def provenanceBar(self) -> pn.pane.HTML:
+        """Return the collection, the thresholds files qadb says its images were judged with, and the read."""
         prov = self.store.provenance
-        thresholds = prov.get("thresholds", {})
-        pipeline = thresholds.get("pipelineVersions") or {}
+        files = thresholdsLines(self.store.thresholdsFiles)
         parts = [
             f"<b>Collection</b> {_esc(prov.get('collection', '?'))}",
-            f"<b>Thresholds</b> {_esc(thresholds.get('file', '?'))} v{_esc(thresholds.get('version', '?'))} "
-            f"(derived {_esc(thresholds.get('derivedOn', '?'))} from runs "
-            f"{_esc(', '.join(str(r) for r in thresholds.get('referenceRuns') or []))})",
-            f"<b>Layers</b> {_esc(' + '.join(prov.get('thresholdLayers', [])))}",
-            "<b>Pipeline</b> " + _esc(", ".join(f"{k} {v}" for k, v in pipeline.items())),
-            f"<b>drp_qa</b> {_esc(prov.get('drpQaVersion', '?'))}",
+            "<b>Judged with</b> "
+            + ("; ".join(_esc(line) for line in files) if files else "no thresholds cited"),
+            f"<b>Read with drp_qa</b> {_esc(prov.get('drpQaVersion', '?'))}",
             f"<b>Built</b> {_esc(prov.get('builtAt', '?'))}",
         ]
         warnings = []
+        if not files and len(self.visits):
+            warnings.append(
+                "qadb cites no thresholds for these images (loaded before they were recorded, or from files "
+                "this drp_qa no longer ships): the stored verdicts show, their limits do not."
+            )
         if not self.store.hasOpdb:
             warnings.append(
                 "No opdb: sequences are inferred from runs of one seqName (qadb holds no IIC sequence), times "
@@ -163,7 +199,7 @@ class Dashboard(param.Parameterized):
             pn.state.add_periodic_callback(self.refresh, period=int(self.refreshSeconds * 1000))
         return pn.template.FastListTemplate(
             title="PFS QA dashboard",
-            main=[self.provenanceBar(), pn.panel(self.summary)],
+            main=[pn.panel(self.provenanceBar), pn.panel(self.summary)],
             accent="#3b6ea8",
             theme_toggle=True,
             main_max_width="1600px",

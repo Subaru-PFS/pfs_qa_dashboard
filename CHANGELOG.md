@@ -7,6 +7,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-06
+
+### Changed
+
+- **Limits come from qadb** (PIPE2D-1988) — each value's WARN/FAIL limits are the thresholds qadb records its image
+  was judged with (the file `qa_gate` cites for the task, read back with the images by drp_qa's
+  `pfs.drp.qa.qadb.reader`), found for the image by the gate's `judge`, which also gives each IQ value its own
+  PASS/WARN/FAIL (the task stores none per metric); nothing comes from drp_qa's shipped files or task defaults any
+  more, so a config override or a file changed since cannot make the limits disagree with the stored verdict. A metric a later layer judged (the IIS file, the config's fields) shows no limits. The provenance
+  strip names the files cited, updating as new ones appear; snapshots hold them. Needs drp_qa 0.1.4 or later
+  (`readQadb`'s `thresholds` tables).
+- `serving.buildMetricsTable` takes the reader's `thresholds` table in place of threshold layers;
+  `qadbSource.metricsTableFromQadb` and `live.QadbMetricsStore` take no layers.
+
+### Removed
+
+- `serving.taskThresholds`, `configDefaults`, `thresholdsProvenance` and `firstThresholdsFile`, and the
+  `thresholds` and `thresholdLayers` keys of a snapshot's `provenance.json`.
+
 ## [0.2.0] - 2026-11-06
 
 ### Changed

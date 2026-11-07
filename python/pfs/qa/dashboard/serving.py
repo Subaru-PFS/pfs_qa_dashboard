@@ -3,34 +3,27 @@
 The dashboard reads only this table (with DuckDB), never a Butler. It is built
 from the QA tasks' per-detector tables as qadb holds them
 (`pfs.drp.qa.qadb.reader.readQadb`), so every number in it was stored by the pipeline or
-judged by `pfs.drp.qa.metrics.gate`: the dashboard derives none.
+judged by `pfs.drp.qa.metrics.gate`: the dashboard derives no metric. Each value's
+limits are the thresholds qadb records its image was judged with (the file ``qa_gate``
+cites for the task, whose entries the reader returns beside the images), found for the
+image by the gate's own `~pfs.drp.qa.metrics.gate.judge`. That call is the one judgement
+here: the image verdicts and the line-residual rows' statuses are kept as stored, but
+``imageQualityQa`` stores no status per metric, so an IQ value's row takes `judge`'s,
+from the same entries. An image citing none keeps its values and stored verdicts, with
+no limits. A metric a later layer judged (the IIS
+file, the config's fields) is not cited either, so it shows no limits.
 
 One row per (image, source, metric, population), in `METRICS_COLUMNS`. An image's
-verdict from each source is a row too, with ``metric`` `VERDICT`. The thresholds
-file and drp_qa version go in the store's provenance (`thresholdsProvenance`),
-so a reader can show "gated with thresholds v2".
+verdict from each source is a row too, with ``metric`` `VERDICT`.
 """
 
-import ast
-import importlib.util
-import math
-from collections.abc import Sequence
-from pathlib import Path
-from types import SimpleNamespace
+from collections.abc import Iterator, Mapping
 
 import numpy as np
 import pandas as pd
-import yaml
 
-from pfs.drp.qa.metrics.gate import (
-    ThresholdsLike,
-    configThresholds,
-    judge,
-    loadThresholds,
-    thresholdsNames,
-    thresholdsPath,
-)
-from pfs.drp.qa.metrics.lineResiduals import residualThresholds
+from pfs.drp.qa.metrics.gate import judge
+from pfs.drp.qa.qadb.reader import THRESHOLDS_ID, thresholdsTables
 from pfs.qa.dashboard.schema import (
     IMAGE_STATUS_ORDER,
     METRICS_COLUMNS,
@@ -43,19 +36,17 @@ __all__ = [
     "METRICS_COLUMNS",
     "VERDICT",
     "buildMetricsTable",
-    "configDefaults",
-    "firstThresholdsFile",
     "inferSequences",
     "noteRows",
-    "taskThresholds",
-    "thresholdsProvenance",
 ]
 
-#: iqQaMetrics columns kept as values when no threshold judges them.
-_IQ_EXTRA = (
+#: iqQaMetrics columns shown as values; one an image's thresholds name gets its status and limits too.
+_IQ_VALUES = (
+    "medFwhm",
     "medDxCenter",
     "dxCenterRms",
     "pctFlagged",
+    "linesPerFiber",
     "nLines",
     "nLitFibers",
     "cosmicRayCount",
@@ -65,6 +56,8 @@ _IQ_EXTRA = (
 
 #: Visits further apart than this, or of another seqName, start a new inferred sequence.
 _SEQUENCE_GAP = 3
+
+_IMAGE = ["visit", "arm", "spectrograph"]
 
 
 def inferSequences(images: pd.DataFrame, visitTimes: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -107,32 +100,60 @@ def inferSequences(images: pd.DataFrame, visitTimes: pd.DataFrame | None = None)
     return visits.drop(columns="seqName")
 
 
-def _iqRows(iq: pd.DataFrame, thresholds: ThresholdsLike | Sequence[ThresholdsLike]) -> pd.DataFrame:
-    """Per-metric rows of ``iqQaMetrics``, judged by ``thresholds``, plus its stored verdicts."""
-    judged = judge(iq, thresholds)
-    judged = judged.assign(
-        source="iqQaMetrics",
-        description="",
-        reference="",
-        statusType="",
-        run=iq["calexpRun"].to_numpy()[judged["row"]] if "calexpRun" in iq else "",
-    )
-    judgedNames = set(judged["metric"])
-    extras = [name for name in _IQ_EXTRA if name in iq.columns and name not in judgedNames]
-    plain = iq[["visit", "arm", "spectrograph", *extras]].melt(
-        id_vars=["visit", "arm", "spectrograph"], var_name="metric", value_name="value"
-    )
-    plain = plain.assign(source="iqQaMetrics", status="", population="", reason="")
-    verdicts = iq[["visit", "arm", "spectrograph", "qaStatus", "qaReason"]].rename(
+def _byThresholds(
+    rows: pd.DataFrame, tables: Mapping[int, pd.DataFrame]
+) -> Iterator[tuple[pd.DataFrame, pd.DataFrame | None]]:
+    """Yield the rows judged with each thresholds file and the file's table; `None` for rows citing none.
+
+    Rows without a ``thresholdsId`` column (a read older than it) all cite none.
+    """
+    if THRESHOLDS_ID not in rows.columns:
+        yield rows, None
+        return
+    for thresholdsId, group in rows.groupby(THRESHOLDS_ID, dropna=False, sort=False):
+        yield group, None if pd.isna(thresholdsId) else tables.get(int(thresholdsId))
+
+
+def _measured(table: pd.DataFrame, metrics: pd.DataFrame) -> pd.DataFrame:
+    """Return the entries of ``table`` on metrics ``metrics`` has columns for.
+
+    The gate refuses a table naming a metric the task did not measure; the dashboard shows what
+    is stored, and an entry on a metric qadb does not hold simply has no value to judge.
+    """
+    return table[table["metric"].isin(metrics.columns)]
+
+
+def _iqRows(iq: pd.DataFrame, tables: Mapping[int, pd.DataFrame]) -> pd.DataFrame:
+    """Per-metric rows of ``iqQaMetrics``: each image's values, judged with the thresholds it cites, and its stored verdict."""
+    parts = []
+    for rows, table in _byThresholds(iq, tables):
+        rows = rows.reset_index(drop=True)
+        judgedNames: set[str] = set()
+        entries = _measured(table, rows) if table is not None else None
+        if entries is not None and not entries.empty:
+            judged = judge(rows, entries)
+            judged = judged.assign(
+                source="iqQaMetrics",
+                description="",
+                reference="",
+                statusType="",
+                run=rows["calexpRun"].to_numpy()[judged["row"]] if "calexpRun" in rows else "",
+            )
+            judgedNames = set(judged["metric"])
+            parts.append(judged.drop(columns=["row", "layer", "provenance"], errors="ignore"))
+        plainNames = [name for name in _IQ_VALUES if name in rows.columns and name not in judgedNames]
+        plain = rows[[*_IMAGE, *plainNames]].melt(id_vars=_IMAGE, var_name="metric", value_name="value")
+        plain = plain.assign(source="iqQaMetrics", status="", population="", reason="")
+        if "calexpRun" in rows:
+            plain["run"] = np.tile(rows["calexpRun"].to_numpy(), len(plainNames))
+        parts.append(plain)
+    verdicts = iq[[*_IMAGE, "qaStatus", "qaReason"]].rename(
         columns={"qaStatus": "status", "qaReason": "reason"}
     )
     verdicts = verdicts.assign(source="iqQaMetrics", metric=VERDICT, value=np.nan)
     if "calexpRun" in iq:
-        plain["run"] = np.tile(iq["calexpRun"].to_numpy(), len(extras))
         verdicts["run"] = iq["calexpRun"].to_numpy()
-    return pd.concat(
-        [judged.drop(columns=["row", "layer", "provenance"]), plain, verdicts], ignore_index=True
-    )
+    return pd.concat([*parts, verdicts], ignore_index=True)
 
 
 def noteRows(notes: pd.DataFrame, visitTimes: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -179,39 +200,41 @@ def noteRows(notes: pd.DataFrame, visitTimes: pd.DataFrame | None = None) -> pd.
     ).sort_values(NOTE_COLUMNS, ignore_index=True)
 
 
-def _lineLimits(metrics: pd.DataFrame, thresholds: Sequence[ThresholdsLike]) -> pd.DataFrame:
+def _lineLimits(metrics: pd.DataFrame, tables: Mapping[int, pd.DataFrame]) -> pd.DataFrame:
     """Return ``warn``, ``fail`` and ``population`` for each ``dmLineResidualMetrics`` row.
 
     The task stores each row's verdict but not the thresholds behind it; these are what
-    `pfs.drp.qa.metrics.gate.judge` finds for the row in ``thresholds``, highest priority first.
+    `pfs.drp.qa.metrics.gate.judge` finds for the row in the file its image cites.
     """
     limits = pd.DataFrame({"warn": np.nan, "fail": np.nan, "population": ""}, index=metrics.index)
-    tables = loadThresholds(thresholds)
-    for name, rows in metrics.groupby("metric", sort=False):
-        named = [table[table["metric"] == name] for table in tables]
-        if all(table.empty for table in named):
+    for rows, table in _byThresholds(metrics, tables):
+        if table is None:
             continue
-        wide = rows.drop(columns=["metric", "value", "status"]).assign(**{name: rows["value"].to_numpy()})
-        judged = judge(wide.reset_index(drop=True), named)
-        limits.loc[rows.index, ["warn", "fail", "population"]] = judged[
-            ["warn", "fail", "population"]
-        ].to_numpy()
+        for name, named in rows.groupby("metric", sort=False):
+            entries = table[table["metric"] == name]
+            if entries.empty:
+                continue
+            wide = named.drop(columns=["metric", "value", "status", THRESHOLDS_ID], errors="ignore")
+            wide = wide.assign(**{name: named["value"].to_numpy()})
+            judged = judge(wide.reset_index(drop=True), entries)
+            limits.loc[named.index, ["warn", "fail", "population"]] = judged[
+                ["warn", "fail", "population"]
+            ].to_numpy()
     return limits
 
 
 def _lineRows(
-    summary: pd.DataFrame, metrics: pd.DataFrame, thresholds: Sequence[ThresholdsLike] | None = None
+    summary: pd.DataFrame, metrics: pd.DataFrame, tables: Mapping[int, pd.DataFrame]
 ) -> pd.DataFrame:
     """Rows of ``dmLineResidualMetrics`` as stored, with their thresholds, and ``dmLineResidualSummary``'s verdicts."""
     # The thresholds name each row's camera set and observation type, which only the summary holds in qadb.
-    keys = ["visit", "arm", "spectrograph"]
     context = [column for column in ("cameraSet", "obsType") if column in summary and column not in metrics]
     if context:
-        metrics = metrics.merge(summary[[*keys, *context]].drop_duplicates(keys), on=keys, how="left")
+        metrics = metrics.merge(summary[[*_IMAGE, *context]].drop_duplicates(_IMAGE), on=_IMAGE, how="left")
     rows = metrics.assign(source="dmLineResidualMetrics", population="", reason="")
-    if thresholds and not metrics.empty:
-        rows[["warn", "fail", "population"]] = _lineLimits(metrics, thresholds)
-    verdicts = summary[["visit", "arm", "spectrograph", "qaStatus", "qaReason", "recommendedAction"]]
+    if tables and not metrics.empty:
+        rows[["warn", "fail", "population"]] = _lineLimits(metrics, tables)
+    verdicts = summary[[*_IMAGE, "qaStatus", "qaReason", "recommendedAction"]]
     verdicts = verdicts.rename(columns={"qaStatus": "status"})
     verdicts = verdicts.assign(
         source="dmLineResidualSummary",
@@ -222,35 +245,38 @@ def _lineRows(
             for parts in zip(verdicts["qaReason"], verdicts["recommendedAction"], strict=True)
         ],
     ).drop(columns=["qaReason", "recommendedAction"])
-    return pd.concat([rows.drop(columns=["cameraSet"], errors="ignore"), verdicts], ignore_index=True)
+    return pd.concat(
+        [rows.drop(columns=["cameraSet", THRESHOLDS_ID], errors="ignore"), verdicts], ignore_index=True
+    )
 
 
 def buildMetricsTable(
     iqQaMetrics: pd.DataFrame,
-    thresholds: ThresholdsLike | Sequence[ThresholdsLike],
+    thresholds: pd.DataFrame | None = None,
     dmLineResidualSummary: pd.DataFrame | None = None,
     dmLineResidualMetrics: pd.DataFrame | None = None,
     visitTimes: pd.DataFrame | None = None,
-    lineThresholds: Sequence[ThresholdsLike] | None = None,
 ) -> pd.DataFrame:
     """Return the metrics table for one collection.
 
     Parameters
     ----------
     iqQaMetrics : `pandas.DataFrame`
-        The collection's ``iqQaMetrics`` rows, one per image.
-    thresholds : path, `pandas.DataFrame`, or a sequence of them
-        The thresholds the images are judged with, highest priority first, as
-        `pfs.drp.qa.metrics.gate.judge` takes them: each metric's verdict and
-        limits are recorded. The stored verdict of each image is kept as it
-        is.
+        The collection's ``iqQaMetrics`` rows, one per image, each with the
+        ``thresholdsId`` it cites (`pfs.drp.qa.qadb.reader.readQadb`).
+    thresholds : `pandas.DataFrame`, optional
+        The cited files' entries, as `~pfs.drp.qa.qadb.reader.readQadb`
+        returns them (``thresholds``): each image's metrics are judged with
+        the file its ``thresholdsId`` names, and the entry's status and
+        limits recorded beside the value. The stored verdict of each image
+        is kept as it is. Without them, or for an image citing none, values
+        have no limits.
     dmLineResidualSummary, dmLineResidualMetrics : `pandas.DataFrame`, optional
-        The same collection's ``dmLineResiduals`` outputs.
+        The same collection's ``dmLineResiduals`` outputs, with their
+        ``thresholdsId``: each stored line-residual verdict gets the limits
+        of the file its image cites.
     visitTimes : `pandas.DataFrame`, optional
         opdb's visit listing, for times and sequences (`inferSequences`).
-    lineThresholds : sequence, optional
-        The thresholds ``dmLineResiduals`` judges with, highest priority
-        first, to record beside each stored line-residual verdict.
 
     Returns
     -------
@@ -258,18 +284,15 @@ def buildMetricsTable(
         `METRICS_COLUMNS`, sorted by visit, arm, spectrograph and source.
         Only visits in ``iqQaMetrics``: rows on any other visit are left out.
     """
-    parts = [_iqRows(iqQaMetrics, thresholds)]
+    tables = thresholdsTables(thresholds) if thresholds is not None and len(thresholds) else {}
+    parts = [_iqRows(iqQaMetrics, tables)]
     if dmLineResidualSummary is not None and dmLineResidualMetrics is not None:
-        parts.append(_lineRows(dmLineResidualSummary, dmLineResidualMetrics, lineThresholds))
+        parts.append(_lineRows(dmLineResidualSummary, dmLineResidualMetrics, tables))
     table = pd.concat(parts, ignore_index=True)
     # A visit without an iqQaMetrics row has no sequence to file its rows under.
     table = table[table["visit"].isin(iqQaMetrics["visit"])]
-    images = iqQaMetrics[["visit", "arm", "spectrograph", "obsType", "seqName"]].drop_duplicates(
-        ["visit", "arm", "spectrograph"]
-    )
-    table = table.drop(columns=["obsType", "seqName"], errors="ignore").merge(
-        images, on=["visit", "arm", "spectrograph"], how="left"
-    )
+    images = iqQaMetrics[[*_IMAGE, "obsType", "seqName"]].drop_duplicates(_IMAGE)
+    table = table.drop(columns=["obsType", "seqName"], errors="ignore").merge(images, on=_IMAGE, how="left")
     table = table.merge(inferSequences(images, visitTimes), on="visit", how="left")
     for column, dtype in METRICS_COLUMNS.items():
         if column not in table:
@@ -279,120 +302,4 @@ def buildMetricsTable(
     table = table[list(METRICS_COLUMNS)].astype(
         {k: v for k, v in METRICS_COLUMNS.items() if v not in ("string", "datetime64[ns]")}
     )
-    return table.sort_values(["visit", "arm", "spectrograph", "source"], kind="stable", ignore_index=True)
-
-
-def thresholdsProvenance(thresholds: Path | str) -> dict:
-    """Return what a thresholds file says about itself, for a store's provenance."""
-    header = yaml.safe_load(Path(thresholds).read_text())
-    keep = ("version", "derivedOn", "collection", "referenceRuns", "drpQaVersion", "pipelineVersions")
-    return {"file": Path(thresholds).name, "nEntries": len(header.get("thresholds", []))} | {
-        k: header.get(k) for k in keep
-    }
-
-
-def firstThresholdsFile(layers: Sequence[ThresholdsLike]) -> Path:
-    """Return the highest-priority thresholds file among ``layers`` (`taskThresholds`), for the provenance."""
-    try:
-        return next(Path(layer) for layer in layers if isinstance(layer, Path | str))
-    except StopIteration:
-        raise ValueError("No thresholds file among the layers: only config fields") from None
-
-
-def configDefaults(module: str, configClass: str) -> SimpleNamespace:
-    """Return the defaults of a task config's fields, read from its source without importing it.
-
-    Stack-free: a config class derives from ``lsst.pex.config``, so it cannot be
-    imported here, but its ``Field(default=...)`` literals are the task's
-    defaults. With the stack, use the config class itself.
-
-    Parameters
-    ----------
-    module : `str`
-        The module, e.g. ``"pfs.drp.qa.imageQualityQa"``.
-    configClass : `str`
-        The class, e.g. ``"ImageQualityQaConfig"``.
-
-    Returns
-    -------
-    `types.SimpleNamespace`
-        One attribute per field whose default is a literal (``nan`` included).
-    """
-    spec = importlib.util.find_spec(module)
-    if spec is None or spec.origin is None:
-        raise ImportError(f"No module {module}")
-    tree = ast.parse(Path(spec.origin).read_text())
-    node = next(
-        (n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == configClass),
-        None,
-    )
-    if node is None:
-        raise LookupError(f"No class {configClass} in {spec.origin}")
-    defaults = {}
-    for statement in node.body:
-        if not (isinstance(statement, ast.Assign) and isinstance(statement.value, ast.Call)):
-            continue
-        default = next((k.value for k in statement.value.keywords if k.arg == "default"), None)
-        if default is None:
-            continue
-        try:
-            value = ast.literal_eval(default)
-        except ValueError:
-            text = ast.unparse(default)
-            if text not in ("np.nan", "math.nan", "float('nan')", 'float("nan")'):
-                continue
-            value = math.nan
-        for target in statement.targets:
-            if isinstance(target, ast.Name):
-                defaults[target.id] = value
-    return SimpleNamespace(**defaults)
-
-
-def taskThresholds() -> tuple[dict[str, list], dict[str, str]]:
-    """Return the thresholds ``imageQualityQa`` and ``dmLineResiduals`` judge with, at their defaults.
-
-    The same layers the tasks build: the thresholds file their config names,
-    then their config fields. Uses the config classes when the stack is set
-    up, else their defaults read from source (`configDefaults`).
-
-    Returns
-    -------
-    layers : `dict` [`str`, `list`]
-        ``"iqQaMetrics"`` and ``"dmLineResidualMetrics"``: threshold tables or
-        files, highest priority first, for `buildMetricsTable`.
-    sources : `dict` [`str`, `str`]
-        How each was found, for the provenance.
-    """
-    configs, sources = {}, {}
-    for key, module, name in (
-        ("iqQaMetrics", "pfs.drp.qa.imageQualityQa", "ImageQualityQaConfig"),
-        ("dmLineResidualMetrics", "pfs.drp.qa.dmLineResiduals", "DmLineResidualsConfig"),
-    ):
-        try:
-            configs[key] = getattr(importlib.import_module(module), name)()
-            sources[key] = f"{name}()"
-        except ImportError:
-            configs[key] = configDefaults(module, name)
-            sources[key] = f"{name} defaults, read from source"
-    layers = {}
-    for key, config in configs.items():
-        # The task's own layers: thresholdsFile, then extraThresholdsFiles (the IIS file).
-        files = [thresholdsPath(name) for name in thresholdsNames(config)]
-        sources[key] += "; " + " + ".join([*(path.name for path in files), "config fields"])
-        if key == "iqQaMetrics":
-            layers[key] = [*files, configThresholds(config)]
-        else:
-            layers[key] = [
-                *files,
-                residualThresholds(
-                    config.xWarnThreshold,
-                    config.xFailThreshold,
-                    config.yWarnThreshold,
-                    config.yFailThreshold,
-                    config.xRmsWarnThreshold,
-                    config.xRmsFailThreshold,
-                    config.yRmsWarnThreshold,
-                    config.yRmsFailThreshold,
-                ),
-            ]
-    return layers, sources
+    return table.sort_values([*_IMAGE, "source"], kind="stable", ignore_index=True)

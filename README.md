@@ -2,14 +2,15 @@
 
 A browser dashboard of the PFS image QA gate, live during a run from qadb (with the opdb's IIC sequences, visit
 times and observers' notes), or offline from a snapshot of a qadb read. It reads what drp_qa's QA tasks stored and
-judged; it computes no metric of its own.
+judged; it computes no metric of its own. The one thing it works out is each value's standing against its limits, with
+the gate's own `judge` and the thresholds qadb records for the image.
 
 It is one page for now: the provenance strip (collection, thresholds, drp_qa version, time read) and the verdicts
 so far, the images counted by status with the latest visit judged, in HST. The views are built up on this one at a
 time; the prototype's Live, Run and Visit tabs are at tag `0.1.0`.
 
-Built on Panel and DuckDB, and on drp_qa (`pfs.drp.qa`) for reading qadb and for the thresholds the tasks judge
-with.
+Built on Panel and DuckDB, and on drp_qa (`pfs.drp.qa`) for reading qadb back, thresholds included, and for the
+gate's matching of an image to its thresholds entry.
 
 ## Running it
 
@@ -27,9 +28,16 @@ with `python:` first on `PYTHONPATH`.
 
 **Live, from qadb.** qaActor loads every visit it judges into qadb. The dashboard reads a collection
 back (`pfs.drp.qa.qadb.reader.readQadb`) and every `--refresh` seconds reads only the images loaded since
-(`qa_gate.decided_at`), so the page follows the run. One read serves every browser session. An image judged in more than one RUN of the collection shows the latest. Each
-metric's limits are those of the thresholds files drp_qa ships, at the tasks' defaults (`serving.taskThresholds`,
-the IIS layer included); the verdicts are the ones stored.
+(`qa_gate.decided_at`), so the page follows the run. One read serves every browser session. An image judged in more
+than one RUN of the collection shows the latest. Each value's limits are the thresholds qadb records its image was
+judged with: the file `qa_gate` cites for the task (`iq_thresholds_id`, `dm_thresholds_id`), whose entries the
+reader returns beside the images. The gate's `judge` finds each value's entry in that file, so the limits shown are
+the ones the image was judged with, and a config override or a thresholds file changed since cannot make them
+disagree with the stored verdict. The image verdicts and the line-residual rows' statuses are shown as stored;
+`imageQualityQa` stores no per-metric status, so an IQ value's own PASS/WARN/FAIL is `judge`'s, from those same
+entries. qadb cites one file per task, the
+first layer judged: a metric a later layer judged (the IIS file, the config's own fields) shows no limits, and an
+image the loader could cite no file for shows its verdict alone. The provenance strip names the files cited.
 
 **With the opdb** (`--opdb-host`, read-only `public_user`), each visit has its IIC sequence and the start of its
 first SpS exposure, and the observers' notes on it, its cameras and its sequence. Notes are often written after a
@@ -44,8 +52,8 @@ python bin/qaDashboard.py serve --collection qaActor/reductions --first-visit <f
 ```
 
 **Offline, from a snapshot.** `snapshot --out <dir>` reads the collection once and writes what was read, one
-parquet file per table (with the opdb's times and notes, given `--opdb-host`), and `provenance.json` (the thresholds
-file and drp_qa version, the databases and the time read). `serve --snapshot <dir>` serves it without a database. A run
+parquet file per table (the thresholds cited included; with the opdb's times and notes, given `--opdb-host`), and
+`provenance.json` (the databases, the time read and the drp_qa that read). `serve --snapshot <dir>` serves it without a database. A run
 judged after the fact is loaded into a qadb first (drp_qa's `bin.src/loadQadb.py`; a local copy will do).
 
 ```bash

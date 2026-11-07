@@ -1,41 +1,27 @@
 """Tests of the dashboard's metrics table and its DuckDB store."""
 
-from pathlib import Path
-
 import pandas as pd
 import pytest
 
 from pfs.drp.qa.metrics.gate import STATUS_ORDER
 from pfs.qa.dashboard import schema
 from pfs.qa.dashboard.schema import NOTE_COLUMNS
-from pfs.qa.dashboard.serving import (
-    VERDICT,
-    buildMetricsTable,
-    configDefaults,
-    firstThresholdsFile,
-    inferSequences,
-    noteRows,
-)
+from pfs.qa.dashboard.serving import VERDICT, buildMetricsTable, inferSequences, noteRows
 from pfs.qa.dashboard.store import MetricsStore, visitTimeline
 
+#: The thresholds the images cite: file 1 judges medFwhm of arm b, WARN at 3, FAIL at 4.
+IQ_FILE = 1
+#: The line-residual thresholds the images cite.
+DM_FILE = 2
 
-def _thresholds() -> pd.DataFrame:
-    """Return thresholds judging only medFwhm: WARN at 3, FAIL at 4, for arm b."""
-    return pd.DataFrame(
-        {
-            "metric": ["medFwhm"],
-            "arm": ["b"],
-            "warn": [3.0],
-            "fail": [4.0],
-            "higherIsWorse": [True],
-            "absolute": [False],
-            "provenance": ["test"],
-        }
-    )
+
+@pytest.fixture
+def thresholds(makeThresholds):
+    return makeThresholds((IQ_FILE, "medFwhm", 3.0, 4.0, {"arm": "b"}))
 
 
 def _iq() -> pd.DataFrame:
-    """Three b-arm arcs of one sequence, then a trace far away: FWHM 2.5, 3.5, 4.5, 2.0."""
+    """Three b-arm arcs of one sequence, then a trace far away: FWHM 2.5, 3.5, 4.5, 2.0, all citing file 1."""
     return pd.DataFrame(
         {
             "visit": [100, 101, 102, 200],
@@ -49,6 +35,7 @@ def _iq() -> pd.DataFrame:
             "qaStatus": ["PASS", "PASS", "FAIL", "PASS"],
             "qaReason": ["", "", "medFWHM=4.50px >= fail threshold 4px", ""],
             "calexpRun": ["run/1"] * 4,
+            "thresholdsId": pd.array([IQ_FILE] * 4, dtype="Int64"),
         }
     )
 
@@ -62,6 +49,7 @@ def _lines() -> tuple[pd.DataFrame, pd.DataFrame]:
             "qaStatus": ["WARN", "PASS", "PASS", "UNKNOWN"],
             "qaReason": ["calib NeI: |medianDeltaY|=1.2px >= warn threshold 1px", "", "", ""],
             "recommendedAction": ["APPLY_SHIFT", "NOMINAL", "NOMINAL", "INSUFFICIENT_DATA"],
+            "thresholdsId": pd.array([DM_FILE] * 4, dtype="Int64"),
         }
     )
     metrics = pd.DataFrame(
@@ -76,6 +64,7 @@ def _lines() -> tuple[pd.DataFrame, pd.DataFrame]:
             "metric": ["medianDeltaY", "robustRmsDeltaY"],
             "value": [1.2, 0.05],
             "status": ["WARN", ""],
+            "thresholdsId": pd.array([DM_FILE] * 2, dtype="Int64"),
         }
     )
     return summary, metrics
@@ -113,9 +102,9 @@ def testInferSequences():
     assert withOpdb.loc[2, "timeExpStart"] == pd.Timestamp("2026-03-01 18:05")
 
 
-def testBuildMetricsTable():
+def testBuildMetricsTable(thresholds):
     summary, metrics = _lines()
-    table = buildMetricsTable(_iq(), _thresholds(), summary, metrics)
+    table = buildMetricsTable(_iq(), thresholds, summary, metrics)
     assert list(table.columns) == list(schema.METRICS_COLUMNS)
     fwhm = table[(table["source"] == "iqQaMetrics") & (table["metric"] == "medFwhm")].set_index("visit")
     assert fwhm["status"].to_dict() == {100: "PASS", 101: "WARN", 102: "FAIL", 200: "PASS"}
@@ -127,12 +116,59 @@ def testBuildMetricsTable():
     stored = verdicts[verdicts["source"] == "iqQaMetrics"].set_index("visit")["status"]
     assert stored[101] == "PASS"
     assert table["obsType"].ne("").all()
+    # Negative control: the ids are not rows of the table.
+    assert "thresholdsId" not in table.columns
 
 
-def testStore():
+def testLimitsAreEachImagesOwnThresholds(makeThresholds):
+    """Each image is judged with the file it cites; one citing none keeps its value and verdict without limits."""
+    thresholds = makeThresholds(
+        (IQ_FILE, "medFwhm", 3.0, 4.0, {"arm": "b"}), (3, "medFwhm", 4.6, 5.0, {"arm": "b"})
+    )
+    iq = _iq()
+    iq["thresholdsId"] = pd.array([IQ_FILE, IQ_FILE, 3, pd.NA], dtype="Int64")
+    table = buildMetricsTable(iq, thresholds)
+    fwhm = table[(table["source"] == "iqQaMetrics") & (table["metric"] == "medFwhm")].set_index("visit")
+    assert fwhm["status"].to_dict() == {100: "PASS", 101: "WARN", 102: "PASS", 200: ""}
+    assert fwhm["warn"].to_dict() == pytest.approx(
+        {100: 3.0, 101: 3.0, 102: 4.6, 200: float("nan")}, nan_ok=True
+    )
+    assert fwhm.loc[200, "value"] == 2.0
+    # The stored verdict stands whatever the limits say.
+    verdict = table[(table["source"] == "iqQaMetrics") & (table["metric"] == VERDICT)].set_index("visit")
+    assert verdict.loc[102, "status"] == "FAIL"
+    # Negative control: one file for all would call 102 FAIL.
+    same = buildMetricsTable(iq.assign(thresholdsId=pd.array([IQ_FILE] * 4, dtype="Int64")), thresholds)
+    sameFwhm = same[(same["source"] == "iqQaMetrics") & (same["metric"] == "medFwhm")].set_index("visit")
+    assert sameFwhm.loc[102, "status"] == "FAIL"
+
+
+def testWithoutThresholdsValuesHaveNoLimits():
+    """A read without thresholds (a snapshot older than them, no thresholdsId) keeps every value and verdict."""
+    iq = _iq().drop(columns="thresholdsId")
+    table = buildMetricsTable(iq)
+    fwhm = table[(table["source"] == "iqQaMetrics") & (table["metric"] == "medFwhm")].set_index("visit")
+    assert fwhm["value"].to_dict() == {100: 2.5, 101: 3.5, 102: 4.5, 200: 2.0}
+    assert fwhm["warn"].isna().all() and (fwhm["status"] == "").all()
+    assert (table[table["metric"] == VERDICT]["status"] == _iq()["qaStatus"].to_numpy()).all()
+
+
+def testAnEntryOnAMetricNotStoredIsSkipped(makeThresholds):
+    """The gate refuses a table naming an unmeasured metric; the dashboard shows what qadb holds."""
+    thresholds = makeThresholds(
+        (IQ_FILE, "medFwhm", 3.0, 4.0, {"arm": "b"}), (IQ_FILE, "notStored", 1.0, 2.0, {"arm": "b"})
+    )
+    table = buildMetricsTable(_iq(), thresholds)
+    fwhm = table[(table["source"] == "iqQaMetrics") & (table["metric"] == "medFwhm")]
+    assert (fwhm["warn"] == 3.0).all()
+    assert "notStored" not in set(table["metric"])
+
+
+def testStore(thresholds):
     summary, metrics = _lines()
-    store = MetricsStore(buildMetricsTable(_iq(), _thresholds(), summary, metrics), {"collection": "c"})
+    store = MetricsStore(buildMetricsTable(_iq(), thresholds, summary, metrics), {"collection": "c"})
     assert store.provenance == {"collection": "c"}
+    assert store.thresholdsFiles.empty
     images = store.images().set_index("visit")
     # Worst of the sources: 100 is PASS in iqQaMetrics but WARN in dmLineResidualSummary.
     assert images["status"].to_dict() == {100: "WARN", 101: "PASS", 102: "FAIL", 200: "PASS"}
@@ -147,62 +183,48 @@ def testStore():
     assert store.trend("iqQaMetrics", "medFwhm", 101, 200)["visit"].tolist() == [101, 102, 200]
 
 
-def testLineThresholdsAreRecorded():
-    """The task stores line-residual verdicts without thresholds; the table records the ones judged with."""
-    from pfs.drp.qa.metrics.lineResiduals import residualThresholds
-
+def testLineThresholdsAreRecorded(makeThresholds):
+    """The task stores line-residual verdicts without thresholds; the table records the cited file's."""
+    thresholds = makeThresholds(
+        (IQ_FILE, "medFwhm", 3.0, 4.0, {"arm": "b"}),
+        (DM_FILE, "medianDeltaY", 1.0, 2.0, {"reference": "calib"}),
+        (DM_FILE, "robustRmsDeltaY", 0.1, 0.2, {"reference": "visit", "statusType": "RESERVED"}),
+    )
     summary, metrics = _lines()
-    layers = [residualThresholds(1.0, 2.0, 1.0, 2.0, 0.1, 0.2, 0.1, 0.2)]
-    table = buildMetricsTable(_iq(), _thresholds(), summary, metrics, lineThresholds=layers)
+    table = buildMetricsTable(_iq(), thresholds, summary, metrics)
     lines = table[(table["source"] == "dmLineResidualMetrics")].set_index("reference")
     assert lines.loc["calib", ["warn", "fail"]].tolist() == [1.0, 2.0]
     assert lines.loc["visit", ["warn", "fail"]].tolist() == [0.1, 0.2]
     # The stored verdict is kept as it is.
     assert lines.loc["calib", "status"] == "WARN" and lines.loc["visit", "status"] == ""
-    # Negative control: without the layers, no thresholds are invented.
-    bare = buildMetricsTable(_iq(), _thresholds(), summary, metrics)
-    assert bare.loc[bare["source"] == "dmLineResidualMetrics", ["warn", "fail"]].isna().all().all()
+    # Negative control: a file the line rows do not cite gives them no thresholds.
+    other = buildMetricsTable(
+        _iq(), thresholds, summary, metrics.assign(thresholdsId=pd.array([9, 9], dtype="Int64"))
+    )
+    assert other.loc[other["source"] == "dmLineResidualMetrics", ["warn", "fail"]].isna().all().all()
 
 
-def testLineThresholdsMatchTheSummarysCameraSetAndObsType():
+def testLineThresholdsMatchTheSummarysCameraSetAndObsType(makeThresholds):
     """Qadb's metric rows lack cameraSet and obsType, which file entries name: they come from the summary."""
     summary, metrics = _lines()
     summary = summary.assign(cameraSet="brn", obsType="arc")
     metrics = metrics.drop(columns="cameraSet")
-    entry = pd.DataFrame(
-        {
-            "metric": ["medianDeltaY"],
-            "reference": ["calib"],
-            "statusType": ["BOTH"],
-            "cameraSet": ["brn"],
-            "obsType": ["arc"],
-            "warn": [0.5],
-            "fail": [1.5],
-            "higherIsWorse": [True],
-            "absolute": [True],
-            "provenance": ["file"],
-        }
+    thresholds = makeThresholds(
+        (
+            DM_FILE,
+            "medianDeltaY",
+            0.5,
+            1.5,
+            {"reference": "calib", "statusType": "BOTH", "cameraSet": "brn", "obsType": "arc"},
+        ),
+        absolute=True,
     )
-    table = buildMetricsTable(_iq(), _thresholds(), summary, metrics, lineThresholds=[entry])
+    table = buildMetricsTable(_iq(), thresholds, summary, metrics)
     calib = table[(table["source"] == "dmLineResidualMetrics") & (table["reference"] == "calib")]
     assert calib[["warn", "fail"]].values.tolist() == [[0.5, 1.5]]
     # Negative control: without the summary's columns the entry matches nothing.
-    bare = buildMetricsTable(
-        _iq(), _thresholds(), summary.drop(columns=["cameraSet", "obsType"]), metrics, lineThresholds=[entry]
-    )
+    bare = buildMetricsTable(_iq(), thresholds, summary.drop(columns=["cameraSet", "obsType"]), metrics)
     assert bare.loc[bare["source"] == "dmLineResidualMetrics", ["warn", "fail"]].isna().all().all()
-
-
-def testConfigDefaultsReadFromSource():
-    defaults = configDefaults("pfs.drp.qa.imageQualityQa", "ImageQualityQaConfig")
-    assert defaults.thresholdsFile == "iqQaThresholds-run25.yaml"
-    assert defaults.dxCenterWarnThreshold < defaults.dxCenterFailThreshold
-    assert isinstance(defaults.flagRateWarnThreshold, dict) and "b" in defaults.flagRateWarnThreshold
-    lineDefaults = configDefaults("pfs.drp.qa.dmLineResiduals", "DmLineResidualsConfig")
-    assert lineDefaults.yWarnThreshold < lineDefaults.yFailThreshold
-    # Negative control: a class the module does not define is an error, not empty defaults.
-    with pytest.raises(LookupError):
-        configDefaults("pfs.drp.qa.imageQualityQa", "NoSuchConfig")
 
 
 def testNoteRows():
@@ -232,7 +254,7 @@ def testNoteRows():
     assert "SM1 lamp off" not in set(noteRows(notes)["note"])
 
 
-def testStoreNotesKeepImagesClean():
+def testStoreNotesKeepImagesClean(thresholds):
     notes = pd.DataFrame(
         {
             "pfs_visit_id": pd.array([100], dtype="Int64"),
@@ -244,7 +266,7 @@ def testStoreNotesKeepImagesClean():
         }
     )
     summary, metrics = _lines()
-    store = MetricsStore(buildMetricsTable(_iq(), _thresholds(), summary, metrics), notes=noteRows(notes))
+    store = MetricsStore(buildMetricsTable(_iq(), thresholds, summary, metrics), notes=noteRows(notes))
     assert store.notes()[["visit", "note"]].values.tolist() == [[100, "Cloudy"]]
     # The note is not an image: the rollup still has one row per image.
     assert len(store.images()) == 4
@@ -268,19 +290,11 @@ def testVisitTimelineNights():
     assert timeline.loc[11, "time"].strftime("%Y-%m-%d") != timeline.loc[11, "night"]
 
 
-def testVisitsNotJudgedAreLeftOut():
+def testVisitsNotJudgedAreLeftOut(thresholds):
     """A line-residual row on a visit with no iqQaMetrics row has no sequence: it is dropped, not a crash."""
     summary, metrics = _lines()
     summary = pd.concat([summary, summary.iloc[[0]].assign(visit=999)], ignore_index=True)
-    table = buildMetricsTable(_iq(), _thresholds(), summary, metrics)
+    table = buildMetricsTable(_iq(), thresholds, summary, metrics)
     assert set(table["visit"]) == {100, 101, 102, 200}
     # Negative control: the judged visits' line-residual verdicts are all kept.
     assert (table["source"] == "dmLineResidualSummary").sum() == 4
-
-
-def testFirstThresholdsFile(tmp_path):
-    table = _thresholds()
-    assert firstThresholdsFile([tmp_path / "a.yaml", table]) == tmp_path / "a.yaml"
-    assert firstThresholdsFile([table, "b.yaml", "c.yaml"]) == Path("b.yaml")
-    with pytest.raises(ValueError):
-        firstThresholdsFile([table])

@@ -19,10 +19,10 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from pfs.drp.qa.qadb.reader import FIRST_VISIT, LAST_VISIT, readQadb
+from pfs.drp.qa.qadb.reader import FIRST_VISIT, LAST_VISIT, THRESHOLDS_ID, readQadb
 from pfs.qa.dashboard.qadbSource import metricsTableFromQadb, readSnapshot, withSequences
 from pfs.qa.dashboard.schema import NOTE_COLUMNS
-from pfs.qa.dashboard.serving import firstThresholdsFile, noteRows, taskThresholds, thresholdsProvenance
+from pfs.qa.dashboard.serving import noteRows
 from pfs.qa.dashboard.store import MetricsStore
 
 __all__ = ["HST", "OpdbTables", "QadbMetricsStore", "opdbReader", "qadbProvenance"]
@@ -35,15 +35,12 @@ _IMAGE = ["visit", "arm", "spectrograph"]
 
 
 def qadbProvenance(collection: str, **extra: Any) -> dict:
-    """Return the provenance of a collection read from qadb: the thresholds and drp_qa judging it, and ``extra``."""
-    layers, sources = taskThresholds()
-    return {
-        "collection": collection,
-        "thresholds": thresholdsProvenance(firstThresholdsFile(layers["iqQaMetrics"])),
-        "thresholdLayers": [f"{key}: {source}" for key, source in sources.items()],
-        "drpQaVersion": _drpQaVersion(),
-        **extra,
-    }
+    """Return the provenance of a collection read from qadb: the collection, the drp_qa reading it, and ``extra``.
+
+    The thresholds the images were judged with are not here: they are read with the images
+    (`QadbMetricsStore.thresholdsFiles`), as qadb cites them.
+    """
+    return {"collection": collection, "drpQaVersion": _drpQaVersion(), **extra}
 
 
 #: What `QadbMetricsStore`'s ``readOpdb`` returns: the visits' times and sequences, and the notes on them.
@@ -70,9 +67,8 @@ class QadbMetricsStore(MetricsStore):
     ----------
     read : callable
         ``read(since)`` returns new rows as `pfs.drp.qa.qadb.reader.readQadb` does: every
-        image when ``since`` is None, else those loaded at or after it.
-    layers : mapping
-        The thresholds each task judges with (`serving.taskThresholds`).
+        image when ``since`` is None, else those loaded at or after it, with the
+        thresholds they cite (``thresholds``, ``thresholdsFiles``).
     provenance : mapping
         What the app's provenance bar shows (``collection``, ``thresholds``, ...).
     minInterval : `float`
@@ -96,7 +92,6 @@ class QadbMetricsStore(MetricsStore):
     def __init__(
         self,
         read: Callable[[Any], Mapping[str, pd.DataFrame]],
-        layers: Mapping[str, list],
         provenance: Mapping,
         minInterval: float = 15.0,
         clock: Callable[[], float] = time.monotonic,
@@ -104,7 +99,6 @@ class QadbMetricsStore(MetricsStore):
         recentVisits: int | None = 300,
     ):
         self._read = read
-        self.layers = layers
         self.minInterval = minInterval
         self._clock = clock
         self._readOpdb = readOpdb
@@ -137,7 +131,6 @@ class QadbMetricsStore(MetricsStore):
         """
         return cls(
             lambda since: readQadb(qadb, collection, first, last, since),
-            taskThresholds()[0],
             qadbProvenance(f"{collection} (qadb, live)", builtAt="live"),
             minInterval,
             readOpdb=None if opdb is None else opdbReader(opdb),
@@ -147,8 +140,9 @@ class QadbMetricsStore(MetricsStore):
     def fromSnapshot(cls, directory: Path | str) -> "QadbMetricsStore":
         """Return the store of a qadb snapshot (`qadbSource.writeSnapshot`), read once; it never refreshes.
 
-        The stored verdicts are the snapshot's; the limits shown beside each value are this drp_qa's.
-        A snapshot written with an opdb holds its ``opdbVisitTimes`` and ``notes`` too.
+        The verdicts and the limits beside each value are the snapshot's: the thresholds its images
+        cite. A snapshot written before those were read back shows no limits. One written with an
+        opdb holds its ``opdbVisitTimes`` and ``notes`` too.
         """
         tables, provenance = readSnapshot(directory)
         none = {name: frame.iloc[:0] for name, frame in tables.items()}
@@ -157,7 +151,6 @@ class QadbMetricsStore(MetricsStore):
             readOpdb = lambda visits: (tables["opdbVisitTimes"], tables["notes"])  # noqa: E731
         store = cls(
             lambda since: tables if since is None else none,
-            taskThresholds()[0],
             provenance,
             0,
             readOpdb=readOpdb,
@@ -212,7 +205,13 @@ class QadbMetricsStore(MetricsStore):
         loads = set(iq[[*_IMAGE, "decidedAt"]].itertuples(index=False, name=None))
         if loads <= self._seenAtSince:
             return False
-        new = metricsTableFromQadb(tables, self.layers)
+        new = metricsTableFromQadb(tables)
+        files = tables.get("thresholdsFiles")
+        if files is not None and len(files):
+            files = pd.concat([self.thresholdsFiles, files], ignore_index=True)
+            self.thresholdsFiles = files.drop_duplicates(THRESHOLDS_ID, keep="last").sort_values(
+                THRESHOLDS_ID, ignore_index=True
+            )
         judged = pd.MultiIndex.from_frame(iq[_IMAGE])
         kept = self.table[~pd.MultiIndex.from_frame(self.table[_IMAGE]).isin(judged)]
         times = pd.concat([self._qadbTimes, tables["visitTimes"].reindex(columns=_TIMES)], ignore_index=True)

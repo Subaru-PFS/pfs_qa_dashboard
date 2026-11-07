@@ -40,9 +40,24 @@ def _read(qadb, collection, first, last, since=None):
             "qaReason": [""],
             "calexpRun": [""],
             "decidedAt": [pd.Timestamp("2026-11-01 19:00")],
+            "thresholdsId": pd.array([1], dtype="Int64"),
         }
     )
     empty = pd.DataFrame(columns=["visit", "arm", "spectrograph", "decidedAt"])
+    thresholds = pd.DataFrame(
+        {
+            "thresholdsId": [1],
+            "metric": ["medFwhm"],
+            "population": [""],
+            "higherIsWorse": [True],
+            "absolute": [False],
+            "method": ["percentile"],
+            "warn": [3.0],
+            "fail": [4.0],
+            "provenance": ["test"],
+        }
+    )
+    files = pd.DataFrame({"thresholdsId": [1], "name": ["iqQaThresholds-test.yaml"], "nEntries": [1]})
     times = pd.DataFrame(
         {
             "pfs_visit_id": [1001],
@@ -54,6 +69,8 @@ def _read(qadb, collection, first, last, since=None):
         "iqQaMetrics": iq,
         "dmLineResidualSummary": empty,
         "dmLineResidualMetrics": empty,
+        "thresholds": thresholds,
+        "thresholdsFiles": files,
         "visitTimes": times,
     }
 
@@ -79,6 +96,9 @@ def testSnapshotWritesWhatServeReads(tmp_path, monkeypatch):
     store = QadbMetricsStore.fromSnapshot(tmp_path / "snap")
     assert store.provenance["collection"] == "c (qadb snapshot)"
     assert store.images()["visit"].tolist() == [1001]
+    # The thresholds cited travel with the snapshot.
+    assert store.thresholdsFiles["name"].tolist() == ["iqQaThresholds-test.yaml"]
+    assert store.trend("iqQaMetrics", "medFwhm").empty  # not measured: NaN values are left out
     # Negative control: a snapshot needs somewhere to go.
     with pytest.raises(SystemExit):
         _cli().makeParser().parse_args(["snapshot", "--collection", "c"])
