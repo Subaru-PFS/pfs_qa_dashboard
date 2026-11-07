@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 from pfs.drp.qa.metrics.gate import judge
-from pfs.drp.qa.qadb.reader import THRESHOLDS_ID, thresholdsTables
+from pfs.drp.qa.qadb.reader import THRESHOLDS_IDS, layeredThresholds, thresholdsTables
 from pfs.qa.dashboard.schema import (
     IMAGE_STATUS_ORDER,
     METRICS_COLUMNS,
@@ -102,35 +102,39 @@ def inferSequences(images: pd.DataFrame, visitTimes: pd.DataFrame | None = None)
 
 def _byThresholds(
     rows: pd.DataFrame, tables: Mapping[int, pd.DataFrame]
-) -> Iterator[tuple[pd.DataFrame, pd.DataFrame | None]]:
-    """Yield the rows judged with each thresholds file and the file's table; `None` for rows citing none.
+) -> Iterator[tuple[pd.DataFrame, list[pd.DataFrame]]]:
+    """Yield the rows judged with each set of thresholds layers and the layers' tables, in the order judged.
 
-    Rows without a ``thresholdsId`` column (a read older than it) all cite none.
+    The layers are the image's ``thresholdsIds``, every layer its task judged with
+    (`pfs.drp.qa.qadb.reader.layeredThresholds`). Rows citing none, and rows without the
+    column (a snapshot older than it), get no table.
     """
-    if THRESHOLDS_ID not in rows.columns:
-        yield rows, None
+    if THRESHOLDS_IDS not in rows.columns:
+        yield rows, []
         return
-    for thresholdsId, group in rows.groupby(THRESHOLDS_ID, dropna=False, sort=False):
-        yield group, None if pd.isna(thresholdsId) else tables.get(int(thresholdsId))
+    keys = rows[THRESHOLDS_IDS].fillna("").astype(str)
+    for key, group in rows.groupby(keys.to_numpy(), sort=False):
+        yield group, layeredThresholds(key, tables)
 
 
-def _measured(table: pd.DataFrame, metrics: pd.DataFrame) -> pd.DataFrame:
-    """Return the entries of ``table`` on metrics ``metrics`` has columns for.
+def _measured(layers: list[pd.DataFrame], metrics: pd.DataFrame) -> list[pd.DataFrame]:
+    """Return each layer's entries on metrics ``metrics`` has columns for, layers left empty dropped.
 
     The gate refuses a table naming a metric the task did not measure; the dashboard shows what
     is stored, and an entry on a metric qadb does not hold simply has no value to judge.
     """
-    return table[table["metric"].isin(metrics.columns)]
+    kept = [table[table["metric"].isin(metrics.columns)] for table in layers]
+    return [table for table in kept if not table.empty]
 
 
 def _iqRows(iq: pd.DataFrame, tables: Mapping[int, pd.DataFrame]) -> pd.DataFrame:
     """Per-metric rows of ``iqQaMetrics``: each image's values, judged with the thresholds it cites, and its stored verdict."""
     parts = []
-    for rows, table in _byThresholds(iq, tables):
+    for rows, layers in _byThresholds(iq, tables):
         rows = rows.reset_index(drop=True)
         judgedNames: set[str] = set()
-        entries = _measured(table, rows) if table is not None else None
-        if entries is not None and not entries.empty:
+        entries = _measured(layers, rows)
+        if entries:
             judged = judge(rows, entries)
             judged = judged.assign(
                 source="iqQaMetrics",
@@ -204,17 +208,20 @@ def _lineLimits(metrics: pd.DataFrame, tables: Mapping[int, pd.DataFrame]) -> pd
     """Return ``warn``, ``fail`` and ``population`` for each ``dmLineResidualMetrics`` row.
 
     The task stores each row's verdict but not the thresholds behind it; these are what
-    `pfs.drp.qa.metrics.gate.judge` finds for the row in the file its image cites.
+    `pfs.drp.qa.metrics.gate.judge` finds for the row in the layers its image cites, in the
+    order judged: the drift rows, which the run25 file leaves to the config's fields, get
+    the config layer's limits.
     """
     limits = pd.DataFrame({"warn": np.nan, "fail": np.nan, "population": ""}, index=metrics.index)
-    for rows, table in _byThresholds(metrics, tables):
-        if table is None:
+    for rows, layers in _byThresholds(metrics, tables):
+        if not layers:
             continue
         for name, named in rows.groupby("metric", sort=False):
-            entries = table[table["metric"] == name]
-            if entries.empty:
+            entries = [table[table["metric"] == name] for table in layers]
+            entries = [table for table in entries if not table.empty]
+            if not entries:
                 continue
-            wide = named.drop(columns=["metric", "value", "status", THRESHOLDS_ID], errors="ignore")
+            wide = named.drop(columns=["metric", "value", "status", THRESHOLDS_IDS], errors="ignore")
             wide = wide.assign(**{name: named["value"].to_numpy()})
             judged = judge(wide.reset_index(drop=True), entries)
             limits.loc[named.index, ["warn", "fail", "population"]] = judged[
@@ -246,7 +253,7 @@ def _lineRows(
         ],
     ).drop(columns=["qaReason", "recommendedAction"])
     return pd.concat(
-        [rows.drop(columns=["cameraSet", THRESHOLDS_ID], errors="ignore"), verdicts], ignore_index=True
+        [rows.drop(columns=["cameraSet", THRESHOLDS_IDS], errors="ignore"), verdicts], ignore_index=True
     )
 
 
@@ -263,18 +270,19 @@ def buildMetricsTable(
     ----------
     iqQaMetrics : `pandas.DataFrame`
         The collection's ``iqQaMetrics`` rows, one per image, each with the
-        ``thresholdsId`` it cites (`pfs.drp.qa.qadb.reader.readQadb`).
+        thresholds layers it cites: ``thresholdsIds``, every layer in the
+        order judged (`pfs.drp.qa.qadb.reader.readQadb`).
     thresholds : `pandas.DataFrame`, optional
-        The cited files' entries, as `~pfs.drp.qa.qadb.reader.readQadb`
+        The cited layers' entries, as `~pfs.drp.qa.qadb.reader.readQadb`
         returns them (``thresholds``): each image's metrics are judged with
-        the file its ``thresholdsId`` names, and the entry's status and
-        limits recorded beside the value. The stored verdict of each image
-        is kept as it is. Without them, or for an image citing none, values
-        have no limits.
+        the layers its ``thresholdsIds`` name, in that order, as the task
+        did, and the entry's status and limits recorded beside the value.
+        The stored verdict of each image is kept as it is. Without them, or
+        for an image citing none, values have no limits.
     dmLineResidualSummary, dmLineResidualMetrics : `pandas.DataFrame`, optional
         The same collection's ``dmLineResiduals`` outputs, with their
-        ``thresholdsId``: each stored line-residual verdict gets the limits
-        of the file its image cites.
+        ``thresholdsIds``: each stored line-residual verdict gets the limits
+        of the layers its image cites.
     visitTimes : `pandas.DataFrame`, optional
         opdb's visit listing, for times and sequences (`inferSequences`).
 

@@ -11,6 +11,7 @@ FILE = 1
 
 
 def image(visit, arm, status, medFwhm, decidedAt, seqName="Arc: Neon", thresholdsId=FILE):
+    """Return an ``iqQaMetrics`` row as the reader gives it; ``thresholdsId`` None cites no layer."""
     return {
         "visit": visit,
         "arm": arm,
@@ -28,7 +29,7 @@ def image(visit, arm, status, medFwhm, decidedAt, seqName="Arc: Neon", threshold
         "qaReason": "" if status == "PASS" else "medFwhm",
         "calexpRun": "",
         "decidedAt": decidedAt,
-        "thresholdsId": thresholdsId,
+        "thresholdsIds": "" if thresholdsId is None or pd.isna(thresholdsId) else str(thresholdsId),
     }
 
 
@@ -105,10 +106,9 @@ def thresholdsTables(ids):
 def tables(images):
     """Return what `pfs.drp.qa.qadb.reader.readQadb` returns for some images: no line residuals."""
     iq = pd.DataFrame(images)
-    if "thresholdsId" in iq:
-        iq["thresholdsId"] = iq["thresholdsId"].astype("Int64")
     visits = sorted(set(iq["visit"])) if len(iq) else []
-    thresholds, files = thresholdsTables(iq.get("thresholdsId", []))
+    cited = [int(i) for key in iq.get("thresholdsIds", []) for i in key.split(",") if i]
+    thresholds, files = thresholdsTables(cited)
     return {
         "iqQaMetrics": iq,
         "dmLineResidualSummary": pd.DataFrame(columns=["visit", "arm", "spectrograph", "decidedAt"]),
@@ -418,7 +418,7 @@ def testASnapshotOlderThanTheThresholdsServes(tmp_path, clock):
         for name, frame in qadb.read(None).items()
         if name not in ("thresholds", "thresholdsFiles")
     }
-    old["iqQaMetrics"] = old["iqQaMetrics"].drop(columns="thresholdsId")
+    old["iqQaMetrics"] = old["iqQaMetrics"].drop(columns="thresholdsIds")
     store = QadbMetricsStore.fromSnapshot(writeSnapshot(old, tmp_path / "old", {"collection": "c"}))
     assert store.images()["status"].tolist() == ["PASS"]
     assert store.trend("iqQaMetrics", "medFwhm")["warn"].isna().all()

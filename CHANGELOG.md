@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Limits from every thresholds layer** (PIPE2D-1991) — each value is judged with every layer qadb records its
+  image's task judged with, in the order judged (`readQadb`'s `thresholdsIds`: the files, then the config's
+  threshold fields as `<task>.config`), so a metric the first layer leaves out, the `medianDeltaX/Y` drift rows of
+  `dmLineResiduals` above all, now shows the limits that judged it. `thresholdsId` is no longer read: a snapshot
+  with it alone shows values without limits. The provenance strip names a config layer as such. Needs drp_qa with
+  `pfs.drp.qa.qadb.reader.layeredThresholds` (after 0.1.4) and a qadb at spt_qa_database 0.4.0.
+
 ## [0.3.0] - 2026-11-06
 
 ### Changed

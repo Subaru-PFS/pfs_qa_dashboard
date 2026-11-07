@@ -17,6 +17,7 @@ import pandas as pd
 import panel as pn
 import param
 
+from pfs.drp.qa.metrics.gate import isConfigLayer
 from pfs.qa.dashboard.schema import IMAGE_STATUS_ORDER
 from pfs.qa.dashboard.store import MetricsStore, visitTimeline
 
@@ -44,16 +45,23 @@ def _esc(value) -> str:
 
 
 def thresholdsLines(thresholdsFiles: pd.DataFrame) -> list[str]:
-    """Return one line per thresholds file the images cite, for the provenance strip.
+    """Return one line per thresholds layer the images cite, for the provenance strip.
 
     ``iqQaThresholds-run25.yaml, derived 2026-10-19 from runs 25, 29 with drp_stella
-    w.2026.41-6-ge56938d2, obs_pfs w.2026.40, datamodel w.2026.40 (124 entries)``, from
+    w.2026.41-6-ge56938d2, obs_pfs w.2026.40, datamodel w.2026.40 (124 entries)``, and
+    ``dmLineResiduals.config, the task config's threshold fields (4 entries)`` for a config
+    layer (`pfs.drp.qa.metrics.gate.isConfigLayer`), from
     `pfs.drp.qa.qadb.reader.readQadb`'s ``thresholdsFiles``; nothing for none.
     """
     if thresholdsFiles is None or thresholdsFiles.empty:
         return []
     lines = []
     for row in thresholdsFiles.sort_values("thresholdsId").to_dict("records"):
+        if isConfigLayer(str(row.get("name", ""))):
+            line = f"{row['name']}, the task config's threshold fields"
+            line += f" ({int(row['nEntries'])} entries)" if pd.notna(row.get("nEntries")) else ""
+            lines.append(line)
+            continue
         derived = row.get("derivedOn")
         runs = row.get("referenceRuns")
         pipeline = ", ".join(
