@@ -30,8 +30,9 @@ with `python:` first on `PYTHONPATH`.
 back (`pfs.drp.qa.qadb.reader.readQadb`) and every `--refresh` seconds reads only the images loaded since
 (`qa_gate.decided_at`), so the page follows the run. One read serves every browser session. An image judged in more
 than one RUN of the collection shows the latest. Each value's limits are the thresholds qadb records its image was
-judged with: every layer the task judged with, in order (`qa_gate_thresholds`: its thresholds files, then its
-config's threshold fields as `<task>.config`), whose entries the reader returns beside the images. The gate's
+judged with: every layer the task judged with, in order (`qa_processing_thresholds`, once per Butler RUN and task:
+its thresholds files, then its config's threshold fields as `<task>.config`), whose entries the reader returns beside
+the images. The gate's
 `judge` finds each value's entry in the first layer that has one, as the task did, so the limits shown are the ones
 the image was judged with, and a config override or a thresholds file changed since cannot make them disagree with
 the stored verdict. The image verdicts and the line-residual rows' statuses are shown as stored; `imageQualityQa`
