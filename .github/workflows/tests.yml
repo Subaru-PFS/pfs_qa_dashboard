@@ -15,9 +15,9 @@ concurrency:
 
 env:
   # The drp_qa the dashboard reads qadb with (pfs.drp.qa.qadb.reader, with its thresholds
-  # tables) and matches images to entries with (pfs.drp.qa.metrics.gate): a release tag, the
+  # layers) and matches images to entries with (pfs.drp.qa.metrics.gate): a release tag, the
   # first that has both.
-  DRP_QA_REF: 0.1.4
+  DRP_QA_REF: 0.2.0
 
 jobs:
   tests:

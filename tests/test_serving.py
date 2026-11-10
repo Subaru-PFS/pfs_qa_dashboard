@@ -35,7 +35,7 @@ def _iq() -> pd.DataFrame:
             "qaStatus": ["PASS", "PASS", "FAIL", "PASS"],
             "qaReason": ["", "", "medFWHM=4.50px >= fail threshold 4px", ""],
             "calexpRun": ["run/1"] * 4,
-            "thresholdsId": pd.array([IQ_FILE] * 4, dtype="Int64"),
+            "thresholdsIds": [str(IQ_FILE)] * 4,
         }
     )
 
@@ -49,7 +49,7 @@ def _lines() -> tuple[pd.DataFrame, pd.DataFrame]:
             "qaStatus": ["WARN", "PASS", "PASS", "UNKNOWN"],
             "qaReason": ["calib NeI: |medianDeltaY|=1.2px >= warn threshold 1px", "", "", ""],
             "recommendedAction": ["APPLY_SHIFT", "NOMINAL", "NOMINAL", "INSUFFICIENT_DATA"],
-            "thresholdsId": pd.array([DM_FILE] * 4, dtype="Int64"),
+            "thresholdsIds": [str(DM_FILE)] * 4,
         }
     )
     metrics = pd.DataFrame(
@@ -64,7 +64,7 @@ def _lines() -> tuple[pd.DataFrame, pd.DataFrame]:
             "metric": ["medianDeltaY", "robustRmsDeltaY"],
             "value": [1.2, 0.05],
             "status": ["WARN", ""],
-            "thresholdsId": pd.array([DM_FILE] * 2, dtype="Int64"),
+            "thresholdsIds": [str(DM_FILE)] * 2,
         }
     )
     return summary, metrics
@@ -117,7 +117,7 @@ def testBuildMetricsTable(thresholds):
     assert stored[101] == "PASS"
     assert table["obsType"].ne("").all()
     # Negative control: the ids are not rows of the table.
-    assert "thresholdsId" not in table.columns
+    assert "thresholdsIds" not in table.columns
 
 
 def testLimitsAreEachImagesOwnThresholds(makeThresholds):
@@ -126,7 +126,7 @@ def testLimitsAreEachImagesOwnThresholds(makeThresholds):
         (IQ_FILE, "medFwhm", 3.0, 4.0, {"arm": "b"}), (3, "medFwhm", 4.6, 5.0, {"arm": "b"})
     )
     iq = _iq()
-    iq["thresholdsId"] = pd.array([IQ_FILE, IQ_FILE, 3, pd.NA], dtype="Int64")
+    iq["thresholdsIds"] = [str(IQ_FILE), str(IQ_FILE), "3", ""]
     table = buildMetricsTable(iq, thresholds)
     fwhm = table[(table["source"] == "iqQaMetrics") & (table["metric"] == "medFwhm")].set_index("visit")
     assert fwhm["status"].to_dict() == {100: "PASS", 101: "WARN", 102: "PASS", 200: ""}
@@ -138,14 +138,14 @@ def testLimitsAreEachImagesOwnThresholds(makeThresholds):
     verdict = table[(table["source"] == "iqQaMetrics") & (table["metric"] == VERDICT)].set_index("visit")
     assert verdict.loc[102, "status"] == "FAIL"
     # Negative control: one file for all would call 102 FAIL.
-    same = buildMetricsTable(iq.assign(thresholdsId=pd.array([IQ_FILE] * 4, dtype="Int64")), thresholds)
+    same = buildMetricsTable(iq.assign(thresholdsIds=str(IQ_FILE)), thresholds)
     sameFwhm = same[(same["source"] == "iqQaMetrics") & (same["metric"] == "medFwhm")].set_index("visit")
     assert sameFwhm.loc[102, "status"] == "FAIL"
 
 
 def testWithoutThresholdsValuesHaveNoLimits():
-    """A read without thresholds (a snapshot older than them, no thresholdsId) keeps every value and verdict."""
-    iq = _iq().drop(columns="thresholdsId")
+    """A read without thresholds (a snapshot older than them, no thresholdsIds) keeps every value and verdict."""
+    iq = _iq().drop(columns="thresholdsIds")
     table = buildMetricsTable(iq)
     fwhm = table[(table["source"] == "iqQaMetrics") & (table["metric"] == "medFwhm")].set_index("visit")
     assert fwhm["value"].to_dict() == {100: 2.5, 101: 3.5, 102: 4.5, 200: 2.0}
@@ -198,9 +198,7 @@ def testLineThresholdsAreRecorded(makeThresholds):
     # The stored verdict is kept as it is.
     assert lines.loc["calib", "status"] == "WARN" and lines.loc["visit", "status"] == ""
     # Negative control: a file the line rows do not cite gives them no thresholds.
-    other = buildMetricsTable(
-        _iq(), thresholds, summary, metrics.assign(thresholdsId=pd.array([9, 9], dtype="Int64"))
-    )
+    other = buildMetricsTable(_iq(), thresholds, summary, metrics.assign(thresholdsIds="9"))
     assert other.loc[other["source"] == "dmLineResidualMetrics", ["warn", "fail"]].isna().all().all()
 
 
@@ -298,3 +296,40 @@ def testVisitsNotJudgedAreLeftOut(thresholds):
     assert set(table["visit"]) == {100, 101, 102, 200}
     # Negative control: the judged visits' line-residual verdicts are all kept.
     assert (table["source"] == "dmLineResidualSummary").sum() == 4
+
+
+def testLimitsComeFromTheFirstLayerThatHasThem(makeThresholds):
+    """With every layer cited, a metric the file leaves out gets the next layer's limits, as the task judged it."""
+    CONFIG = 4
+    thresholds = makeThresholds(
+        (IQ_FILE, "medFwhm", 3.0, 4.0, {"arm": "b"}),
+        (CONFIG, "medFwhm", 9.0, 9.5, {}),  # the config's fields: judged only where the file has no entry
+        (CONFIG, "medDxCenter", 1.0, 2.0, {}),
+        (DM_FILE, "robustRmsDeltaY", 0.1, 0.2, {"reference": "visit", "statusType": "RESERVED"}),
+        (5, "medianDeltaY", 1.0, 2.0, {"reference": "calib"}),  # dmLineResiduals.config
+    )
+    iq = _iq().assign(medDxCenter=[0.5, 1.5, 0.2, 0.1], thresholdsIds=f"{IQ_FILE},{CONFIG}")
+    summary, metrics = _lines()
+    summary = summary.assign(thresholdsIds=f"{DM_FILE},5")
+    metrics = metrics.assign(thresholdsIds=f"{DM_FILE},5")
+    table = buildMetricsTable(iq, thresholds, summary, metrics)
+    assert not {"thresholdsId", "thresholdsIds"} & set(table.columns)
+    fwhm = table[(table["source"] == "iqQaMetrics") & (table["metric"] == "medFwhm")].set_index("visit")
+    assert fwhm["warn"].to_dict() == {100: 3.0, 101: 3.0, 102: 3.0, 200: 3.0}  # the file, first
+    dx = table[(table["source"] == "iqQaMetrics") & (table["metric"] == "medDxCenter")].set_index("visit")
+    assert dx["warn"].to_dict() == {100: 1.0, 101: 1.0, 102: 1.0, 200: 1.0}  # the config layer, after it
+    assert dx["status"].to_dict() == {100: "PASS", 101: "WARN", 102: "PASS", 200: "PASS"}
+    lines = table[table["source"] == "dmLineResidualMetrics"].set_index("reference")
+    assert lines.loc["calib", ["warn", "fail"]].tolist() == [1.0, 2.0]  # the drift row: the config layer's
+    assert lines.loc["visit", ["warn", "fail"]].tolist() == [0.1, 0.2]  # the scatter row: the file's
+    # Negative control: the first layer alone gives the drift row and medDxCenter nothing.
+    first = buildMetricsTable(
+        iq.assign(thresholdsIds=str(IQ_FILE)),
+        thresholds,
+        summary.assign(thresholdsIds=str(DM_FILE)),
+        metrics.assign(thresholdsIds=str(DM_FILE)),
+    )
+    firstLines = first[first["source"] == "dmLineResidualMetrics"].set_index("reference")
+    assert firstLines.loc["calib", ["warn", "fail"]].isna().all()
+    firstDx = first[(first["source"] == "iqQaMetrics") & (first["metric"] == "medDxCenter")]
+    assert firstDx["warn"].isna().all() and (firstDx["status"] == "").all()

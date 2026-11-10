@@ -40,7 +40,7 @@ def _read(qadb, collection, first, last, since=None):
             "qaReason": [""],
             "calexpRun": [""],
             "decidedAt": [pd.Timestamp("2026-11-01 19:00")],
-            "thresholdsId": pd.array([1], dtype="Int64"),
+            "thresholdsIds": ["1"],
         }
     )
     empty = pd.DataFrame(columns=["visit", "arm", "spectrograph", "decidedAt"])

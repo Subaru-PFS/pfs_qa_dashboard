@@ -114,6 +114,17 @@ def testProvenanceNamesTheThresholdsCited(makeThresholdsFiles):
     assert len(lines) == 2 and lines[0].startswith("iqQaThresholds") and thresholdsLines(pd.DataFrame()) == []
 
 
+def testConfigLayerLineNamesTheConfig(makeThresholdsFiles):
+    """A config layer has no derivation to show: the strip says what it is."""
+    files = makeThresholdsFiles((1, "iqQaThresholds-run25.yaml"), (2, "dmLineResiduals.config"))
+    files.loc[files["name"] == "dmLineResiduals.config", ["derivedOn", "collection", "referenceRuns"]] = None
+    files.loc[files["name"] == "dmLineResiduals.config", "nEntries"] = 4
+    lines = thresholdsLines(files)
+    assert lines[1] == "dmLineResiduals.config, the task config's threshold fields (4 entries)"
+    # Negative control: a file keeps its derivation line.
+    assert "derived 2026-10-19 from runs 25, 29" in lines[0]
+
+
 def testEmptyStoreSaysSo():
     dashboard = Dashboard(_liveStore([]))
     assert "No visit in qadb yet" in dashboard.summaryHtml()
