@@ -16,8 +16,8 @@ concurrency:
 env:
   # The drp_qa the dashboard reads qadb with (pfs.drp.qa.qadb.reader, with its thresholds
   # layers) and matches images to entries with (pfs.drp.qa.metrics.gate): a release tag, the
-  # first that has both. Until drp_qa's PIPE2D-1991 branch is merged and tagged, that branch.
-  DRP_QA_REF: tickets/PIPE2D-1991
+  # first that has both.
+  DRP_QA_REF: 0.2.0
 
 jobs:
   tests:
