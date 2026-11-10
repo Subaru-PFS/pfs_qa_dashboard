@@ -14,7 +14,7 @@ All notable changes to this project are documented here. The format follows
   threshold fields as `<task>.config`), so a metric the first layer leaves out, the `medianDeltaX/Y` drift rows of
   `dmLineResiduals` above all, now shows the limits that judged it. `thresholdsId` is no longer read: a snapshot
   with it alone shows values without limits. The provenance strip names a config layer as such. Needs drp_qa with
-  `pfs.drp.qa.qadb.reader.layeredThresholds` (after 0.1.4) and a qadb at spt_qa_database 0.4.0.
+  `pfs.drp.qa.qadb.reader.layeredThresholds` (after 0.1.4) and a qadb at spt_qa_database 0.5.0.
 
 ## [0.3.0] - 2026-11-06
 
