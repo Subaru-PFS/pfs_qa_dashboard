@@ -4,12 +4,16 @@ Each method is one SQL query over the table `serving.buildMetricsTable` built,
 with bound parameters, returning a DataFrame. No Butler, no opdb.
 """
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping, Sequence
 
 import duckdb
 import numpy as np
 import pandas as pd
 
+from pfs.drp.qa.metrics.runComparison import COMPARED_METRICS, COMPARISON_COLUMNS, compareRuns, metricRows
+from pfs.drp.qa.metrics.visitRollup import rollupVisits
+from pfs.drp.qa.qadb.compareRuns import comparisonTables
+from pfs.drp.qa.qadb.tables import cameraName
 from pfs.qa.dashboard.schema import IMAGE_STATUS_ORDER, METRICS_COLUMNS, NOTE_COLUMNS, VERDICT
 
 __all__ = ["VERDICT_SOURCES", "MetricsStore", "emptyMetricsTable", "visitTimeline"]
@@ -17,8 +21,10 @@ __all__ = ["VERDICT_SOURCES", "MetricsStore", "emptyMetricsTable", "visitTimelin
 #: Sources whose verdicts roll up into an image's status.
 VERDICT_SOURCES = ("iqQaMetrics", "dmLineResidualSummary")
 
-# Worst verdict of an image over VERDICT_SOURCES. Standing in for a stored visit
-# rollup (qaVisitSummary), which should put it in the metrics table.
+#: The task behind each of an image's verdict columns.
+_TASKS = {"iqStatus": "imageQualityQa", "lineStatus": "dmLineResiduals"}
+
+# Worst verdict of an image over VERDICT_SOURCES.
 _RANK = "CASE status WHEN 'FAIL' THEN 3 WHEN 'WARN' THEN 2 WHEN 'PASS' THEN 1 ELSE 0 END"
 _IMAGES_SQL = f"""
 SELECT visit, arm, spectrograph,
@@ -56,6 +62,16 @@ class MetricsStore:
     thresholdsFiles : `pandas.DataFrame`, optional
         The thresholds files the images cite, as `pfs.drp.qa.qadb.reader.readQadb` returns
         them (``thresholdsFiles``), for the provenance strip; none by default.
+
+    Attributes
+    ----------
+    raw : `dict` [`str`, `pandas.DataFrame`]
+        The metrics tables as qadb returned them (``iqQaMetrics``, ``dmLineResidualSummary``,
+        ``dmLineResidualMetrics``), which the comparison with the references is made from;
+        empty for a store built from a metrics table alone.
+    references : `dict` [`str`, `list` [`pandas.DataFrame`]]
+        The reference visits' metrics tables by reference name, as
+        `pfs.drp.qa.metrics.runComparison.compareRuns` takes them; none by default.
     """
 
     #: Whether `refresh` can bring new visits (`pfs.qa.dashboard.live.QadbMetricsStore` over qadb).
@@ -78,6 +94,8 @@ class MetricsStore:
         self.provenance = dict(provenance or {})
         self.noteTable = pd.DataFrame(columns=NOTE_COLUMNS) if notes is None else notes
         self.thresholdsFiles = pd.DataFrame() if thresholdsFiles is None else thresholdsFiles
+        self.raw: dict[str, pd.DataFrame] = {}
+        self.references: dict[str, list[pd.DataFrame]] = {}
         self._db = duckdb.connect()
         self._register()
 
@@ -117,6 +135,55 @@ class MetricsStore:
         images["status"] = [IMAGE_STATUS_ORDER[int(rank)] for rank in images.pop("rank")]
         images["reasons"] = images["reasons"].fillna("")
         return images
+
+    def rollup(self, first: int = 0, last: int = 2**31) -> pd.DataFrame:
+        """Return one row per visit ``first``..``last``: the worst of its images' statuses and what decided it.
+
+        `pfs.drp.qa.metrics.visitRollup.rollupVisits` over `images`:
+        `~pfs.drp.qa.metrics.visitRollup.ROLLUP_COLUMNS`, where ``decidedByTask`` names the
+        task or tasks whose verdict the deciding image's status is.
+        """
+        gate = self.images(first, last).rename(columns={"status": "qaStatus", "reasons": "qaReason"})
+        gate["decidedByTask"] = [
+            ", ".join(task for column, task in _TASKS.items() if row[column] == row["qaStatus"])
+            for row in gate.to_dict("records")
+        ]
+        return rollupVisits(gate)
+
+    def _runTables(self, visits: Collection[int] | None) -> list[pd.DataFrame]:
+        """Return the tables `compareRuns` takes, of ``visits`` or of every visit."""
+        if not self.raw:
+            return []
+        tables = comparisonTables(self.raw)
+        if visits is None:
+            return tables
+        return [table[table["visit"].isin(list(visits))] for table in tables]
+
+    def comparison(self, visits: Collection[int] | None = None) -> pd.DataFrame:
+        """Return the medians of ``visits`` (every visit by default) against each reference's.
+
+        `pfs.drp.qa.metrics.runComparison.compareRuns`, made when asked for:
+        `~pfs.drp.qa.metrics.runComparison.COMPARISON_COLUMNS`, with no rows without references.
+        """
+        tables = [table for table in self._runTables(visits) if len(table)]
+        if not tables or not self.references:
+            return pd.DataFrame(columns=list(COMPARISON_COLUMNS))
+        return compareRuns(tables, self.references)
+
+    def metricValues(
+        self, visits: Collection[int] | None = None, metrics: Sequence[str] = COMPARED_METRICS
+    ) -> pd.DataFrame:
+        """Return the values the comparison's medians are of: one row per image, population and metric.
+
+        `pfs.drp.qa.metrics.runComparison.metricRows` of ``visits`` (every visit by default),
+        with ``camera``.
+        """
+        parts = [metricRows(table, metrics) for table in self._runTables(visits) if len(table)]
+        rows = pd.concat(parts, ignore_index=True) if parts else metricRows(pd.DataFrame(), metrics)
+        rows["camera"] = [
+            cameraName(arm, spec) for arm, spec in zip(rows["arm"], rows["spectrograph"], strict=True)
+        ]
+        return rows
 
     def notes(self, first: int = 0, last: int = 2**31) -> pd.DataFrame:
         """Return the opdb notes on visits ``first``..``last``: ``visit``, ``arm``, ``spectrograph``, ``source``, ``note``."""

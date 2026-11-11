@@ -92,7 +92,7 @@ def testSnapshotWritesWhatServeReads(tmp_path, monkeypatch):
     monkeypatch.setattr(pfs.drp.qa.qadb.reader, "readQadb", _read)
 
     _cli().main(["snapshot", "--collection", "c", "--out", str(tmp_path / "snap")])
-    assert connected[0]["user"] == "public_user"
+    assert connected[0]["user"] == "pfs"
     store = QadbMetricsStore.fromSnapshot(tmp_path / "snap")
     assert store.provenance["collection"] == "c (qadb snapshot)"
     assert store.images()["visit"].tolist() == [1001]

@@ -7,6 +7,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **A night against the references** (PIPE2D-1923) — a comparison view: a strip of the chosen night's visits (HST
+  evening date), each coloured by the worst of its images' verdicts and naming the camera, task and reason that
+  decided it, and under it one grid per reference, a cell per metric, frame type and camera. A cell shows the
+  difference of the night's median from the reference's (relative where the metric declares a tolerance, in the
+  metric's own units where it does not) with drp_qa's `PASS`/`WARN`/`FAIL`, and how many of the night's visits are
+  beyond the `FAIL` tolerance on their own, so one bad visit shows though the median passes. Choosing a cell lists
+  its populations and each visit's value. References are named at start-up,
+  `--reference NAME=[COLLECTION:]FIRST-LAST` (repeatable), read from qadb once and kept in a snapshot; nothing is
+  stored in qadb. Needs drp_qa with `pfs.drp.qa.qadb.compareRuns.comparisonTables` and
+  `pfs.drp.qa.metrics.runComparison.toleranceStatus`.
+
+### Changed
+
+- `--qadb-user` defaults to `pfs`, the only qadb user.
+
 ## [0.4.0] - 2026-11-10
 
 ### Changed
