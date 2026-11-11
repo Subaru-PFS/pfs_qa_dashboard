@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-10
+
 ### Added
 
 - **A night against the references** (PIPE2D-1923) — a comparison view: a strip of the chosen night's visits (HST
@@ -18,7 +20,7 @@ All notable changes to this project are documented here. The format follows
   its populations and each visit's value. References are named at start-up,
   `--reference NAME=[COLLECTION:]FIRST-LAST` (repeatable), read from qadb once and kept in a snapshot; nothing is
   stored in qadb. Needs drp_qa with `pfs.drp.qa.qadb.compareRuns.comparisonTables` and
-  `pfs.drp.qa.metrics.runComparison.toleranceStatus`.
+  `pfs.drp.qa.metrics.runComparison.toleranceStatus` (0.3.0).
 
 ### Changed
 
