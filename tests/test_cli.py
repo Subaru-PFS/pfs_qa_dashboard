@@ -123,3 +123,17 @@ def testServeRefusesADirectoryThatIsNotASnapshot(tmp_path, monkeypatch, capsys):
     cli.main(["snapshot", "--collection", "c", "--out", str(tmp_path / "snap")])
     cli.main(["serve", "--snapshot", str(tmp_path / "snap")])
     assert served and served[0].snapshot == tmp_path / "snap"
+
+
+def testReferencesNeedTheirOwnNames(capsys):
+    """Two references of one name would show as one, the second's visits under both descriptions."""
+    cli = _cli()
+    with pytest.raises(SystemExit):
+        cli.main(["serve", "--collection", "c", "--reference", "a=1-2", "--reference", "a=5-6"])
+    assert "each needs its own name" in capsys.readouterr().err
+    with pytest.raises(ValueError, match="a given more than once"):
+        QadbMetricsStore.fromQadb(None, "c", references=[cli._reference("a=1-2"), cli._reference("a=5-6")])
+    # Negative control: the same visits under two names are two references.
+    argv = ["serve", "--collection", "c", "--reference", "a=1-2", "--reference", "b=1-2"]
+    args = cli.makeParser().parse_args(argv)
+    assert [reference.name for reference in args.reference] == ["a", "b"]

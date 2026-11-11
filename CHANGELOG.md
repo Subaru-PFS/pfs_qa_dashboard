@@ -17,9 +17,10 @@ All notable changes to this project are documented here. The format follows
   difference of the night's median from the reference's (relative where the metric declares a tolerance, in the
   metric's own units where it does not) with drp_qa's `PASS`/`WARN`/`FAIL`, and how many of the night's visits are
   beyond the `FAIL` tolerance on their own, so one bad visit shows though the median passes. Choosing a cell lists
-  its populations and each visit's value. References are named at start-up,
-  `--reference NAME=[COLLECTION:]FIRST-LAST` (repeatable), read from qadb once and kept in a snapshot; nothing is
-  stored in qadb. Needs drp_qa with `pfs.drp.qa.qadb.compareRuns.comparisonTables` and
+  its populations and each visit's value, opening on the one the cell shows. The grid's rows keep one order (by
+  metric, then frame type) whatever their status, and visits without a time have a row of their own in the strip.
+  References are named at start-up, `--reference NAME=[COLLECTION:]FIRST-LAST` (repeatable, each with its own
+  name), read from qadb once and kept in a snapshot; nothing is stored in qadb. Needs drp_qa with `pfs.drp.qa.qadb.compareRuns.comparisonTables` and
   `pfs.drp.qa.metrics.runComparison.toleranceStatus` (0.3.0).
 
 ### Changed

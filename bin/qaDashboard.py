@@ -98,6 +98,9 @@ def makeParser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> None:
     parser = makeParser()
     args = parser.parse_args(argv)
+    names = [reference.name for reference in args.reference]
+    if len(set(names)) < len(names):
+        parser.error("--reference: each needs its own name")
     if args.command == "serve" and args.snapshot is not None:
         if args.reference:
             parser.error("--reference reads qadb: a snapshot serves the references it was written with")

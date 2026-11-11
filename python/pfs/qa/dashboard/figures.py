@@ -20,12 +20,13 @@ from bokeh.models import (
 from bokeh.plotting import figure
 
 from pfs.drp.qa.metrics.registry import specFor
-from pfs.qa.dashboard.comparison import CELL_KEYS, cameraOrder, metricLabel
+from pfs.qa.dashboard.comparison import CELL_KEYS, cameraOrder, metricLabel, rowOrder
 
 __all__ = [
     "STATUS_COLORS",
     "STATUS_MARKERS",
     "STATUS_MARKS",
+    "UNTIMED",
     "cellDetail",
     "comparisonGrid",
     "differenceText",
@@ -45,6 +46,9 @@ STATUS_MARKERS = {"PASS": "circle", "WARN": "triangle", "FAIL": "diamond", "UNKN
 # Drawn in this order, so the visits to look at lie on top.
 _DRAW_ORDER = ("UNKNOWN", "PASS", "WARN", "FAIL")
 _SIZES = {"PASS": 9, "WARN": 13, "FAIL": 15, "UNKNOWN": 8}
+#: The strip's row for the visits without a time, when the others have one.
+UNTIMED = "no time"
+
 _INK = "#1f2933"
 _MUTED = "#7b8794"
 
@@ -97,15 +101,22 @@ def visitStrip(rollup: pd.DataFrame, timeline: pd.DataFrame, selected: str = "")
     -------
     `bokeh.plotting.figure`
         A row per night (the HST date of its evening), latest at the top, against the HST
-        clock time; without times, one row against the visits in order.
+        clock time. Visits without a time are a row of their own (`UNTIMED`) at the bottom,
+        in order across it; with no times at all, one row against the visits in order.
     """
-    visits = rollup.merge(timeline, on="visit", how="left")
-    timed = bool(len(visits)) and visits["time"].notna().all()
+    visits = rollup.merge(timeline, on="visit", how="left").sort_values("visit", ignore_index=True)
+    known = visits["time"].notna()
+    timed = bool(known.any())
     if timed:
-        noon = pd.to_datetime(visits["night"]) + pd.Timedelta(hours=12)
+        noon = pd.to_datetime(visits["night"].where(known)) + pd.Timedelta(hours=12)
         visits["x"] = (visits["time"] - noon) / pd.Timedelta(hours=1)
-        visits["row"] = [f"{night} ▸" if night == selected else night for night in visits["night"]]
-        visits["when"] = visits["time"].dt.strftime("%Y-%m-%d %H:%M HST")
+        low, high = np.floor(visits["x"].min()), np.ceil(visits["x"].max())
+        visits.loc[~known, "x"] = np.linspace(low, high, int((~known).sum()) + 2)[1:-1]
+        visits["row"] = [
+            UNTIMED if not hasTime else f"{night} ▸" if night == selected else night
+            for night, hasTime in zip(visits["night"], known, strict=True)
+        ]
+        visits["when"] = visits["time"].dt.strftime("%Y-%m-%d %H:%M HST").fillna("")
     else:
         visits["x"] = visits["position"].astype(float)
         visits["row"] = "visits"
@@ -115,7 +126,7 @@ def visitStrip(rollup: pd.DataFrame, timeline: pd.DataFrame, selected: str = "")
         for camera, task in zip(visits["decidedByCamera"], visits["decidedByTask"], strict=True)
     ]
     visits["reason"] = visits["qaReason"].fillna("")
-    rows = sorted(visits["row"].unique())
+    rows = sorted(visits["row"].unique(), key=lambda row: (row != UNTIMED, row))
     plot = figure(
         y_range=rows,
         height=170 + 34 * max(len(rows), 1),
@@ -157,7 +168,6 @@ def visitStrip(rollup: pd.DataFrame, timeline: pd.DataFrame, selected: str = "")
         )
     )
     if timed:
-        low, high = np.floor(visits["x"].min()), np.ceil(visits["x"].max())
         plot.x_range = Range1d(low - 0.25, high + 0.25)
         ticks = [int(tick) for tick in np.arange(low, high + 1)]
         plot.xaxis.ticker = FixedTicker(ticks=ticks)
@@ -193,13 +203,13 @@ def comparisonGrid(
     Returns
     -------
     `bokeh.plotting.figure`
-        Each cell is filled by the status of the night's median against the reference's
+        The rows are in `comparison.rowOrder`, the first at the top. Each cell is filled by the status of the night's median against the reference's
         (the worst of its populations) and says the difference (`differenceText`); below it, how
         many of the night's visits are themselves beyond the ``FAIL`` tolerance.
     """
     cells = cells.reset_index(drop=True).copy()
     cameras = cameraOrder(cells)
-    rows = list(dict.fromkeys(cells["row"]))[::-1]
+    rows = rowOrder(cells)[::-1]
     cells["color"] = cells["status"].map(STATUS_COLORS)
     cells["text"] = [
         f"{STATUS_MARKS[status]} {differenceText(metric, relative, difference)}"

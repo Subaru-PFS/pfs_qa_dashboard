@@ -146,9 +146,18 @@ class QadbMetricsStore(MetricsStore):
         With an ``opdb`` (read-only), visits have its times, sequences and notes. Each of
         ``references`` (`pfs.drp.qa.qadb.compareRuns.Reference`) is read now, from its own
         collection or this one; its visits need not lie within ``first``..``last``.
+
+        Raises
+        ------
+        ValueError
+            If two references share a name.
         """
         from pfs.drp.qa.qadb.compareRuns import metricTables
 
+        names = [reference.name for reference in references]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise ValueError(f"reference names must differ: {', '.join(repeated)} given more than once")
         return cls(
             lambda since: readQadb(qadb, collection, first, last, since),
             qadbProvenance(
@@ -244,7 +253,11 @@ class QadbMetricsStore(MetricsStore):
             self.thresholdsFiles = files.drop_duplicates(THRESHOLDS_ID, keep="last").sort_values(
                 THRESHOLDS_ID, ignore_index=True
             )
-        judged = pd.MultiIndex.from_frame(iq[_IMAGE])
+        # Every image the read holds rows of, in whichever table: an image may have line
+        # residuals and no image-quality row.
+        judged = pd.MultiIndex.from_frame(
+            pd.concat([tables[name][_IMAGE] for name in _RAW], ignore_index=True).drop_duplicates()
+        )
         kept = self.table[~pd.MultiIndex.from_frame(self.table[_IMAGE]).isin(judged)]
         for name in _RAW:
             held = self.raw.get(name)

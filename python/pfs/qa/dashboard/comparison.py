@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from pfs.drp.qa.metrics.registry import specFor
-from pfs.drp.qa.metrics.runComparison import POPULATION_COLUMNS, toleranceStatus
+from pfs.drp.qa.metrics.runComparison import COMPARED_METRICS, POPULATION_COLUMNS, toleranceStatus
 
 __all__ = [
     "ALL_VISITS",
@@ -27,7 +27,9 @@ __all__ = [
     "nightVisits",
     "populationLabel",
     "populationRows",
+    "rowOrder",
     "visitDeviations",
+    "worstFirst",
 ]
 
 #: The night selector's option for every visit, whatever its night.
@@ -132,6 +134,34 @@ def _excess(metric: pd.Series, relative: pd.Series, difference: pd.Series) -> pd
     return directed.where(judged, difference.astype("float64").abs()).fillna(-np.inf)
 
 
+def worstFirst(comparison: pd.DataFrame) -> pd.DataFrame:
+    """Return a comparison's rows worst first: by status, then by how far in the bad direction.
+
+    The first row of a cell is the population the grid shows for it, and the one its
+    detail opens on.
+    """
+    ranked = comparison.assign(
+        rank=comparison["status"].map(_RANK).fillna(0),
+        excess=_excess(comparison["metric"], comparison["relative"], comparison["difference"]),
+    )
+    ranked = ranked.sort_values(["rank", "excess"], ascending=False, kind="stable")
+    return ranked.drop(columns=["rank", "excess"])
+
+
+def rowOrder(cells: pd.DataFrame) -> list[str]:
+    """Return the grid's ``row`` labels in a fixed order: by metric as drp_qa lists them, then frame type.
+
+    The order does not follow the statuses, so a row stays where it is from night to night.
+    """
+    place = {metric: index for index, metric in enumerate(COMPARED_METRICS)}
+    rows = cells.drop_duplicates("row")
+    keys = sorted(
+        (place.get(metric, len(place)), metric, obsType, row)
+        for metric, obsType, row in zip(rows["metric"], rows["obsType"], rows["row"], strict=True)
+    )
+    return [row for *_, row in keys]
+
+
 def gridCells(comparison: pd.DataFrame, deviations: pd.DataFrame) -> pd.DataFrame:
     """Return the grid's cells: one per reference, metric, frame type and camera.
 
@@ -155,12 +185,8 @@ def gridCells(comparison: pd.DataFrame, deviations: pd.DataFrame) -> pd.DataFram
     """
     if comparison.empty:
         return pd.DataFrame(columns=list(CELL_COLUMNS))
-    ranked = comparison.assign(
-        rank=comparison["status"].map(_RANK).fillna(0),
-        excess=_excess(comparison["metric"], comparison["relative"], comparison["difference"]),
-        population=[populationLabel(row) for row in comparison.to_dict("records")],
-    )
-    ranked = ranked.sort_values(["rank", "excess"], ascending=False, kind="stable")
+    ranked = worstFirst(comparison)
+    ranked = ranked.assign(population=[populationLabel(row) for row in ranked.to_dict("records")])
     cells = ranked.groupby(list(CELL_KEYS), sort=False).agg(
         arm=("arm", "first"),
         spectrograph=("spectrograph", "first"),

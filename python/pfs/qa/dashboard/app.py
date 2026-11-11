@@ -30,6 +30,7 @@ from pfs.qa.dashboard.comparison import (
     nightVisits,
     populationRows,
     visitDeviations,
+    worstFirst,
 )
 from pfs.qa.dashboard.figures import (
     STATUS_COLORS,
@@ -113,6 +114,10 @@ def _tile(label: str, value: str, color: str | None = None, mark: str = "") -> s
     )
 
 
+def _detail(text: str) -> str:
+    return f'<div style="font-size:0.95em;margin-top:8px">{text}</div>'
+
+
 class Dashboard(param.Parameterized):
     """The app's state: the data's version, bumped when a refresh brings new loads, and what is chosen."""
 
@@ -124,8 +129,8 @@ class Dashboard(param.Parameterized):
     #: The grid cell shown in detail (`comparison.CELL_KEYS`); the worst when None.
     cell = param.Parameter(default=None)
 
-    #: The population of that cell shown; its worst when empty.
-    population = param.Selector(default="", objects=[""], label="Population")
+    #: The population of that cell shown (`comparison.populationLabel`); its worst when None.
+    population = param.Parameter(default=None)
 
     def __init__(self, store: MetricsStore, refreshSeconds: float = 30.0, **params):
         self.store = store
@@ -145,9 +150,14 @@ class Dashboard(param.Parameterized):
         self._compared = None
 
     def _takeNights(self) -> None:
-        """Offer the nights the visits span; keep the one chosen, or take the latest."""
+        """Offer the nights the visits span; keep the one chosen, every visit included.
+
+        The latest night is taken when there was none to choose from before (at the start,
+        and when the first times arrive).
+        """
         options = nightOptions(self.timeline)
-        chosen = self.night if self.night in options and self.night != ALL_VISITS else options[0]
+        hadNights = len(self.param.night.objects) > 1
+        chosen = self.night if hadNights and self.night in options else options[0]
         self.param.night.objects = options
         self.night = chosen
 
@@ -175,8 +185,16 @@ class Dashboard(param.Parameterized):
     def selectCell(self, cell: tuple | None) -> None:
         """Show a grid cell (`comparison.CELL_KEYS`) in detail, at its worst population."""
         with param.parameterized.batch_call_watchers(self):
-            self.population = ""
+            self.population = None
             self.cell = None if cell is None else tuple(cell)
+
+    @param.depends("night", watch=True)
+    def _forgetPopulation(self) -> None:
+        """Another night's cell opens on its own worst population."""
+        self.population = None
+
+    def _choosePopulation(self, event) -> None:
+        self.population = event.new
 
     def shownCell(self) -> tuple | None:
         """Return the cell in detail: the one chosen if the night has it, else the night's worst."""
@@ -320,11 +338,11 @@ class Dashboard(param.Parameterized):
         return pn.Column(*parts, sizing_mode="stretch_width")
 
     def _shownPopulation(self) -> tuple[pd.DataFrame, str]:
-        """Return the shown cell's comparison rows, worst first, and the population in detail."""
-        rows = populationRows(self.compared()[0], self.shownCell())
-        rows = rows.assign(rank=rows["status"].map(_STATUS_RANK)).sort_values(
-            "rank", ascending=False, kind="stable"
-        )
+        """Return the shown cell's comparison rows, worst first, and the population in detail.
+
+        The first is the one the grid's cell is of (`comparison.worstFirst`).
+        """
+        rows = worstFirst(populationRows(self.compared()[0], self.shownCell()))
         options = list(rows["population"])
         return rows, self.population if self.population in options else options[0]
 
@@ -342,16 +360,20 @@ class Dashboard(param.Parameterized):
         text = (
             f"<b>{_esc(metric)} · {_esc(obsType)} · {_esc(camera)}</b> against {_esc(referenceName)}, "
             f"population {_esc(population)}: {STATUS_MARKS[row['status']]} {row['status']}, "
-            f"median {row['runMedian']:.4g} (n={int(row['nRun'])}) vs {row['referenceMedian']:.4g} "
-            f"(n={int(row['nReference'])}), difference {row['difference']:+.4g} "
-            f"({relativeText(row['relative'])})."
+            f"median {row['runMedian']:.4g} (n={int(row['nRun'])})"
+        )
+        if pd.isna(row["referenceMedian"]):
+            return _detail(text + "; the reference has no values of this population, so nothing is judged.")
+        text += (
+            f" vs {row['referenceMedian']:.4g} (n={int(row['nReference'])}), difference "
+            f"{row['difference']:+.4g} ({relativeText(row['relative'])})."
         )
         if pd.notna(row["fail"]):
             text += f" Visits beyond the FAIL tolerance: {len(beyond)} of {deviations['visit'].nunique()}"
             text += (": " + ", ".join(str(v) for v in beyond) if beyond else "") + "."
         else:
             text += " The metric declares no tolerance, so nothing is judged."
-        return f'<div style="font-size:0.95em;margin-top:8px">{text}</div>'
+        return _detail(text)
 
     @param.depends("dataVersion", "night", "cell", "population")
     def detail(self):
@@ -360,15 +382,14 @@ class Dashboard(param.Parameterized):
         if cell is None:
             return pn.pane.HTML("")
         rows, population = self._shownPopulation()
-        options = list(rows["population"])
-        with param.parameterized.discard_events(self):
-            self.param.population.objects = options
-            self.population = population
         row = rows[rows["population"] == population].iloc[0]
         deviations = populationRows(self.compared()[1], cell)
         deviations = deviations[deviations["population"] == population]
         deviations = deviations.assign(time=deviations["visit"].map(self._visitTimes))
-        chooser = pn.widgets.Select.from_param(self.param.population, width=360)
+        chooser = pn.widgets.Select(
+            name="Population", options=list(rows["population"]), value=population, width=360
+        )
+        chooser.param.watch(self._choosePopulation, "value")
         return pn.Column(
             pn.pane.HTML(self.detailHtml()),
             chooser,
