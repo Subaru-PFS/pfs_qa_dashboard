@@ -426,3 +426,36 @@ def testASnapshotOlderThanTheThresholdsServes(tmp_path, clock):
     # Negative control: the same read with its thresholds has them.
     new = QadbMetricsStore.fromSnapshot(writeSnapshot(qadb.read(None), tmp_path / "new", {}))
     assert new.trend("iqQaMetrics", "medFwhm")["warn"].tolist() == [3.0]
+
+
+def testAnImageWithOnlyLineResidualsIsReplacedOnReload(clock):
+    """A reload of an image that has line residuals and no image-quality row replaces its rows."""
+
+    def lines(visit, decidedAt, status):
+        return pd.DataFrame(
+            {
+                "visit": [visit],
+                "arm": ["b"],
+                "spectrograph": [1],
+                "obsType": ["arc"],
+                "qaStatus": [status],
+                "qaReason": [""],
+                "recommendedAction": [""],
+                "decidedAt": [decidedAt],
+            }
+        )
+
+    def read(since):
+        first = since is None
+        held = tables([image(1001, "b", "PASS", 2.5, "t1") if first else image(1003, "b", "PASS", 2.5, "t2")])
+        held["dmLineResidualSummary"] = lines(1002, "t1", "WARN") if first else lines(1002, "t2", "PASS")
+        return held
+
+    store = QadbMetricsStore(read, {}, minInterval=0, clock=clock)
+    assert store.raw["dmLineResidualSummary"]["qaStatus"].tolist() == ["WARN"]
+    clock.advance(1)
+    assert store.refresh()
+    summary = store.raw["dmLineResidualSummary"]
+    assert summary["visit"].tolist() == [1002] and summary["qaStatus"].tolist() == ["PASS"]
+    # Negative control: the images of the first read that the second does not hold stay.
+    assert store.raw["iqQaMetrics"]["visit"].tolist() == [1001, 1003]

@@ -46,10 +46,26 @@ visit is judged, so each refresh re-reads them for the latest 300 visits. Withou
 times show yet; the sequences and notes are read for the views to come.
 
 ```bash
-# Read-only users; credentials in ~/.pgpass
+# qadb as pfs (--qadb-user), the opdb as read-only public_user; credentials in ~/.pgpass
 python bin/qaDashboard.py serve --collection qaActor/reductions --first-visit <first visit of the run> \
-    --qadb-host 127.0.0.1 --qadb-port 5436 --opdb-host 127.0.0.1 --opdb-port 5432 [--refresh 30]
+    --qadb-host 127.0.0.1 --qadb-port 5436 --opdb-host 127.0.0.1 --opdb-port 5432 [--refresh 30] \
+    [--reference firstNight=<first>-<last> --reference lastRun=<collection>:<first>-<last>]
 ```
+
+**Against reference visits.** Each `--reference NAME=[COLLECTION:]FIRST-LAST` names visits to compare with (the
+run's own first calibration night, the previous run's set; in the served collection unless one is given). They are
+read from qadb once at start-up, and a snapshot keeps them. The comparison view then shows a night at a time (HST
+evening date): a strip of its visits, each coloured by the worst of its images' verdicts, and one grid per
+reference with a cell per metric, frame type and camera. A cell is the night's median against the reference's,
+by drp_qa's `pfs.drp.qa.metrics.runComparison.compareRuns`, made when the page asks and stored nowhere: the
+relative difference and `PASS`/`WARN`/`FAIL` for a metric with a tolerance, the difference in the metric's own
+units for one without. A median hides one bad visit among good ones, so a cell also counts the visits whose own
+value is beyond the `FAIL` tolerance. A cell whose medians rest on three images or fewer, on either side, is an
+outline, not filled, and says the smaller count (`n=2`): one odd exposure decides it. Cells without a verdict
+(the metric declares no tolerance, or the reference has no values) are left out unless *Hide unjudged cells* is
+cleared; a line under each grid says how many. A cell made of several populations (illumination, lamp, species, line set)
+shows the worst; choosing it lists them all, and each visit's value. Without `--reference` the view says how to
+name one.
 
 **Offline, from a snapshot.** `snapshot --out <dir>` reads the collection once and writes what was read, one
 parquet file per table (the thresholds cited included; with the opdb's times and notes, given `--opdb-host`), and

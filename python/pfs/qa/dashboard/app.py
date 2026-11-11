@@ -1,14 +1,18 @@
 """The QA dashboard: a Panel app over the metrics table.
 
-One page: the provenance strip (collection, thresholds, drp_qa version, time read) and
-the verdicts so far, the images counted by status with the latest visit judged. The
-views are built up on this one at a time; the prototype's Live, Run and Visit tabs are
-at tag 0.1.0.
+One page: the provenance strip (collection, thresholds, drp_qa version, time read), the
+verdicts so far (the images counted by status with the latest visit judged), the visits
+by night with each one's rolled-up status, and a night's visits compared with the
+reference visits the dashboard was started with: a grid per reference (metric and frame
+type by camera) and, for the cell chosen, its values visit by visit. The views are built
+up on this one at a time; the prototype's Live, Run and Visit tabs are at tag 0.1.0.
 
 Everything shown comes from the metrics table (`live.QadbMetricsStore`, read from qadb
 or a snapshot of it); the app computes no metric and holds no threshold of its own: the
 limits are the thresholds qadb records each image was judged with, found for each value by
-the gate's `judge`, and the provenance strip names those files.
+the gate's `judge`, and the provenance strip names those files. The rollup and the
+comparison are drp_qa's (`pfs.drp.qa.metrics.visitRollup`, `pfs.drp.qa.metrics.runComparison`),
+made when the page asks, with the tolerances the metrics declare.
 """
 
 import html
@@ -18,16 +22,29 @@ import panel as pn
 import param
 
 from pfs.drp.qa.metrics.gate import isConfigLayer
+from pfs.qa.dashboard.comparison import (
+    ALL_VISITS,
+    CELL_KEYS,
+    gridCells,
+    judgedCells,
+    nightOptions,
+    nightVisits,
+    populationRows,
+    visitDeviations,
+    worstFirst,
+)
+from pfs.qa.dashboard.figures import (
+    STATUS_COLORS,
+    STATUS_MARKS,
+    cellDetail,
+    comparisonGrid,
+    relativeText,
+    visitStrip,
+)
 from pfs.qa.dashboard.schema import IMAGE_STATUS_ORDER
 from pfs.qa.dashboard.store import MetricsStore, visitTimeline
 
 __all__ = ["Dashboard", "createApp", "thresholdsLines", "verdictCounts"]
-
-#: Status colours (Okabe-Ito-like, distinguishable with the common colour-vision deficiencies).
-STATUS_COLORS = {"PASS": "#3a9a5b", "WARN": "#e6a100", "FAIL": "#d1495b", "UNKNOWN": "#9aa0a6", "": "#c7ccd1"}
-
-#: Status marks, so no status is told by colour alone.
-STATUS_MARKS = {"PASS": "✓", "WARN": "!", "FAIL": "✕", "UNKNOWN": "?"}
 
 _STATUS_RANK = {status: rank for rank, status in enumerate(IMAGE_STATUS_ORDER)}
 
@@ -98,16 +115,35 @@ def _tile(label: str, value: str, color: str | None = None, mark: str = "") -> s
     )
 
 
+def _detail(text: str) -> str:
+    return f'<div style="font-size:0.95em;margin-top:8px">{text}</div>'
+
+
 class Dashboard(param.Parameterized):
-    """The app's state: the data's version, bumped when a refresh brings new loads."""
+    """The app's state: the data's version, bumped when a refresh brings new loads, and what is chosen."""
 
     dataVersion = param.Integer(default=0)
+
+    #: The night compared with the references: the HST date of its evening, or every visit.
+    night = param.Selector(default=ALL_VISITS, objects=[ALL_VISITS], label="Night (HST evening date)")
+
+    #: Whether the grids leave out the cells without a verdict (no tolerance, or nothing to compare with).
+    hideUnjudged = param.Boolean(
+        default=True, label="Hide unjudged cells (no tolerance, or no reference values)"
+    )
+
+    #: The grid cell shown in detail (`comparison.CELL_KEYS`); the worst when None.
+    cell = param.Parameter(default=None)
+
+    #: The population of that cell shown (`comparison.populationLabel`); its worst when None.
+    population = param.Parameter(default=None)
 
     def __init__(self, store: MetricsStore, refreshSeconds: float = 30.0, **params):
         self.store = store
         self.refreshSeconds = refreshSeconds
         self._reload()
         super().__init__(**params)
+        self._takeNights()
 
     def _reload(self) -> None:
         """Read the visits and images from the store."""
@@ -116,6 +152,20 @@ class Dashboard(param.Parameterized):
         self.images = self.store.images()
         self.timeline = visitTimeline(self.visits)
         self._visitTimes = self.timeline.set_index("visit")["time"]
+        self.rollup = self.store.rollup()
+        self._compared = None
+
+    def _takeNights(self) -> None:
+        """Offer the nights the visits span; keep the one chosen, every visit included.
+
+        The latest night is taken when there was none to choose from before (at the start,
+        and when the first times arrive).
+        """
+        options = nightOptions(self.timeline)
+        hadNights = len(self.param.night.objects) > 1
+        chosen = self.night if hadNights and self.night in options else options[0]
+        self.param.night.objects = options
+        self.night = chosen
 
     def refresh(self) -> None:
         """Take what the store has read since the last call."""
@@ -123,7 +173,47 @@ class Dashboard(param.Parameterized):
         if self.store.version == self._seenVersion:
             return
         self._reload()
+        self._takeNights()
         self.dataVersion += 1
+
+    # ---- the comparison ----------------------------------------------------------------------------
+
+    def compared(self) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """Return the chosen night's comparison, its visits' own deviations, and the grid's cells."""
+        key = (self._seenVersion, self.night)
+        if self._compared is None or self._compared[0] != key:
+            visits = nightVisits(self.timeline, self.night)
+            comparison = self.store.comparison(visits)
+            deviations = visitDeviations(self.store.metricValues(visits), comparison)
+            self._compared = (key, (comparison, deviations, gridCells(comparison, deviations)))
+        return self._compared[1]
+
+    def selectCell(self, cell: tuple | None) -> None:
+        """Show a grid cell (`comparison.CELL_KEYS`) in detail, at its worst population."""
+        with param.parameterized.batch_call_watchers(self):
+            self.population = None
+            self.cell = None if cell is None else tuple(cell)
+
+    @param.depends("night", watch=True)
+    def _forgetPopulation(self) -> None:
+        """Another night's cell opens on its own worst population."""
+        self.population = None
+
+    def _choosePopulation(self, event) -> None:
+        self.population = event.new
+
+    def shownCell(self) -> tuple | None:
+        """Return the cell in detail: the one chosen if the night has it, else the night's worst."""
+        cells = self.compared()[2]
+        if cells.empty:
+            return None
+        keys = [tuple(key) for key in cells[list(CELL_KEYS)].itertuples(index=False)]
+        if self.cell in keys:
+            return self.cell
+        ranked = cells.assign(
+            rank=cells["status"].map(_STATUS_RANK), beyond=cells["nBeyond"] / cells["nVisits"].clip(lower=1)
+        ).sort_values(["rank", "beyond"], ascending=False, kind="stable")
+        return tuple(ranked.iloc[0][list(CELL_KEYS)])
 
     def _when(self, visit: int) -> str:
         """Return when a visit began, ``2026-03-09 19:42 HST``; empty without a time."""
@@ -200,6 +290,128 @@ class Dashboard(param.Parameterized):
     def summary(self) -> pn.pane.HTML:
         return pn.pane.HTML(self.summaryHtml(), sizing_mode="stretch_width")
 
+    @param.depends("dataVersion", "night")
+    def strip(self):
+        """Return the visits by night and time, each with its rolled-up status."""
+        if not len(self.visits):
+            return pn.pane.HTML("")
+        return pn.pane.Bokeh(visitStrip(self.rollup, self.timeline, self.night), sizing_mode="stretch_width")
+
+    def comparisonHeading(self) -> str:
+        """Return what is compared with what: the night's visits, and each reference's."""
+        visits = nightVisits(self.timeline, self.night)
+        if not visits:
+            return ""
+        what = "every visit" if self.night == ALL_VISITS else f"the night of {self.night}"
+        span = f"{len(visits)} visits, {min(visits)}–{max(visits)}"
+        records = {r["name"]: r for r in self.store.provenance.get("references") or []}
+        names = []
+        for name in self.store.references:
+            visitRange = records.get(name, {}).get("visits")
+            names.append(_esc(name) + (f" (visits {visitRange[0]}–{visitRange[1]})" if visitRange else ""))
+        return (
+            f"<b>Compared with the reference visits</b>: {what} ({span}) against "
+            + "; ".join(names)
+            + ". A cell is filled by the status of the night's median against the reference's median for that "
+            "camera, by the metric's tolerance (the worst of its populations; ? where the metric declares no "
+            "tolerance or the reference has no such frames), and says the relative difference, or for a "
+            "metric without a tolerance the difference in its own units; "
+            f"“{STATUS_MARKS['FAIL']} n/m” counts the night's visits that are themselves beyond the "
+            "FAIL tolerance. Click a cell for its visits."
+        )
+
+    @param.depends("dataVersion", "night", "cell", "hideUnjudged")
+    def grids(self):
+        """Return a grid per reference: metric and frame type by camera."""
+        if not len(self.visits):
+            return pn.pane.HTML("")
+        if not self.store.references:
+            return pn.pane.HTML(
+                '<div style="font-size:0.9em">No reference visits to compare with: start the dashboard with '
+                "<code>--reference NAME=[COLLECTION:]FIRST-LAST</code>.</div>"
+            )
+        cells = self.compared()[2]
+        parts = [pn.pane.HTML(f'<div style="font-size:0.9em">{self.comparisonHeading()}</div>')]
+        shown = self.shownCell()
+        for name in self.store.references:
+            ours = cells[cells["referenceName"] == name]
+            parts.append(pn.pane.HTML(f"<h3 style='margin:8px 0 0'>Against {_esc(name)}</h3>"))
+            if ours.empty:
+                parts.append(pn.pane.HTML("<i>These visits have no values of the compared metrics.</i>"))
+                continue
+            everything = len(ours)
+            if self.hideUnjudged:
+                ours, hidden = judgedCells(ours)
+                note = f"{everything - len(ours)} unjudged cells are hidden, {hidden} whole rows among them."
+                if ours.empty:
+                    parts.append(pn.pane.HTML(f"<i>None of the {everything} cells has a verdict.</i>"))
+                    continue
+            grid = comparisonGrid(ours, onSelect=self.selectCell, selected=shown)
+            parts.append(pn.pane.Bokeh(grid, sizing_mode="stretch_width"))
+            if everything > len(ours):
+                parts.append(pn.pane.HTML(f'<div style="font-size:0.85em;color:#7b8794">{note}</div>'))
+        return pn.Column(*parts, sizing_mode="stretch_width")
+
+    def _shownPopulation(self) -> tuple[pd.DataFrame, str]:
+        """Return the shown cell's comparison rows, worst first, and the population in detail.
+
+        The first is the one the grid's cell is of (`comparison.worstFirst`).
+        """
+        rows = worstFirst(populationRows(self.compared()[0], self.shownCell()))
+        options = list(rows["population"])
+        return rows, self.population if self.population in options else options[0]
+
+    def detailHtml(self) -> str:
+        """Return the cell in detail in words: what it is, the two medians and the visits beyond tolerance."""
+        cell = self.shownCell()
+        if cell is None:
+            return ""
+        rows, population = self._shownPopulation()
+        row = rows[rows["population"] == population].iloc[0]
+        deviations = populationRows(self.compared()[1], cell)
+        deviations = deviations[deviations["population"] == population]
+        beyond = sorted(int(v) for v in deviations.loc[deviations["status"] == "FAIL", "visit"].unique())
+        referenceName, metric, obsType, camera = cell
+        text = (
+            f"<b>{_esc(metric)} · {_esc(obsType)} · {_esc(camera)}</b> against {_esc(referenceName)}, "
+            f"population {_esc(population)}: {STATUS_MARKS[row['status']]} {row['status']}, "
+            f"median {row['runMedian']:.4g} (n={int(row['nRun'])})"
+        )
+        if pd.isna(row["referenceMedian"]):
+            return _detail(text + "; the reference has no values of this population, so nothing is judged.")
+        text += (
+            f" vs {row['referenceMedian']:.4g} (n={int(row['nReference'])}), difference "
+            f"{row['difference']:+.4g} ({relativeText(row['relative'])})."
+        )
+        if pd.notna(row["fail"]):
+            text += f" Visits beyond the FAIL tolerance: {len(beyond)} of {deviations['visit'].nunique()}"
+            text += (": " + ", ".join(str(v) for v in beyond) if beyond else "") + "."
+        else:
+            text += " The metric declares no tolerance, so nothing is judged."
+        return _detail(text)
+
+    @param.depends("dataVersion", "night", "cell", "population")
+    def detail(self):
+        """Return the chosen cell's values visit by visit, against the reference median and tolerances."""
+        cell = self.shownCell()
+        if cell is None:
+            return pn.pane.HTML("")
+        rows, population = self._shownPopulation()
+        row = rows[rows["population"] == population].iloc[0]
+        deviations = populationRows(self.compared()[1], cell)
+        deviations = deviations[deviations["population"] == population]
+        deviations = deviations.assign(time=deviations["visit"].map(self._visitTimes))
+        chooser = pn.widgets.Select(
+            name="Population", options=list(rows["population"]), value=population, width=360
+        )
+        chooser.param.watch(self._choosePopulation, "value")
+        return pn.Column(
+            pn.pane.HTML(self.detailHtml()),
+            chooser,
+            pn.pane.Bokeh(cellDetail(deviations, row), sizing_mode="stretch_width"),
+            sizing_mode="stretch_width",
+        )
+
     # ---- layout ----------------------------------------------------------------------------------
 
     def view(self) -> pn.template.FastListTemplate:
@@ -207,7 +419,17 @@ class Dashboard(param.Parameterized):
             pn.state.add_periodic_callback(self.refresh, period=int(self.refreshSeconds * 1000))
         return pn.template.FastListTemplate(
             title="PFS QA dashboard",
-            main=[pn.panel(self.provenanceBar), pn.panel(self.summary)],
+            main=[
+                pn.panel(self.provenanceBar),
+                pn.panel(self.summary),
+                pn.panel(self.strip),
+                pn.Row(
+                    pn.widgets.Select.from_param(self.param.night, width=260),
+                    pn.widgets.Checkbox.from_param(self.param.hideUnjudged, align="end"),
+                ),
+                pn.panel(self.grids),
+                pn.panel(self.detail),
+            ],
             accent="#3b6ea8",
             theme_toggle=True,
             main_max_width="1600px",

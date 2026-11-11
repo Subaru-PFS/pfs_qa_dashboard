@@ -11,7 +11,7 @@ reads a snapshot of qadb (`qadbSource.writeSnapshot`) once.
 import logging
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,7 +20,13 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from pfs.drp.qa.qadb.reader import FIRST_VISIT, LAST_VISIT, THRESHOLDS_ID, readQadb
-from pfs.qa.dashboard.qadbSource import metricsTableFromQadb, readSnapshot, withSequences
+from pfs.qa.dashboard.qadbSource import (
+    metricsTableFromQadb,
+    readSnapshot,
+    referenceRecords,
+    referencesFromSnapshot,
+    withSequences,
+)
 from pfs.qa.dashboard.schema import NOTE_COLUMNS
 from pfs.qa.dashboard.serving import noteRows
 from pfs.qa.dashboard.store import MetricsStore
@@ -32,6 +38,9 @@ HST = ZoneInfo("Pacific/Honolulu")
 _log = logging.getLogger(__name__)
 
 _IMAGE = ["visit", "arm", "spectrograph"]
+
+#: The tables of a qadb read kept as read, for the comparison with the references.
+_RAW = ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics")
 
 
 def qadbProvenance(collection: str, **extra: Any) -> dict:
@@ -85,6 +94,10 @@ class QadbMetricsStore(MetricsStore):
         After the first read, each refresh reads the opdb for the latest
         ``recentVisits`` visits, since observers write notes after a visit is
         judged; every visit if None.
+    references : mapping, optional
+        The reference visits' metrics tables by reference name
+        (`pfs.drp.qa.qadb.compareRuns.metricTables`), which `comparison` compares a
+        night's visits with. They are read once, when the dashboard starts.
     """
 
     live = True
@@ -97,6 +110,7 @@ class QadbMetricsStore(MetricsStore):
         clock: Callable[[], float] = time.monotonic,
         readOpdb: Callable[[list[int]], OpdbTables] | None = None,
         recentVisits: int | None = 300,
+        references: Mapping[str, Sequence[pd.DataFrame]] | None = None,
     ):
         self._read = read
         self.minInterval = minInterval
@@ -113,6 +127,7 @@ class QadbMetricsStore(MetricsStore):
         self._opdbTimes = pd.DataFrame(columns=_TIMES)
         self._opdbRead = False
         super().__init__(provenance=provenance)
+        self.references = {name: list(tables) for name, tables in (references or {}).items()}
         self.refresh()
 
     @classmethod
@@ -124,16 +139,37 @@ class QadbMetricsStore(MetricsStore):
         last: int = LAST_VISIT,
         minInterval: float = 15.0,
         opdb: Any = None,
+        references: Sequence[Any] = (),
     ) -> "QadbMetricsStore":
         """Return the store of one collection's visits ``first``..``last`` in a qadb (read-only).
 
-        With an ``opdb`` (read-only), visits have its times, sequences and notes.
+        With an ``opdb`` (read-only), visits have its times, sequences and notes. Each of
+        ``references`` (`pfs.drp.qa.qadb.compareRuns.Reference`) is read now, from its own
+        collection or this one; its visits need not lie within ``first``..``last``.
+
+        Raises
+        ------
+        ValueError
+            If two references share a name.
         """
+        from pfs.drp.qa.qadb.compareRuns import metricTables
+
+        names = [reference.name for reference in references]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise ValueError(f"reference names must differ: {', '.join(repeated)} given more than once")
         return cls(
             lambda since: readQadb(qadb, collection, first, last, since),
-            qadbProvenance(f"{collection} (qadb, live)", builtAt="live"),
+            qadbProvenance(
+                f"{collection} (qadb, live)",
+                builtAt="live",
+                references=referenceRecords(references, collection),
+            ),
             minInterval,
             readOpdb=None if opdb is None else opdbReader(opdb),
+            references={
+                r.name: metricTables(qadb, r.collection or collection, r.first, r.last) for r in references
+            },
         )
 
     @classmethod
@@ -142,9 +178,13 @@ class QadbMetricsStore(MetricsStore):
 
         The verdicts and the limits beside each value are the snapshot's: the thresholds its images
         cite. A snapshot written before those were read back shows no limits. One written with an
-        opdb holds its ``opdbVisitTimes`` and ``notes`` too.
+        opdb holds its ``opdbVisitTimes`` and ``notes`` too, and one written with references their
+        metrics (`qadbSource.REFERENCE_TABLES`).
         """
         tables, provenance = readSnapshot(directory)
+        references = referencesFromSnapshot(
+            tables, [record["name"] for record in provenance.get("references") or []]
+        )
         none = {name: frame.iloc[:0] for name, frame in tables.items()}
         readOpdb = None
         if "opdbVisitTimes" in tables:
@@ -155,6 +195,7 @@ class QadbMetricsStore(MetricsStore):
             0,
             readOpdb=readOpdb,
             recentVisits=None,
+            references=references,
         )
         store.live = False
         return store
@@ -212,8 +253,20 @@ class QadbMetricsStore(MetricsStore):
             self.thresholdsFiles = files.drop_duplicates(THRESHOLDS_ID, keep="last").sort_values(
                 THRESHOLDS_ID, ignore_index=True
             )
-        judged = pd.MultiIndex.from_frame(iq[_IMAGE])
+        # Every image the read holds rows of, in whichever table: an image may have line
+        # residuals and no image-quality row.
+        judged = pd.MultiIndex.from_frame(
+            pd.concat([tables[name][_IMAGE] for name in _RAW], ignore_index=True).drop_duplicates()
+        )
         kept = self.table[~pd.MultiIndex.from_frame(self.table[_IMAGE]).isin(judged)]
+        for name in _RAW:
+            held = self.raw.get(name)
+            if held is None or held.empty:
+                self.raw[name] = tables[name]
+                continue
+            others = held[~pd.MultiIndex.from_frame(held[_IMAGE]).isin(judged)]
+            parts = [part for part in (others, tables[name]) if len(part)]
+            self.raw[name] = pd.concat(parts, ignore_index=True) if parts else held.iloc[:0]
         times = pd.concat([self._qadbTimes, tables["visitTimes"].reindex(columns=_TIMES)], ignore_index=True)
         self._qadbTimes = times.drop_duplicates("pfs_visit_id", keep="last")
         table = pd.concat([kept, new], ignore_index=True)

@@ -13,14 +13,29 @@ as qadb holds no IIC sequence.
 """
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 from pfs.qa.dashboard.serving import buildMetricsTable, inferSequences
 
-__all__ = ["metricsTableFromQadb", "readSnapshot", "withSequences", "writeSnapshot"]
+__all__ = [
+    "REFERENCE_TABLES",
+    "metricsTableFromQadb",
+    "readSnapshot",
+    "referenceRecords",
+    "referenceSnapshotTables",
+    "referencesFromSnapshot",
+    "withSequences",
+    "writeSnapshot",
+]
+
+#: The snapshot tables holding the reference visits' metrics, every reference together.
+REFERENCE_TABLES = ("referenceIqQaMetrics", "referenceLineMetrics")
+
+_REFERENCE_NAME = "referenceName"
 
 
 def metricsTableFromQadb(tables: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
@@ -63,6 +78,46 @@ def withSequences(table: pd.DataFrame, visitTimes: pd.DataFrame | None = None) -
         .merge(sequences, on="visit", how="left")
         .reindex(columns=table.columns)
     )
+
+
+def referenceRecords(references: Iterable[Any], collection: str) -> list[dict]:
+    """Return what the provenance says of each `pfs.drp.qa.qadb.compareRuns.Reference`: name, collection, visits."""
+    return [
+        {"name": r.name, "collection": r.collection or collection, "visits": [r.first, r.last]}
+        for r in references
+    ]
+
+
+def referenceSnapshotTables(references: Mapping[str, Sequence[pd.DataFrame]]) -> dict[str, pd.DataFrame]:
+    """Return `REFERENCE_TABLES` for a snapshot: each reference's two metrics tables, with its name.
+
+    Parameters
+    ----------
+    references : mapping
+        By name, the tables `pfs.drp.qa.qadb.compareRuns.metricTables` read. Nothing for none.
+    """
+    if not references:
+        return {}
+    return {
+        table: pd.concat(
+            [tables[index].assign(**{_REFERENCE_NAME: name}) for name, tables in references.items()],
+            ignore_index=True,
+        )
+        for index, table in enumerate(REFERENCE_TABLES)
+    }
+
+
+def referencesFromSnapshot(
+    tables: dict[str, pd.DataFrame], names: Iterable[str]
+) -> dict[str, list[pd.DataFrame]]:
+    """Take `REFERENCE_TABLES` out of a snapshot's ``tables``; return each named reference's two tables."""
+    held = [tables.pop(table, None) for table in REFERENCE_TABLES]
+    if any(frame is None for frame in held):
+        return {}
+    return {
+        name: [frame[frame[_REFERENCE_NAME] == name].drop(columns=_REFERENCE_NAME) for frame in held]
+        for name in names
+    }
 
 
 def writeSnapshot(tables: Mapping[str, pd.DataFrame], directory: Path | str, provenance: Mapping) -> Path:
