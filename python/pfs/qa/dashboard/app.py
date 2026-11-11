@@ -26,6 +26,7 @@ from pfs.qa.dashboard.comparison import (
     ALL_VISITS,
     CELL_KEYS,
     gridCells,
+    judgedCells,
     nightOptions,
     nightVisits,
     populationRows,
@@ -125,6 +126,11 @@ class Dashboard(param.Parameterized):
 
     #: The night compared with the references: the HST date of its evening, or every visit.
     night = param.Selector(default=ALL_VISITS, objects=[ALL_VISITS], label="Night (HST evening date)")
+
+    #: Whether the grids leave out the cells without a verdict (no tolerance, or nothing to compare with).
+    hideUnjudged = param.Boolean(
+        default=True, label="Hide unjudged cells (no tolerance, or no reference values)"
+    )
 
     #: The grid cell shown in detail (`comparison.CELL_KEYS`); the worst when None.
     cell = param.Parameter(default=None)
@@ -314,7 +320,7 @@ class Dashboard(param.Parameterized):
             "FAIL tolerance. Click a cell for its visits."
         )
 
-    @param.depends("dataVersion", "night", "cell")
+    @param.depends("dataVersion", "night", "cell", "hideUnjudged")
     def grids(self):
         """Return a grid per reference: metric and frame type by camera."""
         if not len(self.visits):
@@ -333,8 +339,17 @@ class Dashboard(param.Parameterized):
             if ours.empty:
                 parts.append(pn.pane.HTML("<i>These visits have no values of the compared metrics.</i>"))
                 continue
+            everything = len(ours)
+            if self.hideUnjudged:
+                ours, hidden = judgedCells(ours)
+                note = f"{everything - len(ours)} unjudged cells are hidden, {hidden} whole rows among them."
+                if ours.empty:
+                    parts.append(pn.pane.HTML(f"<i>None of the {everything} cells has a verdict.</i>"))
+                    continue
             grid = comparisonGrid(ours, onSelect=self.selectCell, selected=shown)
             parts.append(pn.pane.Bokeh(grid, sizing_mode="stretch_width"))
+            if everything > len(ours):
+                parts.append(pn.pane.HTML(f'<div style="font-size:0.85em;color:#7b8794">{note}</div>'))
         return pn.Column(*parts, sizing_mode="stretch_width")
 
     def _shownPopulation(self) -> tuple[pd.DataFrame, str]:
@@ -408,7 +423,10 @@ class Dashboard(param.Parameterized):
                 pn.panel(self.provenanceBar),
                 pn.panel(self.summary),
                 pn.panel(self.strip),
-                pn.widgets.Select.from_param(self.param.night, width=260),
+                pn.Row(
+                    pn.widgets.Select.from_param(self.param.night, width=260),
+                    pn.widgets.Checkbox.from_param(self.param.hideUnjudged, align="end"),
+                ),
                 pn.panel(self.grids),
                 pn.panel(self.detail),
             ],

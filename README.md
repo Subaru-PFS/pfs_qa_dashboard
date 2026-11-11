@@ -61,7 +61,9 @@ by drp_qa's `pfs.drp.qa.metrics.runComparison.compareRuns`, made when the page a
 relative difference and `PASS`/`WARN`/`FAIL` for a metric with a tolerance, the difference in the metric's own
 units for one without. A median hides one bad visit among good ones, so a cell also counts the visits whose own
 value is beyond the `FAIL` tolerance. A cell whose medians rest on three images or fewer, on either side, is an
-outline, not filled, and says the smaller count (`n=2`): one odd exposure decides it. A cell made of several populations (illumination, lamp, species, line set)
+outline, not filled, and says the smaller count (`n=2`): one odd exposure decides it. Cells without a verdict
+(the metric declares no tolerance, or the reference has no values) are left out unless *Hide unjudged cells* is
+cleared; a line under each grid says how many. A cell made of several populations (illumination, lamp, species, line set)
 shows the worst; choosing it lists them all, and each visit's value. Without `--reference` the view says how to
 name one.
 

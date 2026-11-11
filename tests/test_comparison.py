@@ -8,6 +8,7 @@ from pfs.qa.dashboard.comparison import (
     ALL_VISITS,
     SMALL_POPULATION,
     gridCells,
+    judgedCells,
     nightOptions,
     nightVisits,
     rowOrder,
@@ -250,6 +251,32 @@ def testACellOfFewImagesIsAnOutlineWithItsCount():
     cell, data, row, outlined = grid(4)
     assert (cell["nRun"], cell["nReference"]) == (4, 4)
     assert data["fillAlpha"][row] > 0.8 and "n=" not in data["visitsText"][row] and "medFwhm" not in outlined
+
+
+def testUnjudgedCellsAreHiddenUntilAskedFor():
+    # linesPerFiber declares no tolerance, so its cell has no verdict; medFwhm's has.
+    def counted(visit, medFwhm):
+        return {**_image(visit, medFwhm), "linesPerFiber": 100.0}
+
+    reference = {"firstNight": _tables([counted(1001, 3.0), counted(1002, 3.0)])}
+    dashboard = Dashboard(_store([counted(1101, 3.0), counted(1102, 3.0)], reference))
+    cells = dashboard.compared()[2]
+    assert dict(zip(cells["metric"], cells["status"], strict=True)) == {
+        "medFwhm": "PASS",
+        "linesPerFiber": "UNKNOWN",
+    }
+    judged, hiddenRows = judgedCells(cells)
+    assert judged["metric"].tolist() == ["medFwhm"] and hiddenRows == 1
+
+    def drawn():
+        grids = [pane.object for pane in dashboard.grids() if isinstance(pane, pn.pane.Bokeh)]
+        notes = [pane.object for pane in dashboard.grids() if isinstance(pane, pn.pane.HTML)]
+        return list(grids[0].y_range.factors), any("unjudged cells are hidden" in note for note in notes)
+
+    assert dashboard.hideUnjudged and drawn() == (["medFwhm · arc"], True)
+    # Negative control: cleared, the row without a verdict is drawn and nothing is said to be hidden.
+    dashboard.hideUnjudged = False
+    assert drawn() == (["linesPerFiber · arc", "medFwhm · arc"], False)
 
 
 def testGridRowsKeepTheirOrderWhateverTheirStatus():

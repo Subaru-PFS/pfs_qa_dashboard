@@ -23,6 +23,7 @@ __all__ = [
     "SMALL_POPULATION",
     "cameraOrder",
     "gridCells",
+    "judgedCells",
     "metricLabel",
     "nightOptions",
     "nightVisits",
@@ -225,6 +226,16 @@ def gridCells(comparison: pd.DataFrame, deviations: pd.DataFrame) -> pd.DataFram
         for metric, obsType in zip(cells["metric"], cells["obsType"], strict=True)
     ]
     return cells[list(CELL_COLUMNS)]
+
+
+def judgedCells(cells: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Return the cells of `gridCells` with a verdict, and how many of the grid's rows have none at all.
+
+    A cell is ``UNKNOWN`` when its metric declares no tolerance or the reference has nothing
+    to compare with; a row of only those is left out of the grid whole.
+    """
+    judged = cells[cells["status"] != "UNKNOWN"]
+    return judged, cells["row"].nunique() - judged["row"].nunique()
 
 
 def populationRows(table: pd.DataFrame, cell: Sequence[str]) -> pd.DataFrame:
