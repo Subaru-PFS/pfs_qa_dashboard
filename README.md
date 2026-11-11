@@ -60,7 +60,8 @@ reference with a cell per metric, frame type and camera. A cell is the night's m
 by drp_qa's `pfs.drp.qa.metrics.runComparison.compareRuns`, made when the page asks and stored nowhere: the
 relative difference and `PASS`/`WARN`/`FAIL` for a metric with a tolerance, the difference in the metric's own
 units for one without. A median hides one bad visit among good ones, so a cell also counts the visits whose own
-value is beyond the `FAIL` tolerance. A cell made of several populations (illumination, lamp, species, line set)
+value is beyond the `FAIL` tolerance. A cell whose medians rest on three images or fewer, on either side, is an
+outline, not filled, and says the smaller count (`n=2`): one odd exposure decides it. A cell made of several populations (illumination, lamp, species, line set)
 shows the worst; choosing it lists them all, and each visit's value. Without `--reference` the view says how to
 name one.
 

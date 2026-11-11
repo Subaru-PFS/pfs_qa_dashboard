@@ -6,6 +6,7 @@ import panel as pn
 from pfs.qa.dashboard.app import Dashboard
 from pfs.qa.dashboard.comparison import (
     ALL_VISITS,
+    SMALL_POPULATION,
     gridCells,
     nightOptions,
     nightVisits,
@@ -227,6 +228,30 @@ def testAPopulationTheReferenceLacksIsNotGivenNumbers():
     assert "vs 3 (n=3)" in dashboard.detailHtml()
 
 
+def testACellOfFewImagesIsAnOutlineWithItsCount():
+    def grid(nReference):
+        reference = {"firstNight": _tables([_image(1001 + i, 3.0) for i in range(nReference)])}
+        store = _store(_NIGHT, reference)
+        cells = gridCells(store.comparison(), visitDeviations(store.metricValues(), store.comparison()))
+        cell = cells[cells["metric"] == "medFwhm"].iloc[0]
+        fill, outline = comparisonGrid(cells).renderers[:2]
+        row = list(fill.data_source.data["metric"]).index("medFwhm")
+        return cell, fill.data_source.data, row, list(outline.data_source.data["metric"])
+
+    # Four of the night's images against two of the reference's: the smaller side counts.
+    cell, data, row, outlined = grid(2)
+    assert (cell["nRun"], cell["nReference"]) == (4, 2) and SMALL_POPULATION == 3
+    assert (
+        data["fillAlpha"][row] < 0.2 and data["visitsText"][row].startswith("n=2") and "medFwhm" in outlined
+    )
+    # The visit beyond the tolerance is still counted beside it.
+    assert data["visitsText"][row].endswith("1/4")
+    # Negative control: with four images on each side the cell is filled, with no count and no outline.
+    cell, data, row, outlined = grid(4)
+    assert (cell["nRun"], cell["nReference"]) == (4, 4)
+    assert data["fillAlpha"][row] > 0.8 and "n=" not in data["visitsText"][row] and "medFwhm" not in outlined
+
+
 def testGridRowsKeepTheirOrderWhateverTheirStatus():
     def both(visit, medFwhm, offset, obsType="arc"):
         return {**_image(visit, medFwhm), "medDxCenter": offset, "obsType": obsType}
@@ -283,7 +308,7 @@ def testFiguresDrawWhatTheTablesHold():
     chosen = []
     grid = comparisonGrid(cells, onSelect=chosen.append)
     source = grid.renderers[0].data_source
-    assert list(source.data["text"]) == ["✓ +0.0%"] and list(source.data["visitsText"]) == ["✕ 1/4"]
+    assert list(source.data["text"]) == ["✓ +0.0%"] and list(source.data["visitsText"]) == ["n=3  ✕ 1/4"]
     source.selected.indices = [0]
     assert chosen == [("firstNight", "medFwhm", "arc", "b1")]
     detail = cellDetail(deviations.assign(time=pd.NaT), comparison.iloc[0])

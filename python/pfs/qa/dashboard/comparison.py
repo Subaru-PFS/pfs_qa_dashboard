@@ -20,6 +20,7 @@ __all__ = [
     "ALL_VISITS",
     "CELL_COLUMNS",
     "CELL_KEYS",
+    "SMALL_POPULATION",
     "cameraOrder",
     "gridCells",
     "metricLabel",
@@ -38,6 +39,10 @@ ALL_VISITS = "All visits"
 #: What names a cell of the grid.
 CELL_KEYS = ("referenceName", "metric", "obsType", "camera")
 
+#: A cell whose medians rest on this many images or fewer, on either side, is drawn as weak evidence:
+#: one odd exposure of three moves a median as far as it likes.
+SMALL_POPULATION = 3
+
 #: Columns of `gridCells`, in order.
 CELL_COLUMNS = (
     *CELL_KEYS,
@@ -49,6 +54,8 @@ CELL_COLUMNS = (
     "difference",
     "population",
     "nPopulations",
+    "nRun",
+    "nReference",
     "nVisits",
     "nBeyond",
     "nWarned",
@@ -178,7 +185,8 @@ def gridCells(comparison: pd.DataFrame, deviations: pd.DataFrame) -> pd.DataFram
         `CELL_COLUMNS`. ``status`` is the worst of the cell's populations' statuses (of
         their medians), ``population`` the one it is of (the furthest in the bad direction
         among the worst; for a metric without a tolerance, the furthest either way),
-        ``relative`` and ``difference`` that one's differences from the reference median. ``nVisits`` counts
+        ``relative`` and ``difference`` that one's differences from the reference median, ``nRun``
+        and ``nReference`` the images its two medians are of. ``nVisits`` counts
         the visits with a value in the cell, ``nBeyond`` those with a value beyond the
         ``FAIL`` tolerance in any of its populations, and ``nWarned`` those beyond ``WARN``
         but not ``FAIL``. ``row`` labels the grid's row: the metric and the frame type.
@@ -195,6 +203,8 @@ def gridCells(comparison: pd.DataFrame, deviations: pd.DataFrame) -> pd.DataFram
         difference=("difference", "first"),
         population=("population", "first"),
         nPopulations=("population", "size"),
+        nRun=("nRun", "first"),
+        nReference=("nReference", "first"),
     )
     worst = (
         deviations.assign(rank=deviations["status"].map(_RANK).fillna(0))

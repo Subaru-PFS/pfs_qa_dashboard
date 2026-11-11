@@ -20,7 +20,7 @@ from bokeh.models import (
 from bokeh.plotting import figure
 
 from pfs.drp.qa.metrics.registry import specFor
-from pfs.qa.dashboard.comparison import CELL_KEYS, cameraOrder, metricLabel, rowOrder
+from pfs.qa.dashboard.comparison import CELL_KEYS, SMALL_POPULATION, cameraOrder, metricLabel, rowOrder
 
 __all__ = [
     "STATUS_COLORS",
@@ -205,7 +205,9 @@ def comparisonGrid(
     `bokeh.plotting.figure`
         The rows are in `comparison.rowOrder`, the first at the top. Each cell is filled by the status of the night's median against the reference's
         (the worst of its populations) and says the difference (`differenceText`); below it, how
-        many of the night's visits are themselves beyond the ``FAIL`` tolerance.
+        many of the night's visits are themselves beyond the ``FAIL`` tolerance. A cell whose
+        medians are of `comparison.SMALL_POPULATION` images or fewer, on either side, is an
+        outline in its status's colour, not filled, and says the smaller count (``n=2``).
     """
     cells = cells.reset_index(drop=True).copy()
     cameras = cameraOrder(cells)
@@ -221,9 +223,21 @@ def comparisonGrid(
         "n/a" if pd.isna(difference) else f"{difference:+.3g} {specFor(metric).units or ''}".strip()
         for metric, difference in zip(cells["metric"], cells["difference"], strict=True)
     ]
+    cells["nSmaller"] = cells[["nRun", "nReference"]].min(axis=1).astype("int64")
+    small = cells["nSmaller"] <= SMALL_POPULATION
+    cells["fillAlpha"] = np.where(small, 0.12, 0.85)
     cells["visitsText"] = [
-        f"{STATUS_MARKS['FAIL']} {beyond}/{n}" if beyond else ""
-        for beyond, n in zip(cells["nBeyond"], cells["nVisits"], strict=True)
+        "  ".join(
+            part
+            for part in (
+                f"n={smaller}" if few else "",
+                f"{STATUS_MARKS['FAIL']} {beyond}/{n}" if beyond else "",
+            )
+            if part
+        )
+        for few, smaller, beyond, n in zip(
+            small, cells["nSmaller"], cells["nBeyond"], cells["nVisits"], strict=True
+        )
     ]
     cells["relativeText"] = [relativeText(relative) for relative in cells["relative"]]
     cells["edge"] = [
@@ -248,13 +262,24 @@ def comparisonGrid(
         height=1,
         source=source,
         fill_color="color",
-        fill_alpha=0.85,
+        fill_alpha="fillAlpha",
         line_color="edge",
         line_width="edgeWidth",
-        nonselection_fill_alpha=0.85,
+        nonselection_fill_alpha="fillAlpha",
         nonselection_line_color="edge",
         selection_line_color=_INK,
         selection_line_width=3,
+    )
+    # The outline of a small cell, inside the cell's own edge so its neighbours' edges leave it whole.
+    plot.rect(
+        "camera",
+        "row",
+        width=0.88,
+        height=0.82,
+        source=ColumnDataSource(cells[small.to_numpy()]),
+        fill_color=None,
+        line_color="color",
+        line_width=2,
     )
     text = {"source": source, "text_align": "center", "text_color": _INK, "text_font_size": "10pt"}
     plot.text("camera", "row", text="text", y_offset=-7, text_baseline="middle", **text)
@@ -274,6 +299,7 @@ def comparisonGrid(
                 ("", "@row, @camera"),
                 ("night's median vs reference", "@status, @differenceText (@relativeText)"),
                 ("worst population", "@population (of @nPopulations)"),
+                ("images behind the medians", "@nRun the night's, @nReference the reference's"),
                 ("visits beyond FAIL tolerance", "@nBeyond of @nVisits"),
                 ("visits beyond WARN only", "@nWarned of @nVisits"),
             ],
