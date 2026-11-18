@@ -103,23 +103,44 @@ SEQUENCE_LABELS = {
     "darks": "darks sequence",
 }
 
+#: A visit's status when the opdb says it was taken and qadb holds no QA result for it.
+NO_RESULT = "NO RESULT"
+
+#: The SpS exposure types the QA tasks judge: a visit of one of these should have a result.
+JUDGED_EXP_TYPES = ("object", "arc", "flat")
+
+#: The kind of frame an IIC sequence type takes, for a visit with no QA result to say it; any other is unclassified.
+SEQUENCE_KINDS = {
+    "scienceObject": "science",
+    "scienceObject_windowed": "science",
+    "scienceArc": "arc",
+    "scienceTrace": "quartz",
+}
+
 #: Fewest visits in each red-arm mode for `modeOffsets` to give a detector a constant.
 MIN_MODE_VISITS = 3
 
 _IMAGE = ["visit", "arm", "spectrograph"]
 _KEY = ["visit", "camera"]
 _DATA = Path(__file__).parent / "data"
-_INFO = ["visit", "time", "exptime", "sequenceType"]
+_INFO = ["visit", "time", "exptime", "sequenceType", "expType", "cameras", "iis", "sequenceEnd"]
 _TABLES = ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics")
 _COUNT_WORDS = {2: "two", 3: "three", 4: "four", 5: "five"}
 
+# Every visit that exposed the spectrograph in a range: one row each (a visit is in one sequence at most).
 _VISIT_INFO_SQL = """
-SELECT v.pfs_visit_id AS visit, v.issued_at AS time,
+SELECT v.pfs_visit_id AS visit, v.issued_at AS time, sv.exp_type,
     (SELECT max(e.exptime) FROM sps_exposure e WHERE e.pfs_visit_id = v.pfs_visit_id) AS exptime,
-    (SELECT min(s.sequence_type) FROM visit_set vs JOIN iic_sequence s ON s.iic_sequence_id = vs.iic_sequence_id
-        WHERE vs.pfs_visit_id = v.pfs_visit_id) AS sequence_type
+    (SELECT string_agg(c.arm || c.sps_module_id::text, ' ' ORDER BY c.arm, c.sps_module_id)
+        FROM sps_exposure e JOIN sps_camera c ON c.sps_camera_id = e.sps_camera_id
+        WHERE e.pfs_visit_id = v.pfs_visit_id) AS cameras,
+    s.sequence_type, position('iis' IN lower(s.cmd_str)) > 0 AS iis, st.status_flag, st.cmd_output
 FROM pfs_visit v
-WHERE v.pfs_visit_id = ANY(:visits)
+JOIN sps_visit sv ON sv.pfs_visit_id = v.pfs_visit_id
+LEFT JOIN visit_set vs ON vs.pfs_visit_id = v.pfs_visit_id
+LEFT JOIN iic_sequence s ON s.iic_sequence_id = vs.iic_sequence_id
+LEFT JOIN iic_sequence_status st ON st.iic_sequence_id = s.iic_sequence_id
+WHERE v.pfs_visit_id BETWEEN :first AND :last
 """
 
 
@@ -451,27 +472,51 @@ def judge(images: pd.DataFrame, limits: Limits | None = None) -> pd.DataFrame:
     return judged
 
 
-def readVisitInfo(opdb: Any, visits: Iterable[int]) -> pd.DataFrame:
-    """Read some visits' times, exposure times and IIC sequence types from the opdb, in one query.
+def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
+    """Read every visit that exposed the spectrograph in a range from the opdb, in one query.
 
     Parameters
     ----------
     opdb : `pfs.utils.database.opdb.OpDB`
         The opdb, read-only.
-    visits : iterable of `int`
-        PFS visits.
+    first, last : `int`
+        The visit range, inclusive.
 
     Returns
     -------
     `pandas.DataFrame`
-        ``visit``, ``time`` (``pfs_visit.issued_at``, HST), ``exptime`` (the
-        longest SpS exposure, seconds) and ``sequenceType`` (missing outside
-        any sequence).
+        One row per visit: ``visit``; ``time`` (``pfs_visit.issued_at``, HST);
+        ``exptime`` (the longest SpS exposure, seconds); ``expType`` (the SpS
+        exposure type); ``cameras`` (those that exposed, ``b1 n1 r1``);
+        ``sequenceType`` (missing outside any IIC sequence); ``iis`` (whether
+        the sequence's command lit the engineering fibers); and
+        ``sequenceEnd``, how the sequence ended (``completed``, or what it
+        reported when it did not).
     """
-    visits = sorted({int(visit) for visit in visits})
-    read = opdb.query_dataframe(_VISIT_INFO_SQL, params={"visits": visits}) if visits else None
-    read = pd.DataFrame(columns=["visit", "time", "exptime", "sequence_type"]) if read is None else read
-    info = read.rename(columns={"sequence_type": "sequenceType"}).reindex(columns=_INFO)
+    read = opdb.query_dataframe(_VISIT_INFO_SQL, params={"first": int(first), "last": int(last)})
+    columns = [
+        "visit",
+        "time",
+        "exp_type",
+        "exptime",
+        "cameras",
+        "sequence_type",
+        "iis",
+        "status_flag",
+        "cmd_output",
+    ]
+    read = pd.DataFrame(columns=columns) if read is None else read.reindex(columns=columns)
+    ended = []
+    for flag, output in zip(read["status_flag"], read["cmd_output"], strict=True):
+        if pd.isna(flag):
+            ended.append(None)
+        elif int(flag) == 0:
+            ended.append("completed")
+        else:
+            ended.append(str(output) if isinstance(output, str) and output else "did not complete")
+    info = read.rename(columns={"sequence_type": "sequenceType", "exp_type": "expType"})
+    info["sequenceEnd"] = pd.Series(ended, index=info.index, dtype=object)
+    info = info.reindex(columns=_INFO).drop_duplicates("visit")
     info["visit"] = info["visit"].astype("int64")
     info["time"] = pd.to_datetime(info["time"])
     info["exptime"] = pd.to_numeric(info["exptime"], errors="coerce")
@@ -483,7 +528,7 @@ def infoFromTables(tables: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
 
     A snapshot's ``visitInfo`` (`readVisitInfo`, kept by the snapshot command)
     when it has one; else qadb's own visit times, with no exposure time and no
-    ``sequenceType`` column.
+    ``sequenceType`` column, which cannot tell a visit qadb holds no result for.
     """
     if "visitInfo" in tables:
         return tables["visitInfo"].reindex(columns=_INFO)
@@ -532,8 +577,51 @@ def _first(values: pd.Series) -> str:
     return str(known.iloc[0]) if len(known) else ""
 
 
+def _noResultRows(info: pd.DataFrame, judgedVisits: set[int]) -> list[dict]:
+    """Return a row for each visit the opdb says was taken, and should have been judged, that was not.
+
+    Live results arrive in visit order, so a visit older than the latest one
+    judged was passed over; a newer one may still be on its way and is left out.
+    """
+    if not judgedVisits or "expType" not in info.columns:
+        return []
+    missing = info[
+        info["expType"].isin(JUDGED_EXP_TYPES)
+        & ~info["visit"].isin(judgedVisits)
+        & (info["visit"] < max(judgedVisits))
+    ]
+    rows = []
+    for row in missing.itertuples():
+        cameras = row.cameras.split() if isinstance(row.cameras, str) else []
+        arms = "".join(
+            sorted({camera[0] for camera in cameras}, key=lambda arm: ARMS.find(arm) % (len(ARMS) + 1))
+        )
+        ended = row.sequenceEnd if isinstance(row.sequenceEnd, str) and row.sequenceEnd else None
+        rows.append(
+            {
+                "visit": int(row.visit),
+                "kind": SEQUENCE_KINDS.get(row.sequenceType, "other"),
+                "lamp": "",
+                "illumination": {True: "iis", False: "full"}.get(row.iis, ""),
+                "arms": arms,
+                "detectors": len(cameras),
+                "status": NO_RESULT,
+                "flagged": "",
+                "detectorsStatus": " ".join(f"{camera}N" for camera in cameras),
+                "why": {None: "not in a sequence", "completed": "sequence completed"}.get(
+                    ended, f"sequence ended: {ended}"
+                ),
+            }
+        )
+    return rows
+
+
 def visitTable(judged: pd.DataFrame, info: pd.DataFrame | None = None) -> pd.DataFrame:
     """Return one row per visit: its worst verdict, the detectors behind it, and when it was taken.
+
+    With the opdb's listing of the visits taken (``info`` from
+    `readVisitInfo`), a visit that should have been judged and has no result
+    gets a row too, with the status `NO_RESULT`.
 
     Parameters
     ----------
@@ -551,7 +639,8 @@ def visitTable(judged: pd.DataFrame, info: pd.DataFrame | None = None) -> pd.Dat
         subtracted), ``detectors``, ``status``, ``flagged`` (``b1 W n3 F``),
         ``detectorsStatus`` (``b1P b2W ...``), ``why``, ``time``, ``hst``,
         ``night`` (the HST date of the evening), ``exptime`` and
-        ``sequenceType``.
+        ``sequenceType``. A `NO_RESULT` row has the cameras that exposed for its
+        detectors (``b1N b2N ...``) and how its sequence ended for ``why``.
     """
     rows = []
     for visit, group in judged.sort_values("camera").groupby("visit"):
@@ -582,11 +671,12 @@ def visitTable(judged: pd.DataFrame, info: pd.DataFrame | None = None) -> pd.Dat
         *("visit", "kind", "lamp", "illumination", "arms", "detectors"),
         *("status", "flagged", "detectorsStatus", "why"),
     ]
-    visits = pd.DataFrame(rows, columns=columns).astype({"visit": "int64"})
     hasSequences = info is not None and "sequenceType" in info.columns
     info = pd.DataFrame(columns=["visit"]) if info is None else info
+    rows += _noResultRows(info, {row["visit"] for row in rows})
+    visits = pd.DataFrame(rows, columns=columns).astype({"visit": "int64"})
     info = info.reindex(columns=_INFO).drop_duplicates("visit").astype({"visit": "int64"})
-    visits = visits.merge(info, on="visit", how="left")
+    visits = visits.merge(info.drop(columns=["expType", "cameras", "iis"]), on="visit", how="left")
     when = pd.to_datetime(visits["time"])
     visits["time"] = when
     visits["hst"] = when.dt.strftime("%Y-%m-%d %H:%M").fillna("")
@@ -651,7 +741,7 @@ def _counts(visits: pd.DataFrame) -> str:
     return "".join(f"<td>{int(counts.get(k, 0)) or '–'}</td>" for k in ("PASS", "WARN", "FAIL", "UNKNOWN"))
 
 
-def _tally(name: str, visits: pd.DataFrame) -> str:
+def _tally(name: str, visits: pd.DataFrame, noResult: int = 0) -> str:
     counts = visits["status"].value_counts()
     chips = "".join(
         f"<span class='chip {k.lower()}{'' if counts.get(k, 0) else ' zero'}'><b>{int(counts.get(k, 0)):,}</b> {k}</span>"
@@ -659,6 +749,8 @@ def _tally(name: str, visits: pd.DataFrame) -> str:
     )
     if counts.get("UNKNOWN", 0):
         chips += f"<span class='chip unknown'><b>{int(counts['UNKNOWN'])}</b> UNKNOWN</span>"
+    if noResult:
+        chips += f"<span class='chip none'><b>{noResult}</b> {NO_RESULT}</span>"
     return f"<li><span class='k'>{name}</span><span class='n'>{len(visits):,} visits</span>{chips}</li>"
 
 
@@ -705,24 +797,39 @@ def renderPage(
     centre = scales[scales["species"] == "centre"]
     centre = centre.groupby(centre["camera"].str[0])["kmsPerPixel"].median()
 
+    # The visits judged, and those the opdb says were taken that have no QA result.
+    everyVisit = visits
+    noResult = everyVisit[everyVisit["status"] == NO_RESULT]
+    visits = everyVisit[everyVisit["status"] != NO_RESULT]
+
+    def unjudged(frame: pd.DataFrame, slit: str | None = None) -> str:
+        """Return how many of ``frame``'s kinds of visit have no result, lit through ``slit``; a dash for none."""
+        of = noResult[noResult["kind"].isin(frame)]
+        of = of if slit is None else of[of["illumination"] == slit]
+        return f"<td>{len(of) or '–'}</td>"
+
     full, engineering = visits["illumination"] == "full", visits["illumination"] == "iis"
     kind = visits["kind"]
     kinds = [
-        ("Science", kind == "science"),
-        ("All-sky", kind == "all-sky"),
-        ("Twilight", kind == "twilight"),
-        ("Arc, full slit", (kind == "arc") & full),
-        ("Quartz, full slit", (kind == "quartz") & full),
-        ("Unclassified, full slit", (kind == "other") & full),
-        ("Arc, engineering fibers", (kind == "arc") & engineering),
-        ("Quartz, engineering fibers", (kind == "quartz") & engineering),
-        ("Unclassified, engineering fibers", (kind == "other") & engineering),
+        ("Science", kind == "science", ["science"], None),
+        ("All-sky", kind == "all-sky", ["all-sky"], None),
+        ("Twilight", kind == "twilight", ["twilight"], None),
+        ("Arc, full slit", (kind == "arc") & full, ["arc"], "full"),
+        ("Quartz, full slit", (kind == "quartz") & full, ["quartz"], "full"),
+        ("Unclassified, full slit", (kind == "other") & full, ["other"], "full"),
+        ("Arc, engineering fibers", (kind == "arc") & engineering, ["arc"], "iis"),
+        ("Quartz, engineering fibers", (kind == "quartz") & engineering, ["quartz"], "iis"),
+        ("Unclassified, engineering fibers", (kind == "other") & engineering, ["other"], "iis"),
     ]
     summary = [
-        f"<tr><th scope='row'>{name}</th><td>{int(mask.sum())}</td>{_counts(visits[mask])}</tr>"
-        for name, mask in kinds
+        f"<tr><th scope='row'>{name}</th><td>{int(mask.sum())}</td>{_counts(visits[mask])}"
+        f"{unjudged(of, slit)}</tr>"
+        for name, mask, of, slit in kinds
     ]
-    summary.append(f"<tr class='total'><th scope='row'>All</th><td>{len(visits)}</td>{_counts(visits)}</tr>")
+    summary.append(
+        f"<tr class='total'><th scope='row'>All</th><td>{len(visits)}</td>{_counts(visits)}"
+        f"<td>{len(noResult) or '–'}</td></tr>"
+    )
 
     science = judged[judged["kind"] == "science"]
     width, height = 260, 28
@@ -842,7 +949,8 @@ def renderPage(
         f"<td>{_nightCell(group[group['kind'] == 'science'])}</td>"
         f"<td>{_nightCell(group[group['kind'].isin(['twilight', 'all-sky'])])}</td>"
         f"<td>{_nightCell(group[group['kind'].isin(['arc', 'quartz']) & (group['illumination'] == 'full')])}</td>"
-        f"<td>{_nightCell(group[group['illumination'] == 'iis'])}</td></tr>"
+        f"<td>{_nightCell(group[group['illumination'] == 'iis'])}</td>"
+        f"<td>{int((noResult['night'] == night).sum()) or '–'}</td></tr>"
         for night, group in visits[visits["night"] != ""].groupby("night")
     ]
 
@@ -886,6 +994,31 @@ def renderPage(
         f"<td class='l'>{flaggedDetectors(r.flagged)}</td><td class='l why'>{html.escape(r.why)}</td></tr>"
         for r in notPassing.itertuples()
     )
+    missingSection = noResultNote = ""
+    if everyVisit["sequenceEnd"].notna().any():
+        noResultNote = (
+            f"<li><strong>{NO_RESULT}:</strong> a visit that exposed the spectrograph as an object, arc or flat "
+            "frame, by the opdb, and is older than the latest visit judged, with no QA result. Results arrive in "
+            "the order the visits were taken, so such a visit was passed over.</li>"
+        )
+    if len(noResult):
+        missingRows = "\n".join(
+            f"<tr><th scope='row'>{r.visit}</th><td class='l'>{r.hst}</td><td class='l'>{html.escape(r.label)}</td>"
+            f"<td class='l'>{r.slit}</td><td>{'' if pd.isna(r.exptime) else round(float(r.exptime))}</td>"
+            f"<td class='l'>{r.arms}</td><td class='l why'>{html.escape(r.why)}</td></tr>"
+            for r in noResult.itertuples()
+        )
+        missingSection = (
+            f"<section class='block' id='no-result'><h2>Visits with no QA result ({len(noResult)})</h2>"
+            "<p>These visits exposed the spectrograph and are older than the latest visit judged, yet have no QA "
+            "result. The last column is how the instrument's sequence ended; why a completed visit has no result "
+            "is not recorded here.</p>"
+            "<div class='tablewrap'><table><thead><tr><th scope='col' class='l'>Visit</th>"
+            "<th scope='col' class='l'>HST</th><th scope='col' class='l'>Kind</th>"
+            "<th scope='col' class='l'>Lit through</th><th scope='col'>Exposure (s)</th>"
+            "<th scope='col' class='l'>Arms</th><th scope='col' class='l'>Sequence</th></tr></thead>"
+            f"<tbody>\n{missingRows}\n</tbody></table></div></section>"
+        )
     data = [
         [
             int(r.visit),
@@ -900,14 +1033,15 @@ def renderPage(
             r.night,
             r.detectorsStatus,
         ]
-        for r in visits.itertuples()
+        for r in everyVisit.itertuples()
     ]
 
     calibs = visits[kind.isin(["arc", "quartz"]) & full]
+    unjudgedCalibs = noResult["kind"].isin(["arc", "quartz"]) & (noResult["illumination"] == "full")
     lead = (
-        _tally("Science", visits[kind == "science"])
-        + _tally("Calibs", calibs)
-        + _tally("Engineering", visits[engineering])
+        _tally("Science", visits[kind == "science"], int((noResult["kind"] == "science").sum()))
+        + _tally("Calibs", calibs, int(unjudgedCalibs.sum()))
+        + _tally("Engineering", visits[engineering], int((noResult["illumination"] == "iis").sum()))
     )
     if limits.sameRed:
         kmsRule = (
@@ -926,7 +1060,7 @@ def renderPage(
             f"WARN at {offsetX[0]:g} px and FAIL at {offsetX[1]:g} px in x, "
             f"WARN at {offsetY[0]:g} px and FAIL at {offsetY[1]:g} px in y"
         )
-    when = visits["time"].dropna()
+    when = everyVisit["time"].dropna()
     dates = ""
     if len(when):
         first, last = when.min(), when.max()
@@ -944,9 +1078,12 @@ def renderPage(
         "{{NIGHTS}}": "\n".join(nights),
         "{{FLAGGED}}": flagged,
         "{{NVISITS}}": f"{len(visits):,}",
+        "{{NO_RESULT_META}}": f", {len(noResult):,} more with no QA result" if len(noResult) else "",
+        "{{NO_RESULT_SECTION}}": missingSection,
+        "{{NO_RESULT_NOTE}}": noResultNote,
         "{{NIMAGES}}": f"{len(judged):,}",
-        "{{FIRST}}": str(visits["visit"].min()) if len(visits) else "–",
-        "{{LAST}}": str(visits["visit"].max()) if len(visits) else "–",
+        "{{FIRST}}": str(everyVisit["visit"].min()) if len(everyVisit) else "–",
+        "{{LAST}}": str(everyVisit["visit"].max()) if len(everyVisit) else "–",
         "{{NFLAGGED}}": str(len(notPassing)),
         "{{LEAD}}": lead,
         "{{DATES}}": dates,
@@ -984,6 +1121,7 @@ def buildReport(
     title: str = "Visit verdicts",
     source: str = "",
     now: datetime | None = None,
+    constants: pd.DataFrame | None = None,
 ) -> Report:
     """Judge what a qadb read holds and return its report.
 
@@ -1000,9 +1138,13 @@ def buildReport(
         Whether to subtract the `modeOffsets` on visits read with the m arm.
     title, source, now
         As `renderPage` takes them.
+    constants : `pandas.DataFrame`, optional
+        The `modeOffsets` to subtract, when they were measured elsewhere than
+        on ``tables``; measured on ``tables`` when None.
     """
     limits = Limits() if limits is None else limits
-    constants = modeOffsets(tables, minVisits=MIN_MODE_VISITS if correctModes else np.inf)
+    if constants is None or not correctModes:
+        constants = modeOffsets(tables, minVisits=MIN_MODE_VISITS if correctModes else np.inf)
     judged = judge(measure(tables, constants), limits)
     visits = visitTable(judged, infoFromTables(tables) if info is None else info)
     page = renderPage(judged, visits, limits, constants, title=title, source=source, now=now)
@@ -1018,11 +1160,14 @@ class ReportCache:
         The store: its ``raw`` tables are judged, and its ``refresh`` is called
         before each page (a live store limits how often that reads qadb).
     readInfo : callable, optional
-        ``readInfo(visits)`` returns the visits' times, exposure times and
-        sequence types (`readVisitInfo` over the opdb). Without it, a
-        snapshot's ``visitInfo`` or the store's own visit times are used.
+        ``readInfo(first, last)`` returns every visit taken in the range
+        (`readVisitInfo` over the opdb), read from ``firstVisit`` to the latest
+        visit judged. Without it, the store's own visit times are used, and
+        no visit can be told to lack a result.
     info : `pandas.DataFrame`, optional
-        The visits' information, fixed, in place of ``readInfo``.
+        The visits' information, fixed, in place of ``readInfo`` (a snapshot's).
+    firstVisit : `int`, optional
+        The first visit of the run; the earliest visit judged when None.
     **options
         ``limits``, ``correctModes``, ``title`` and ``source`` for `buildReport`.
     """
@@ -1030,13 +1175,15 @@ class ReportCache:
     def __init__(
         self,
         store: Any,
-        readInfo: Callable[[list[int]], pd.DataFrame] | None = None,
+        readInfo: Callable[[int, int], pd.DataFrame] | None = None,
         info: pd.DataFrame | None = None,
+        firstVisit: int | None = None,
         **options: Any,
     ):
         self.store = store
         self._readInfo = readInfo
         self._info = info
+        self._firstVisit = firstVisit
         self._options = options
         self._lock = threading.Lock()
         self._version: int | None = None
@@ -1061,8 +1208,10 @@ class ReportCache:
             if self.report is None or self._version != version:
                 info = self._info
                 visits = sorted({int(visit) for name in tables for visit in tables[name]["visit"]})
-                if info is None:
-                    info = self._readInfo(visits) if self._readInfo is not None and visits else times
+                if info is None and self._readInfo is not None and visits:
+                    info = self._readInfo(self._firstVisit or visits[0], visits[-1])
+                elif info is None:
+                    info = times
                 self.report = buildReport(tables, info=info, **self._options)
                 self._version = version
             return self.report.html

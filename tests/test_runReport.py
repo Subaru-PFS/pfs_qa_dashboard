@@ -305,7 +305,7 @@ def testTheCachedPageIsMadeAgainOnlyWhenTheStoreChanges(monkeypatch):
 def testAStoreWithNoImageYetStillHasAPage():
     store = _Store({})
     store.table = store.table.iloc[:0]
-    page = ReportCache(store, readInfo=lambda visits: pytest.fail("no visit to read")).html()
+    page = ReportCache(store, readInfo=lambda first, last: pytest.fail("no visit to read")).html()
     assert "const DATA = [];" in page and "0 visits" in page
 
 
@@ -392,8 +392,13 @@ def testSnapshotKeepsWhatTheReportShowsOfEachVisit(tmp_path, monkeypatch):
         {
             "visit": [1],
             "time": [pd.Timestamp("2026-11-04 20:00")],
+            "exp_type": ["object"],
             "exptime": [450.0],
+            "cameras": ["r1"],
             "sequence_type": ["scienceObject"],
+            "iis": [False],
+            "status_flag": [0],
+            "cmd_output": ["complete"],
         }
     )
     asked = []
@@ -418,9 +423,74 @@ def testSnapshotKeepsWhatTheReportShowsOfEachVisit(tmp_path, monkeypatch):
     monkeypatch.setattr("pfs.qa.dashboard.live.opdbReader", lambda opdb: lambda visits: (empty, empty))
     cli = _cli()
     cli.main(["snapshot", "--collection", "c", "--opdb-host", "127.0.0.1", "--out", str(tmp_path / "snap")])
-    assert asked == [{"visits": [1]}]  # one query, with the visits bound
+    assert asked == [{"first": 1, "last": 1}]  # one query, with the visit range bound
 
     cli.main(["report", "--snapshot", str(tmp_path / "snap"), "--out", str(tmp_path / "out")])
     visit = pd.read_csv(tmp_path / "out" / "visits.csv").iloc[0]
     assert (visit["hst"], visit["exptime"]) == ("2026-11-04 20:00", 450.0)
     assert "visit times from the opdb" in (tmp_path / "out" / "index.html").read_text()
+
+
+def _taken(*visits):
+    """Return the opdb's listing of some visits taken, as `runReport.readVisitInfo` returns it.
+
+    Each is ``(visit, expType, sequenceType, iis, sequenceEnd)``.
+    """
+    return pd.DataFrame(
+        {
+            "visit": [v[0] for v in visits],
+            "time": [
+                pd.Timestamp("2026-11-04 20:00") + pd.Timedelta(minutes=10 * i) for i in range(len(visits))
+            ],
+            "exptime": 300.0,
+            "sequenceType": [v[2] for v in visits],
+            "expType": [v[1] for v in visits],
+            "cameras": "b1 r1",
+            "iis": [v[3] for v in visits],
+            "sequenceEnd": [v[4] for v in visits],
+        }
+    )
+
+
+def testAVisitTakenAndNeverJudgedShowsAsNoResult():
+    tables = _tables((2, "r1", "science", _science()), (5, "r1", "science", _science()))
+    info = _taken(
+        (1, "arc", "scienceArc", True, "completed"),
+        (2, "object", "scienceObject", False, "completed"),
+        (3, "object", "scienceObject", False, "abortRequested"),
+        (4, "dark", "darks", False, "completed"),
+        (5, "object", "scienceObject", False, "completed"),
+        (6, "object", "scienceObject", False, "completed"),
+    )
+    visits = runReport.visitTable(judge(measure(tables)), info).set_index("visit")
+    # Visits 1 and 3 were taken before the latest visit judged (5) and have no result.
+    assert visits["status"].to_dict() == {1: "NO RESULT", 2: "PASS", 3: "NO RESULT", 5: "PASS"}
+    assert visits.loc[1, ["kind", "slit", "arms", "detectorsStatus", "why"]].tolist() == [
+        *("arc", "engineering fibers", "br", "b1N r1N"),
+        "sequence completed",
+    ]
+    assert visits.loc[3, ["kind", "slit", "why"]].tolist() == [
+        "science",
+        "full slit",
+        "sequence ended: abortRequested",
+    ]
+    # Negative control: a dark has no QA method, and a visit newer than the latest judged may still be on its way.
+    assert 4 not in visits.index and 6 not in visits.index
+    # Negative control: without the opdb's listing nothing is known to be missing.
+    plain = runReport.visitTable(judge(measure(tables)), info[["visit", "time"]])
+    assert plain["visit"].tolist() == [2, 5]
+
+    page = buildReport(tables, info=info).html
+    assert "2 visits judged" in page and ", 2 more with no QA result" in page
+    assert "Visits with no QA result (2)" in page and "<b>1</b> NO RESULT" in page
+    assert "sequence ended: abortRequested" in page
+    data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
+    assert [(row[0], row[6]) for row in data] == [
+        (1, "NO RESULT"),
+        (2, "PASS"),
+        (3, "NO RESULT"),
+        (5, "PASS"),
+    ]
+    # Negative control: a page whose visits all have results has no such section or note.
+    whole = buildReport(tables, info=info[info["visit"].isin([2, 5])]).html
+    assert "Visits with no QA result" not in whole and "more with no QA result" not in whole

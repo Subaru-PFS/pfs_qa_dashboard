@@ -42,8 +42,16 @@ python bin/qaDashboard.py report --collection qaActor/reductions --first-visit <
 python bin/qaDashboard.py report --snapshot <dir> --out <dir>
 ```
 
-`serve` takes the same limits and title, and makes the page again whenever qadb holds new results. With the opdb a
-visit has its exposure time and, for an unclassified frame, its sequence type; without it, times are qadb's.
+`serve` takes the same limits and title, and makes the page again whenever qadb holds new results.
+
+**Visits with no result.** With the opdb, the report reads every visit that exposed the spectrograph from
+`--first-visit` (the earliest visit judged, by default) to the latest visit judged. One taken as an object, arc or
+flat frame that qadb holds no result for is shown as `NO RESULT`: an outline on the calendar at its own time, a
+count beside each tally and night, and a section listing each with how its sequence ended. Live results arrive in
+the order the visits were taken (on Run31, none of 859 live visits was judged after a later one), so a visit older
+than the latest one judged was passed over; a newer one is not shown, as its result may be on its way. The page
+does not say why a result is missing. Without the opdb, times are qadb's and no visit can be told to lack a
+result.
 
 Built on Panel and DuckDB, and on drp_qa (`pfs.drp.qa`) for reading qadb back, thresholds included, and for the
 gate's matching of an image to its thresholds entry.

@@ -43,14 +43,16 @@
   h2 { font-family: var(--display); font-weight: 600; font-size: 1.15rem; margin: 0; }
   p { margin: 0; }
   .meta { color: var(--fg-3); font-size: 0.87rem; }
-  ul.lead { list-style: none; padding: 0; margin: 4px 0 0; display: grid; grid-template-columns: repeat(6, max-content); gap: 8px 10px; align-items: center; max-width: none; }
+  ul.lead { list-style: none; padding: 0; margin: 4px 0 0; display: grid; grid-template-columns: repeat(7, max-content); gap: 8px 10px; align-items: center; max-width: none; }
   ul.lead li { display: contents; }
   ul.lead .k { grid-column: 1; font-family: var(--display); font-weight: 600; font-size: 1.05rem; padding-right: 6px; }
   ul.lead .n { color: var(--fg-3); font-size: 0.85rem; padding-right: 6px; font-variant-numeric: tabular-nums; }
   ul.lead .chip { font-size: 0.8rem; padding: 3px 10px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
   ul.lead .chip b { font-size: 0.95rem; font-weight: 700; }
   ul.lead .chip.zero { opacity: 0.45; }
-  @media (max-width: 560px) { ul.lead { grid-template-columns: repeat(3, max-content); } ul.lead .k { grid-column: 1; } ul.lead .n { grid-column: 2 / span 2; } }
+  ul.lead .chip.unknown { grid-column: 6; }
+  ul.lead .chip.none { grid-column: 7; }
+  @media (max-width: 560px) { ul.lead { grid-template-columns: repeat(3, max-content); } ul.lead .k { grid-column: 1; } ul.lead .n { grid-column: 2 / span 2; } ul.lead .chip.unknown, ul.lead .chip.none { grid-column: auto; } }
   ul { margin: 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 6px; }
   .tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; min-width: 0; }
   .tablewrap.tall { max-height: 640px; overflow-y: auto; }
@@ -85,6 +87,7 @@
   .chip.warn { color: var(--warn); background: var(--warn-bg); }
   .chip.fail { color: var(--fail); background: var(--fail-bg); }
   .chip.unknown { color: var(--unk); background: var(--unk-bg); }
+  .chip.none { color: var(--fg-2); background: transparent; box-shadow: inset 0 0 0 1px var(--fg-3); }
   .controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; }
   .controls label { display: flex; flex-direction: column; gap: 3px; font-size: 0.78rem; color: var(--fg-2); }
   .controls select, .controls input { font: inherit; font-size: 0.9rem; padding: 5px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--fg); }
@@ -104,6 +107,8 @@
   .controls .checks input { width: 15px; height: 15px; margin: 0; padding: 0; accent-color: var(--focus); }
   .controls .checks input:disabled + span { color: var(--fg-3); }
   .sq.pass { background: var(--pass-fill); } .sq.warn { background: var(--warn-fill); } .sq.fail { background: var(--fail-fill); } .sq.unknown { background: var(--unk-fill); }
+  /* No QA result: an outline, nothing inside. */
+  .sq.none, .cal .cells.time .sq.none { background: transparent; box-shadow: inset 0 0 0 1px var(--fg-2); }
   .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--fg-2); font-size: 0.85rem; align-items: center; }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   .tip { position: fixed; z-index: 20; pointer-events: none; background: var(--surface); color: var(--fg); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; font-size: 0.82rem; line-height: 1.45; box-shadow: 0 4px 14px rgb(0 0 0 / 0.18); max-width: 300px; }
@@ -123,7 +128,7 @@
 <main>
   <header>
     <h1>{{TITLE}}</h1>
-    <p class="meta">Visits {{FIRST}} to {{LAST}}{{DATES}} · {{NVISITS}} visits, {{NIMAGES}} detector images · judged {{TODAY}}</p>
+    <p class="meta">Visits {{FIRST}} to {{LAST}}{{DATES}} · {{NVISITS}} visits judged, {{NIMAGES}} detector images{{NO_RESULT_META}} · judged {{TODAY}}</p>
     <ul class="lead">{{LEAD}}</ul>
   </header>
 
@@ -137,7 +142,7 @@
         <label for="f-show-eng"><input type="checkbox" id="f-show-eng" data-show="eng"><span>Engineering fibers</span></label>
       </div>
       <div class="legend">
-        <span><span class="sq pass"></span>PASS</span><span><span class="sq warn"></span>WARN</span><span><span class="sq fail"></span>FAIL</span><span><span class="sq unknown"></span>UNKNOWN</span>
+        <span><span class="sq pass"></span>PASS</span><span><span class="sq warn"></span>WARN</span><span><span class="sq fail"></span>FAIL</span><span><span class="sq unknown"></span>UNKNOWN</span><span><span class="sq none"></span>NO RESULT</span>
       </div>
     </div>
     <div class="controls">
@@ -172,10 +177,10 @@
 
   <section class="block">
     <h2>Visits by kind</h2>
-    <p>A visit takes the worst verdict among its detectors. Unclassified frames are those the QA did not recognise as an arc, quartz, science or twilight frame: darks, dot-roach, fiber-profile and flat sequences.</p>
+    <p>A visit takes the worst verdict among its detectors; the last column counts visits that were taken and have no QA result. Unclassified frames are those the QA did not recognise as an arc, quartz, science or twilight frame: darks, dot-roach, fiber-profile and flat sequences.</p>
     <div class="tablewrap">
       <table>
-        <thead><tr><th scope="col" class="l">Kind</th><th scope="col">Visits</th><th scope="col">PASS</th><th scope="col">WARN</th><th scope="col">FAIL</th><th scope="col">UNKNOWN</th></tr></thead>
+        <thead><tr><th scope="col" class="l">Kind</th><th scope="col">Visits</th><th scope="col">PASS</th><th scope="col">WARN</th><th scope="col">FAIL</th><th scope="col">UNKNOWN</th><th scope="col">No result</th></tr></thead>
         <tbody>
 {{SUMMARY}}
         </tbody>
@@ -248,10 +253,10 @@
 
   <section class="block">
     <h2>By night</h2>
-    <p>Counts are visits; the brackets give how many of them are WARN or FAIL.</p>
+    <p>Counts are visits judged; the brackets give how many of them are WARN or FAIL. The last column counts visits with no QA result.</p>
     <div class="tablewrap">
       <table>
-        <thead><tr><th scope="col" class="l">Night (HST, evening date)</th><th scope="col">Visits</th><th scope="col">Science</th><th scope="col">Twilight and all-sky</th><th scope="col">Arcs and quartz, full slit</th><th scope="col">Engineering-fiber frames</th></tr></thead>
+        <thead><tr><th scope="col" class="l">Night (HST, evening date)</th><th scope="col">Visits</th><th scope="col">Science</th><th scope="col">Twilight and all-sky</th><th scope="col">Arcs and quartz, full slit</th><th scope="col">Engineering-fiber frames</th><th scope="col">No result</th></tr></thead>
         <tbody>
 {{NIGHTS}}
         </tbody>
@@ -271,12 +276,14 @@
     </div>
   </section>
 
+{{NO_RESULT_SECTION}}
+
   <section class="block">
     <h2>Every visit</h2>
     <div class="controls">
       <label for="f-kind">Kind<select id="f-kind"><option value="">All kinds</option><option>science</option><option>all-sky</option><option>twilight</option><option>arc</option><option>quartz</option><option>unclassified</option></select></label>
       <label for="f-slit">Lit through<select id="f-slit"><option value="">Either</option><option>full slit</option><option>engineering fibers</option></select></label>
-      <label for="f-status">Verdict<select id="f-status"><option value="">All verdicts</option><option value="notpass">Not PASS</option><option>PASS</option><option>WARN</option><option>FAIL</option><option>UNKNOWN</option></select></label>
+      <label for="f-status">Verdict<select id="f-status"><option value="">All verdicts</option><option value="notpass">Not PASS</option><option>PASS</option><option>WARN</option><option>FAIL</option><option>UNKNOWN</option><option>NO RESULT</option></select></label>
       <label for="f-visit">Visit<input id="f-visit" type="search" inputmode="numeric" placeholder="first digits" size="10"></label>
       <span class="count" id="count" aria-live="polite"></span>
     </div>
@@ -296,8 +303,9 @@
       <li><strong>Arcs and quartz, full slit:</strong> width, line or trace scatter and lines per fiber, each against the detector's own reference; and the offsets from the calibration.</li>
       <li><strong>Twilights:</strong> the offsets from the calibration, and the consistency of each exposure with the rest of its sequence.</li>
       <li><strong>Engineering-fiber frames:</strong> width and lines per fiber against their own references, the trace offset, and line residuals. Their line residuals are compared with full-slit references, which were not made for these frames; most of their FAILs come from that comparison and from the trace offset.</li>
-      <li><strong>A visit</strong> takes the worst verdict among its detectors. UNKNOWN means nothing could be judged.</li>
-      <li><strong>Not covered:</strong> visits with no QA results in the collection; and darks, biases and master frames, which have no QA method. Whether a flagged frame is truly faulty has not been checked.</li>
+      <li><strong>A visit</strong> takes the worst verdict among its detectors. UNKNOWN means the QA ran and nothing could be judged.</li>
+      {{NO_RESULT_NOTE}}
+      <li><strong>Not covered:</strong> visits after the latest one judged, whose results may be on their way; and darks, biases and master frames, which have no QA method. Whether a flagged frame is truly faulty has not been checked.</li>
       <li><strong>Source:</strong> {{SOURCE}}</li>
     </ul>
   </section>
@@ -309,6 +317,7 @@
   const DATA = {{DATA}};
   const rows = document.getElementById("rows"), count = document.getElementById("count");
   const fKind = document.getElementById("f-kind"), fSlit = document.getElementById("f-slit"), fStatus = document.getElementById("f-status"), fVisit = document.getElementById("f-visit");
+  const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", UNKNOWN: "unknown", "NO RESULT": "none" };
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   function render() {
     const kind = fKind.value, slit = fSlit.value, status = fStatus.value, visit = fVisit.value.trim();
@@ -317,19 +326,20 @@
       (!status || (status === "notpass" ? r[6] !== "PASS" : r[6] === status)) && (!visit || String(r[0]).startsWith(visit)));
     rows.innerHTML = shown.map((r) =>
       `<tr><th scope="row">${r[0]}</th><td class="l">${r[1]}</td><td class="l">${esc(r[2])}</td><td class="l">${r[3]}</td><td>${r[4]}</td><td class="l">${r[5]}</td>` +
-      `<td class="l"><span class="chip ${r[6].toLowerCase()}">${r[6]}</span></td><td class="l">${esc(r[7])}</td><td class="l why">${esc(r[8])}</td></tr>`).join("");
+      `<td class="l"><span class="chip ${CLS[r[6]]}">${r[6]}</span></td><td class="l">${esc(r[7])}</td><td class="l why">${esc(r[8])}</td></tr>`).join("");
     count.textContent = `${shown.length.toLocaleString()} of ${DATA.length.toLocaleString()} visits`;
   }
   [fKind, fSlit, fStatus].forEach((el) => el.addEventListener("change", render));
   fVisit.addEventListener("input", render);
   const cal = document.getElementById("cal"), tip = document.getElementById("tip");
   const sel = { show: new Set(["science", "cal"]), arm: "", spec: "", layout: "time", night: true };
-  const WORD = { P: "PASS", W: "WARN", F: "FAIL", U: "UNKNOWN" }, RANK = { U: 0, P: 1, W: 2, F: 3 };
+  // N: the visit was taken and has no QA result; every detector of such a visit carries it.
+  const WORD = { P: "PASS", W: "WARN", F: "FAIL", U: "UNKNOWN", N: "NO RESULT" }, RANK = { N: -1, U: 0, P: 1, W: 2, F: 3 };
   const groupOf = (r) => r[2] === "science" ? "science" : r[3] === "engineering fibers" ? "eng" : "cal";
   // the detectors of a visit that the arm and spectrograph selection keeps, as [name, letter]
   const chosen = (r) => r[10].split(" ").filter(Boolean).map((d) => [d.slice(0, 2), d[2]])
     .filter(([cam]) => (!sel.arm || cam[0] === sel.arm) && (!sel.spec || cam[1] === sel.spec));
-  const worstOf = (list) => list.reduce((w, [, s]) => RANK[s] > RANK[w] ? s : w, "U");
+  const worstOf = (list) => list.reduce((w, [, s]) => RANK[s] > RANK[w] ? s : w, "N");
   // Minutes from noon (HST) of the night's date to the visit's start: every night shares that clock.
   const minutesOf = (r) => {
     if (!r[1] || !r[9]) return null;
@@ -360,7 +370,7 @@
     const square = ([i, status]) => {
       const start = Math.max(STARTS[i], from), end = Math.min(STARTS[i] + lasts(i), to);
       const place = byTime ? ` style="left:${along(start)}%;width:${((end - start) / (hours * 60) * 100).toFixed(3)}%"` : "";
-      return `<span class="sq ${status.toLowerCase()}" data-i="${i}"${place} role="img" aria-label="Visit ${DATA[i][0]}, ${status}"></span>`;
+      return `<span class="sq ${CLS[status]}" data-i="${i}"${place} role="img" aria-label="Visit ${DATA[i][0]}, ${status}"></span>`;
     };
     const notes = [];
     if (outside) notes.push(`${outside} ${outside === 1 ? "visit" : "visits"} outside 18:00 to 07:00 ${outside === 1 ? "is" : "are"} not drawn.`);
@@ -385,7 +395,7 @@
     const bad = list.filter(([, s]) => s === "W" || s === "F").map(([cam, s]) => `${cam} ${WORD[s]}`);
     const which = sel.arm || sel.spec ? `detectors ${list.map(([cam]) => cam).join(" ")}` : `${list.length} detectors`;
     tip.innerHTML = `<b>Visit ${r[0]}</b><br>${esc(r[1])} HST · ${r[4]} s<br>${esc(r[2])}${r[3] ? ", " + r[3] : ""}<br>` +
-      `<span class="chip ${status.toLowerCase()}">${status}</span> ${bad.length ? esc(bad.join(", ")) : "on " + which}`;
+      `<span class="chip ${CLS[status]}">${status}</span> ${status === "NO RESULT" ? esc(r[8]) : bad.length ? esc(bad.join(", ")) : "on " + which}`;
     tip.hidden = false;
     tip.style.left = Math.max(8, Math.min(x + 12, window.innerWidth - tip.offsetWidth - 8)) + "px";
     tip.style.top = (y + 16 + tip.offsetHeight > window.innerHeight ? y - tip.offsetHeight - 10 : y + 16) + "px";

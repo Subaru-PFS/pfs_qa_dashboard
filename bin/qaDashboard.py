@@ -235,9 +235,12 @@ def serve(args: argparse.Namespace) -> None:
             references=args.reference,
         )
         print(f"{store.table['visit'].nunique()} visits so far", flush=True)
-        readInfo = None if opdb is None else (lambda visits: readVisitInfo(opdb, visits))
+        readInfo = None if opdb is None else (lambda first, last: readVisitInfo(opdb, first, last))
         cache = ReportCache(
-            store, readInfo, **reportOptions(args, sourceText(args.collection, opdb is not None))
+            store,
+            readInfo,
+            firstVisit=args.first_visit or None,
+            **reportOptions(args, sourceText(args.collection, opdb is not None)),
         )
     else:
         store = QadbMetricsStore.fromSnapshot(args.snapshot)
@@ -281,8 +284,10 @@ def snapshot(args: argparse.Namespace) -> None:
     if opdb is not None:
         visits = sorted({int(visit) for visit in tables["iqQaMetrics"]["visit"]})
         tables["opdbVisitTimes"], tables["notes"] = opdbReader(opdb)(visits)
-        # What the run report shows of each visit: its time, exposure time and sequence type.
-        tables["visitInfo"] = readVisitInfo(opdb, visits)
+        # What the run report shows of each visit taken: its time, exposure, sequence and how that ended.
+        if visits:
+            # From the first visit asked for, so a visit taken before the first one judged shows as unjudged.
+            tables["visitInfo"] = readVisitInfo(opdb, args.first_visit or visits[0], visits[-1])
     tables.update(
         referenceSnapshotTables(
             {
@@ -318,7 +323,9 @@ def report(args: argparse.Namespace) -> None:
         qadb, opdb = connect(args)
         tables = readQadb(qadb, args.collection, args.first_visit, args.last_visit)
         if opdb is not None:
-            info = readVisitInfo(opdb, {int(visit) for visit in tables["iqQaMetrics"]["visit"]})
+            visits = sorted({int(visit) for visit in tables["iqQaMetrics"]["visit"]})
+            if visits:
+                info = readVisitInfo(opdb, args.first_visit or visits[0], visits[-1])
         source = sourceText(args.collection, opdb is not None, f"{datetime.now(HST):%Y-%m-%d}")
     else:
         from pfs.qa.dashboard.qadbSource import readSnapshot

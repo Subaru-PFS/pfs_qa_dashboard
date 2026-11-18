@@ -20,10 +20,14 @@ All notable changes to this project are documented here. The format follows
   `--kms-b`, `--kms-r`, `--kms-n`, `--kms-m`). Other frames keep their stored verdicts. On visits read with the m
   arm, the b arm's x offset and the n arm's y offset have the mode's standing offset subtracted first, measured
   from the collection's own quartz and Neon arcs in both modes (`--no-mode-correction` turns it off).
+- **Visits with no QA result** — with the opdb, a visit that exposed the spectrograph as an object, arc or flat
+  frame before the latest visit judged, and has no result in qadb, is shown as `NO RESULT`: an outline on the
+  calendar, a count beside each tally, kind and night, and a section listing each with how its sequence ended.
+  Visits after the latest one judged are left out, as their results may be on their way.
 - `report --collection <collection> | --snapshot <dir> --out <dir>` writes the page as `index.html`, with
   `visits.csv` and `images.csv`.
-- `snapshot`, given the opdb, keeps each visit's time, exposure time and sequence type (`visitInfo`) for the
-  report.
+- `snapshot`, given the opdb, keeps every visit taken in its range, with its time, exposure, cameras, sequence
+  and how that ended (`visitInfo`), for the report.
 
 ### Changed
 
