@@ -1,13 +1,49 @@
 # pfs_qa_dashboard
 
-A browser dashboard of the PFS image QA gate, live during a run from qadb (with the opdb's IIC sequences, visit
-times and observers' notes), or offline from a snapshot of a qadb read. It reads what drp_qa's QA tasks stored and
-judged; it computes no metric of its own. The one thing it works out is each value's standing against its limits, with
-the gate's own `judge` and the thresholds qadb records for the image.
+The PFS image QA in a browser, live during a run from qadb (with the opdb's visit times, IIC sequences and
+observers' notes), or offline from a snapshot of a qadb read. It reads what drp_qa's QA tasks stored; it measures
+nothing itself.
 
-It is one page for now: the provenance strip (collection, thresholds, drp_qa version, time read) and the verdicts
-so far, the images counted by status with the latest visit judged, in HST. The views are built up on this one at a
-time; the prototype's Live, Run and Visit tabs are at tag `0.1.0`.
+The server's index is the **run report**: one stand-alone page giving every visit of the collection a verdict
+(below). The **metric views** at `/dashboard` show the stored values against the limits their images were judged
+with (the gate's own `judge` and the thresholds qadb records for the image): the provenance strip, the verdicts so
+far, and a night against reference visits.
+
+## The run report
+
+One page, with its styles, charts and script inline, so the same file can be served by any web server or opened
+from disk. It shows every visit by night, on a clock (HST; the night, 18:00 to 07:00, or the whole day) or in the order
+taken, for the kinds of frame, arm and spectrograph ticked (science and full-slit calibrations to start with);
+the visits counted by kind, what was measured on the science frames per detector, each night, the visits that do not pass,
+and a filterable list of every visit. A visit takes the worst verdict among its detectors.
+
+Science frames are judged here, from what `dmLineResiduals` measured, at limits given on the command line (each
+WARN then FAIL; a value at a limit has crossed it):
+
+| What | Measured as | Default limits |
+|---|---|---|
+| Offset from the calibration, x | `medianDeltaX` of the traces against the calibration detectorMap | `--offset-x 0.5 1` px |
+| Offset from the calibration, y | `medianDeltaY` of the sky species furthest off | `--offset-y 0.5 1` px |
+| Sky-line residual after the visit's adjustment | `medianDeltaY` of the held-back lines of the arm's best-measured species (OH on r, n and m; [O I] on b) against the visit's own detectorMap, in km/s with the dispersion at those lines (`data/kmsPerPixel.csv`) | `--kms-r`, `--kms-n`, `--kms-m 0.5 1`; `--kms-b 1.5 2.5` km/s |
+
+Width and line scatter are not judged on science frames. Every other kind of frame keeps the verdict its QA tasks
+stored (all-sky frames `dmLineResiduals`' alone).
+
+On visits read with the m arm, the calibration (made with the r arm) sits a steady fraction of a pixel from the b
+arm's traces and the n arm's lines. The report measures that per detector from the collection's own full-slit
+quartz (b, x) and Neon arcs (n, y), as the median with m minus the median with r where there are at least three
+visits in each mode, subtracts it before the pixel limits, and says so in an appendix. `--no-mode-correction` turns
+that off.
+
+```bash
+# The page, with visits.csv and images.csv beside it, from qadb or from a snapshot
+python bin/qaDashboard.py report --collection qaActor/reductions --first-visit <first visit of the run> \
+    --opdb-host 127.0.0.1 --opdb-port 5432 --title "Run31 visit verdicts" --out <dir> [--kms-r 1 2 ...]
+python bin/qaDashboard.py report --snapshot <dir> --out <dir>
+```
+
+`serve` takes the same limits and title, and makes the page again whenever qadb holds new results. With the opdb a
+visit has its exposure time and, for an unclassified frame, its sequence type; without it, times are qadb's.
 
 Built on Panel and DuckDB, and on drp_qa (`pfs.drp.qa`) for reading qadb back, thresholds included, and for the
 gate's matching of an image to its thresholds entry.
@@ -20,7 +56,7 @@ LSST/PFS stack, or their checkouts' `python/` on `PYTHONPATH`. Stack-free, [uv](
 
 ```bash
 uv sync --python 3.12 --managed-python
-PYTHONPATH=<drp_qa>/python:<pfs_utils>/python .venv/bin/python bin/qaDashboard.py {serve,snapshot} ...
+PYTHONPATH=<drp_qa>/python:<pfs_utils>/python .venv/bin/python bin/qaDashboard.py {serve,snapshot,report} ...
 ```
 
 or, without a venv, `uv run --no-project --python 3.12 --with numpy,pandas,pyarrow,pyyaml,scipy,sqlalchemy,duckdb,panel,'psycopg[binary]'`
@@ -68,7 +104,8 @@ shows the worst; choosing it lists them all, and each visit's value. Without `--
 name one.
 
 **Offline, from a snapshot.** `snapshot --out <dir>` reads the collection once and writes what was read, one
-parquet file per table (the thresholds cited included; with the opdb's times and notes, given `--opdb-host`), and
+parquet file per table (the thresholds cited included; with the opdb's times, notes and what the run report shows
+of each visit, given `--opdb-host`), and
 `provenance.json` (the databases, the time read and the drp_qa that read). `serve --snapshot <dir>` serves it without a database. A run
 judged after the fact is loaded into a qadb first (drp_qa's `bin.src/loadQadb.py`; a local copy will do).
 
@@ -77,7 +114,8 @@ python bin/qaDashboard.py snapshot --collection <collection> --out <dir> [--qadb
 python bin/qaDashboard.py serve --snapshot <dir>
 ```
 
-The server listens on localhost:5006; add `--address 0.0.0.0 --allow-origin <host>` to serve the network.
+The server listens on localhost:5006, with the run report at `/` and the metric views at `/dashboard`; add
+`--address 0.0.0.0 --allow-origin <host>` to serve the network.
 
 ## Tests and lint
 

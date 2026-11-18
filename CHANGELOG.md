@@ -7,6 +7,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **The run report** — one stand-alone page giving every visit of a collection a verdict, the worst among its
+  detectors: every visit by night, on a clock (HST; the night, 18:00 to 07:00, or the whole day) or in the order
+  taken, for the kinds of frame, arm and spectrograph ticked; counts by kind; the
+  science frames' measurements per detector, each night, the visits that do not pass and a filterable list of
+  every visit. Science frames are judged in the report, from what `dmLineResiduals` measured: the offset from the
+  calibration in x (traces) and y (the sky species furthest off), WARN at 0.5 px and FAIL at 1 px, and the sky-line
+  residual after the visit's adjustment in km/s on the arm's best-measured species, WARN at 0.5 and FAIL at 1 km/s
+  on r, n and m (OH) and 1.5 and 2.5 km/s on b ([O I]). The limits are arguments (`--offset-x`, `--offset-y`,
+  `--kms-b`, `--kms-r`, `--kms-n`, `--kms-m`). Other frames keep their stored verdicts. On visits read with the m
+  arm, the b arm's x offset and the n arm's y offset have the mode's standing offset subtracted first, measured
+  from the collection's own quartz and Neon arcs in both modes (`--no-mode-correction` turns it off).
+- `report --collection <collection> | --snapshot <dir> --out <dir>` writes the page as `index.html`, with
+  `visits.csv` and `images.csv`.
+- `snapshot`, given the opdb, keeps each visit's time, exposure time and sequence type (`visitInfo`) for the
+  report.
+
+### Changed
+
+- **The run report is the server's index.** `serve` answers `/` with the run report, made again when qadb holds
+  new results, and the metric views move from `/` to `/dashboard`.
+
 ## [0.5.0] - 2026-11-10
 
 ### Added
