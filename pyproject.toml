@@ -38,8 +38,8 @@ where = ["python"]
 include = ["pfs.qa*"]
 
 [tool.setuptools.package-data]
-# The run report's page template and its km/s per pixel table.
-"pfs.qa.dashboard" = ["data/*"]
+# The run report's page template, its km/s per pixel table and the fonts it embeds.
+"pfs.qa.dashboard" = ["data/*", "data/fonts/*"]
 
 [tool.ruff]
 target-version = "py312"

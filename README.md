@@ -11,8 +11,8 @@ far, and a night against reference visits.
 
 ## The run report
 
-One page, with its styles, charts and script inline, so the same file can be served by any web server or opened
-from disk. It shows every visit by night, on a clock (HST; the night, 18:00 to 07:00, or the whole day) or in the order
+One page, with its styles, fonts, charts and script inline, so the same file can be served by any web server or
+opened from disk, and fetches nothing. It shows every visit by night, on a clock (HST; the night, 18:00 to 07:00, or the whole day) or in the order
 taken, for the kinds of frame, arm and spectrograph ticked (science and full-slit calibrations to start with);
 the visits counted by kind, what was measured on the science frames per detector, each night, the visits that do not pass,
 and a filterable list of every visit. A visit takes the worst verdict among its detectors.

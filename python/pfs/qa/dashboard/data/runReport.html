@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{TITLE}}</title>
 <style>
+{{FONT_FACES}}
   /* Layout: a short reading column of counts and rules, then one full-width list that filters in place. */
   :root {
     --bg: #fafbfc; --surface: #ffffff; --fg: #14181d; --fg-2: #4a535e; --fg-3: #6d7682; --rule: #dde2e8; --band: #f0f3f6;
@@ -12,8 +13,8 @@
     --pass-fill: #2da44e; --warn-fill: #d9a514; --fail-fill: #cf222e; --unk-fill: #afb8c1;
     --series-1: #2a78d6; --series-1-soft: #2a78d655; --series-2: #eb6834; --series-2-soft: #eb683455;
     --focus: #2a78d6;
-    --display: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-    --body: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --display: "Space Grotesk", "Inter", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --body: "Inter", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -189,23 +190,6 @@
   </section>
 
   <section class="block">
-    <h2>Science verdicts at {{NSETS}} sets of km/s limits</h2>
-    <p>The same {{NSCIENCE}} science visits judged at each set of limits on the sky-line residual. The marked row is the set this report uses.</p>
-    <div class="tablewrap">
-      <table>
-        <thead>
-          <tr><th scope="col" class="l"></th><th scope="col">r, n and m: WARN and FAIL (km/s)</th><th scope="col">b: WARN and FAIL (km/s)</th>
-          <th scope="col">b images, WARN / FAIL</th><th scope="col">r images</th><th scope="col">n images</th><th scope="col">m images</th>
-          <th scope="col">Visits PASS</th><th scope="col">Visits WARN</th><th scope="col">Visits FAIL</th></tr>
-        </thead>
-        <tbody>
-{{LIMITS}}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="block">
     <h2>Science frames: offsets from the calibration</h2>
     <p>The x offset is the median offset of every fiber's trace from the calibration. The y offset is that of the sky lines, taking the species furthest off on each image. The km/s value converts each species' offset with the dispersion at its own lines.{{MODE_POINTER}}</p>
     <div class="legend">
@@ -308,6 +292,23 @@
       <li><strong>Not covered:</strong> visits after the latest one judged, whose results may be on their way; and darks, biases and master frames, which have no QA method. Whether a flagged frame is truly faulty has not been checked.</li>
       <li><strong>Source:</strong> {{SOURCE}}</li>
     </ul>
+  </section>
+
+  <section class="block">
+    <h2>Science verdicts at {{NSETS}} sets of km/s limits</h2>
+    <p>The same {{NSCIENCE}} science visits judged at each set of limits on the sky-line residual. The marked row is the set this report uses.</p>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th scope="col" class="l"></th><th scope="col">r, n and m: WARN and FAIL (km/s)</th><th scope="col">b: WARN and FAIL (km/s)</th>
+          <th scope="col">b images, WARN / FAIL</th><th scope="col">r images</th><th scope="col">n images</th><th scope="col">m images</th>
+          <th scope="col">Visits PASS</th><th scope="col">Visits WARN</th><th scope="col">Visits FAIL</th></tr>
+        </thead>
+        <tbody>
+{{LIMITS}}
+        </tbody>
+      </table>
+    </div>
   </section>
 
 {{MODE_NOTE}}

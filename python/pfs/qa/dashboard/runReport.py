@@ -32,6 +32,8 @@ The input is what `pfs.drp.qa.qadb.reader.readQadb` returns (``iqQaMetrics``,
 the server's index (`indexHandler`).
 """
 
+import base64
+import functools
 import html
 import json
 import re
@@ -698,6 +700,23 @@ def visitTable(judged: pd.DataFrame, info: pd.DataFrame | None = None) -> pd.Dat
     return visits.sort_values("visit", ignore_index=True)
 
 
+#: The page's typefaces, embedded in it: family, file under ``data/fonts`` and the weights the file covers.
+_FONTS = (("Inter", "Inter-latin.woff2", "100 900"), ("Space Grotesk", "SpaceGrotesk-latin.woff2", "300 700"))
+
+
+@functools.cache
+def _fontFaces() -> str:
+    """Return the ``@font-face`` rules carrying the page's fonts in the page, so it fetches nothing."""
+    rules = []
+    for family, name, weights in _FONTS:
+        encoded = base64.b64encode((_DATA / "fonts" / name).read_bytes()).decode("ascii")
+        rules.append(
+            f'  @font-face {{ font-family: "{family}"; font-style: normal; font-weight: {weights}; '
+            f'font-display: swap; src: url(data:font/woff2;base64,{encoded}) format("woff2"); }}'
+        )
+    return "\n".join(rules)
+
+
 def _clip(value: float, low: float, high: float) -> float:
     return min(max(value, low), high)
 
@@ -1069,6 +1088,7 @@ def renderPage(
     source = source.replace("{date}", f"{now:%Y-%m-%d}")
     fields = {
         "{{TITLE}}": html.escape(title),
+        "{{FONT_FACES}}": _fontFaces(),
         "{{SUMMARY}}": "\n".join(summary),
         "{{OFFSETS}}": "\n".join(offsetRows),
         "{{RESIDUALS}}": "\n".join(residualRows),

@@ -249,8 +249,10 @@ def testThePageStandsAlone():
         and 'data-show="science" checked>' in page
         and 'data-show="cal" checked>' in page
     )
+    # Its fonts travel inside it.
+    assert page.count("@font-face") == 2 and "url(data:font/woff2;base64," in page
     # Nothing is fetched: no stylesheet, script or image comes from elsewhere.
-    assert not re.findall(r"""(?:src|href)=["'](?:https?:)?//""", page)
+    assert not re.findall(r"""(?:src|href)=["'](?:https?:)?//""", page) and "url(http" not in page
     assert "judged 2026-11-05" in page and "4 November to 4 November 2026 (HST)" in page
     data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
     assert [row[0] for row in data] == made.visits["visit"].tolist()

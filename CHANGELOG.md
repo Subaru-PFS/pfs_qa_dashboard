@@ -24,6 +24,8 @@ All notable changes to this project are documented here. The format follows
   frame before the latest visit judged, and has no result in qadb, is shown as `NO RESULT`: an outline on the
   calendar, a count beside each tally, kind and night, and a section listing each with how its sequence ended.
   Visits after the latest one judged are left out, as their results may be on their way.
+- The page embeds its two typefaces (Inter and Space Grotesk, SIL Open Font License), about 95 kB, so it looks
+  the same wherever it is opened and fetches nothing.
 - `report --collection <collection> | --snapshot <dir> --out <dir>` writes the page as `index.html`, with
   `visits.csv` and `images.csv`.
 - `snapshot`, given the opdb, keeps every visit taken in its range, with its time, exposure, cameras, sequence
