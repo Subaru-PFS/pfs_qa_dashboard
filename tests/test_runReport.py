@@ -275,13 +275,13 @@ def testTheLimitsTableMarksTheReportsOwnSet():
 
 
 class _Store:
-    """A stand-in for `live.QadbMetricsStore`: its raw tables, and a version `refresh` may raise."""
+    """A stand-in for `live.QadbStore`: its raw tables and visit times, and a version `refresh` may raise."""
 
     def __init__(self, tables):
         self.raw = tables
         self.version = 0
         self.refreshed = 0
-        self.table = pd.DataFrame({"visit": [200], "timeExpStart": [pd.Timestamp("2026-11-04 20:00")]})
+        self.times = pd.DataFrame({"visit": [200], "time": [pd.Timestamp("2026-11-04 20:00")]})
 
     def refresh(self):
         self.refreshed += 1
@@ -306,7 +306,7 @@ def testTheCachedPageIsMadeAgainOnlyWhenTheStoreChanges(monkeypatch):
 
 def testAStoreWithNoImageYetStillHasAPage():
     store = _Store({})
-    store.table = store.table.iloc[:0]
+    store.times = store.times.iloc[:0]
     page = ReportCache(store, readInfo=lambda first, last: pytest.fail("no visit to read")).html()
     assert "const DATA = [];" in page and "0 visits" in page
 
@@ -320,6 +320,10 @@ def _snapshot(directory):
         {"pfs_visit_id": [1, 2], "time_exp_start": pd.to_datetime(["2026-11-04 20:00", "2026-11-04 21:00"])}
     )
     provenance = {"collection": "u/test/run (qadb snapshot)", "builtAt": "2026-11-05T08:00:00-10:00"}
+    # As the reader returns them, each row with the time its image was loaded.
+    tables = {
+        name: frame.assign(decidedAt=pd.Timestamp("2026-11-04 22:00")) for name, frame in tables.items()
+    }
     return writeSnapshot({**tables, "visitTimes": times}, directory, provenance)
 
 
@@ -343,45 +347,38 @@ def testReportCommandWritesThePageAndTakesTheLimits(tmp_path, capsys):
     assert "--kms-r: WARN then FAIL" in capsys.readouterr().err
 
 
-def testServePutsTheReportAtTheIndex(tmp_path, monkeypatch):
-    """``serve`` gives the run report the server's root, and the metric views ``/dashboard``."""
-    from tornado.httpserver import HTTPServer
-    from tornado.testing import bind_unused_port
-    from tornado.web import Application
-
-    served = {}
-    monkeypatch.setattr("panel.serve", lambda panels, **options: served.update(panels=panels, **options))
-    cli = _cli()
-    fullSnapshot = tmp_path / "snap"
-    monkeypatch.setattr(
-        "pfs.qa.dashboard.live.QadbMetricsStore.fromSnapshot",
-        classmethod(lambda cls, directory: _Store(_tables((1, "r1", "science", _science(x=0.7))))),
-    )
-    _snapshot(fullSnapshot)
-    (fullSnapshot / "iqQaMetrics.parquet").touch()
-    cli.main(["serve", "--snapshot", str(fullSnapshot), "--title", "Run99"])
-    assert list(served["panels"]) == ["dashboard"] and served["redirect_root"] is False
-    ((pattern, handler),) = served["extra_patterns"]
-    assert pattern == r"/"
-
-    # The handler answers a request for the root with the page.
+def testServeAnswersTheIndexWithTheReport(tmp_path, monkeypatch):
+    """``serve`` gives the run report the server's root, and serves nothing else."""
     import asyncio
 
-    from tornado.httpclient import AsyncHTTPClient
+    from tornado.httpclient import AsyncHTTPClient, HTTPClientError
+    from tornado.httpserver import HTTPServer
+    from tornado.testing import bind_unused_port
 
-    async def fetch():
+    cli = _cli()
+    served = {}
+    monkeypatch.setattr(
+        cli, "listen", lambda application, address, port, show: served.update(locals()), raising=True
+    )
+    cli.main(["serve", "--snapshot", str(_snapshot(tmp_path / "snap")), "--title", "Run99", "--port", "5123"])
+    assert (served["address"], served["port"], served["show"]) == ("localhost", 5123, False)
+
+    async def fetch(path):
         socket, port = bind_unused_port()
-        server = HTTPServer(Application([(pattern, handler)]))
+        server = HTTPServer(served["application"])
         server.add_sockets([socket])
         try:
-            return await AsyncHTTPClient().fetch(f"http://127.0.0.1:{port}/")
+            return await AsyncHTTPClient().fetch(f"http://127.0.0.1:{port}{path}")
         finally:
             server.stop()
 
-    response = asyncio.run(fetch())
+    response = asyncio.run(fetch("/"))
     body = response.body.decode()
     assert response.headers["Content-Type"].startswith("text/html")
-    assert "<h1>Run99</h1>" in body and "x offset +0.70 px, limit 0.5" in body
+    assert "<h1>Run99</h1>" in body and "residual +0.60 km/s, limit 0.5" in body
+    # Negative control: the metric views' address is gone.
+    with pytest.raises(HTTPClientError, match="404"):
+        asyncio.run(fetch("/dashboard"))
 
 
 def testSnapshotKeepsWhatTheReportShowsOfEachVisit(tmp_path, monkeypatch):
@@ -421,8 +418,6 @@ def testSnapshotKeepsWhatTheReportShowsOfEachVisit(tmp_path, monkeypatch):
     monkeypatch.setitem(
         sys.modules, "pfs.utils.database.opdb", types.SimpleNamespace(OpDB=lambda **k: Opdb())
     )
-    empty = pd.DataFrame(columns=["pfs_visit_id", "time_exp_start", "iic_sequence_id"])
-    monkeypatch.setattr("pfs.qa.dashboard.live.opdbReader", lambda opdb: lambda visits: (empty, empty))
     cli = _cli()
     cli.main(["snapshot", "--collection", "c", "--opdb-host", "127.0.0.1", "--out", str(tmp_path / "snap")])
     assert asked == [{"first": 1, "last": 1}]  # one query, with the visit range bound

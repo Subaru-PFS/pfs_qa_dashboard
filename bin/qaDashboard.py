@@ -1,41 +1,31 @@
 #!/usr/bin/env python3
 r"""The QA dashboard: serve a run's report live from qadb or from a snapshot, write it as a file, or save a snapshot.
 
-Stack-free; needs panel and duckdb, and psycopg for qadb.
+Stack-free; needs tornado, and psycopg for qadb.
 
 Examples::
 
-    # A run as qaActor loads it, with the opdb's times and sequences: only read, every 30 s
-    # (credentials in ~/.pgpass); each night is compared with the reference visits named
+    # A run as qaActor loads it, with the opdb's visits: both only read (credentials in ~/.pgpass)
     python bin/qaDashboard.py serve --collection qaActor/reductions --first-visit 151000 \
         --qadb-host 127.0.0.1 --qadb-port 5436 --opdb-host 127.0.0.1 --opdb-port 5432 \
-        --title "Run31 visit verdicts" --reference firstNight=151000-151200
+        --title "Run31 visit verdicts"
     # Read it once into a snapshot (parquet and provenance.json), then serve that offline
     python bin/qaDashboard.py snapshot --collection qaActor/reductions --opdb-host 127.0.0.1 --out run31-qadb
     python bin/qaDashboard.py serve --snapshot run31-qadb
     # Write the run report as one stand-alone page, for any web server, with other limits
     python bin/qaDashboard.py report --snapshot run31-qadb --out run31-report --kms-r 1 2
 
-then open http://localhost:5006: the run report is the index, and the metric views are at ``/dashboard``.
-To serve the local network, add ``--address 0.0.0.0 --allow-origin <this host's name or IP>``.
+then open http://localhost:5006. To serve the local network, add ``--address 0.0.0.0``.
 """
 
 import argparse
+import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-
-
-def _reference(text: str):
-    """Return the `pfs.drp.qa.qadb.compareRuns.Reference` that ``NAME=[COLLECTION:]FIRST-LAST`` names."""
-    from pfs.drp.qa.qadb.compareRuns import parseReference
-
-    try:
-        return parseReference(text)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError(str(error)) from None
 
 
 def makeParser() -> argparse.ArgumentParser:
@@ -48,16 +38,9 @@ def makeParser() -> argparse.ArgumentParser:
     qadb.add_argument("--qadb-port", type=int, default=5436)
     qadb.add_argument("--qadb-dbname", default="qadb")
     qadb.add_argument("--qadb-user", default="pfs", help="the qadb user (default pfs); only read with")
-    qadb.add_argument(
-        "--reference",
-        type=_reference,
-        action="append",
-        default=[],
-        metavar="NAME=[COLLECTION:]FIRST-LAST",
-        help="reference visits each night is compared with, in the same collection unless one is given; "
-        "repeat for more (default: none, and no comparison)",
+    opdb = databases.add_argument_group(
+        "the opdb's visits: their times, exposures and IIC sequences (default: none)"
     )
-    opdb = databases.add_argument_group("the opdb's IIC sequences, visit times and notes (default: none)")
     opdb.add_argument("--opdb-host")
     opdb.add_argument("--opdb-port", type=int, default=5432)
     opdb.add_argument("--opdb-dbname", default="opdb")
@@ -98,23 +81,19 @@ def makeParser() -> argparse.ArgumentParser:
     serve = commands.add_parser(
         "serve",
         parents=[databases, limits],
-        help="serve the run report (the index) and the metric views (/dashboard), live from qadb or from a snapshot",
+        help="serve the run report, live from qadb or from a snapshot",
     )
     source = serve.add_mutually_exclusive_group(required=True)
     source.add_argument("--collection", help="the collection loaded into qadb, e.g. qaActor/reductions")
     source.add_argument(
         "--snapshot", type=Path, metavar="DIR", help="a snapshot written by the snapshot command"
     )
-    serve.add_argument("--refresh", type=float, default=30.0, help="seconds between qadb reads (default 30)")
+    serve.add_argument(
+        "--refresh", type=float, default=15.0, help="least seconds between qadb reads (default 15)"
+    )
     serve.add_argument("--port", type=int, default=5006)
     serve.add_argument(
         "--address", default="localhost", help="interface to listen on; 0.0.0.0 for the local network"
-    )
-    serve.add_argument(
-        "--allow-origin",
-        nargs="*",
-        default=[],
-        help="extra host[:port] names browsers may use for this server ('*' for any), with --address 0.0.0.0",
     )
     serve.add_argument("--show", action="store_true", help="open a browser")
 
@@ -143,16 +122,11 @@ def makeParser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> None:
     parser = makeParser()
     args = parser.parse_args(argv)
-    names = [reference.name for reference in args.reference]
-    if len(set(names)) < len(names):
-        parser.error("--reference: each needs its own name")
     for name in ("kms_b", "kms_r", "kms_n", "kms_m", "offset_x", "offset_y"):
         warn, fail = getattr(args, name, (1, 1))
         if not 0 < warn <= fail:
             parser.error(f"--{name.replace('_', '-')}: WARN then FAIL, both above zero")
     if args.command in ("serve", "report") and args.snapshot is not None:
-        if args.reference:
-            parser.error("--reference reads qadb: a snapshot serves the references it was written with")
         missing = [
             name for name in ("provenance.json", "iqQaMetrics.parquet") if not (args.snapshot / name).exists()
         ]
@@ -206,13 +180,14 @@ def snapshotSource(tables: dict, provenance: dict) -> str:
 
 
 def serve(args: argparse.Namespace) -> None:
-    """Serve the run report and the metric views over qadb (``--collection``) or a snapshot (``--snapshot``)."""
+    """Serve the run report of a collection in qadb (``--collection``) or of a snapshot (``--snapshot``)."""
     # One line per request, with the client's address: shows whether a browser reached the server.
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(message)s")
     logging.getLogger("tornado.access").setLevel(logging.INFO)
-    logging.getLogger("bokeh").setLevel(logging.INFO)
 
-    from pfs.qa.dashboard.live import QadbMetricsStore
+    from tornado.web import Application
+
+    from pfs.qa.dashboard.live import QadbStore
     from pfs.qa.dashboard.qadbSource import readSnapshot
     from pfs.qa.dashboard.runReport import (
         ReportCache,
@@ -224,17 +199,11 @@ def serve(args: argparse.Namespace) -> None:
 
     if args.collection:
         qadb, opdb = connect(args)
-        # One store for every session: each refresh reads qadb (and the opdb) once, whoever asks.
-        store = QadbMetricsStore.fromQadb(
-            qadb,
-            args.collection,
-            args.first_visit,
-            args.last_visit,
-            minInterval=args.refresh / 2,
-            opdb=opdb,
-            references=args.reference,
+        # One store for every browser: qadb is read once, whoever asks, and not again within --refresh.
+        store = QadbStore.fromQadb(
+            qadb, args.collection, args.first_visit, args.last_visit, minInterval=args.refresh
         )
-        print(f"{store.table['visit'].nunique()} visits so far", flush=True)
+        print(f"{len(store.times)} visits so far", flush=True)
         readInfo = None if opdb is None else (lambda first, last: readVisitInfo(opdb, first, last))
         cache = ReportCache(
             store,
@@ -243,39 +212,37 @@ def serve(args: argparse.Namespace) -> None:
             **reportOptions(args, sourceText(args.collection, opdb is not None)),
         )
     else:
-        store = QadbMetricsStore.fromSnapshot(args.snapshot)
-        print(f"{store.table['visit'].nunique()} visits in {args.snapshot}", flush=True)
         tables, provenance = readSnapshot(args.snapshot)
+        store = QadbStore.fromTables(tables)
+        print(f"{len(store.times)} visits in {args.snapshot}", flush=True)
         cache = ReportCache(
             store, info=infoFromTables(tables), **reportOptions(args, snapshotSource(tables, provenance))
         )
 
-    import panel as pn
+    print(f"Serving on http://{args.address}:{args.port}", flush=True)
+    listen(Application([(r"/", indexHandler(cache))]), args.address, args.port, args.show)
 
-    from pfs.qa.dashboard.app import createApp
 
-    origins = [f"localhost:{args.port}", f"127.0.0.1:{args.port}"]
-    origins += [origin if ":" in origin else f"{origin}:{args.port}" for origin in args.allow_origin]
-    print(f"Serving on {args.address}:{args.port}, for {', '.join(origins)}", flush=True)
-    # The run report is the index; the metric views keep their own address.
-    pn.serve(
-        {"dashboard": lambda: createApp(store, args.refresh)},
-        address=args.address,
-        port=args.port,
-        show=args.show,
-        title="PFS QA dashboard",
-        websocket_origin=origins,
-        extra_patterns=[(r"/", indexHandler(cache))],
-        redirect_root=False,
-    )
+def listen(application, address: str, port: int, show: bool = False) -> None:
+    """Serve a Tornado ``application`` on ``address:port`` until interrupted; ``show`` opens a browser on it."""
+
+    async def run() -> None:
+        application.listen(port, address=address)
+        if show:
+            import webbrowser
+
+            webbrowser.open(f"http://localhost:{port}")
+        await asyncio.Event().wait()
+
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(run())
 
 
 def snapshot(args: argparse.Namespace) -> None:
     """Read the collection from qadb (and the opdb) once and write it, with its provenance, to ``--out``."""
-    from pfs.drp.qa.qadb.compareRuns import metricTables
     from pfs.drp.qa.qadb.reader import readQadb
-    from pfs.qa.dashboard.live import HST, opdbReader, qadbProvenance
-    from pfs.qa.dashboard.qadbSource import referenceRecords, referenceSnapshotTables, writeSnapshot
+    from pfs.qa.dashboard.live import HST, qadbProvenance
+    from pfs.qa.dashboard.qadbSource import writeSnapshot
     from pfs.qa.dashboard.runReport import readVisitInfo
 
     qadb, opdb = connect(args)
@@ -283,22 +250,12 @@ def snapshot(args: argparse.Namespace) -> None:
     tables = readQadb(qadb, args.collection, args.first_visit, args.last_visit)
     if opdb is not None:
         visits = sorted({int(visit) for visit in tables["iqQaMetrics"]["visit"]})
-        tables["opdbVisitTimes"], tables["notes"] = opdbReader(opdb)(visits)
         # What the run report shows of each visit taken: its time, exposure, sequence and how that ended.
         if visits:
             # From the first visit asked for, so a visit taken before the first one judged shows as unjudged.
             tables["visitInfo"] = readVisitInfo(opdb, args.first_visit or visits[0], visits[-1])
-    tables.update(
-        referenceSnapshotTables(
-            {
-                r.name: metricTables(qadb, r.collection or args.collection, r.first, r.last)
-                for r in args.reference
-            }
-        )
-    )
     provenance = qadbProvenance(
         f"{args.collection} (qadb snapshot)",
-        references=referenceRecords(args.reference, args.collection),
         builtAt=datetime.now(HST).isoformat(timespec="seconds"),
         qadb=f"{args.qadb_host}:{args.qadb_port}/{args.qadb_dbname}",
         opdb=f"{args.opdb_host}:{args.opdb_port}/{args.opdb_dbname}" if opdb is not None else None,

@@ -33,8 +33,19 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
-- **The run report is the server's index.** `serve` answers `/` with the run report, made again when qadb holds
-  new results, and the metric views move from `/` to `/dashboard`.
+- **`serve` serves the run report**, at `/`, made again when qadb holds new results, from a plain Tornado
+  server. `--refresh` is now the least time between qadb reads, 15 s by default: the same as before, when
+  the default of 30 s was halved.
+
+### Removed
+
+- **The metric views** (the provenance strip, the verdicts so far and the comparison of a night against
+  reference visits), with `/dashboard`, `--reference` and `--allow-origin`, and the modules only they used:
+  `app`, `figures`, `comparison`, `store`, `serving` and `schema`. Panel, Bokeh and DuckDB are no longer
+  needed; Tornado is. `live.QadbMetricsStore` is now `live.QadbStore`, holding the tables qadb returned and
+  each visit's time, and reads no opdb; `QadbStore.fromTables` replaces `fromSnapshot`.
+- `snapshot` no longer writes the opdb's sequences and notes (`opdbVisitTimes`, `notes`) or the reference
+  visits' metrics. A snapshot that has them is still read.
 
 ## [0.5.0] - 2026-11-10
 

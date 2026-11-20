@@ -27,7 +27,7 @@ taken in both modes, and `measure` subtracts it before the pixel limits.
 
 The input is what `pfs.drp.qa.qadb.reader.readQadb` returns (``iqQaMetrics``,
 ``dmLineResidualSummary``, ``dmLineResidualMetrics``): a live read, a
-`qadbSource.readSnapshot`, or a `live.QadbMetricsStore`'s ``raw`` tables.
+`qadbSource.readSnapshot`, or a `live.QadbStore`'s ``raw`` tables.
 `buildReport` is the whole of it; `ReportCache` keeps the page of a store for
 the server's index (`indexHandler`).
 """
@@ -1176,9 +1176,9 @@ class ReportCache:
 
     Parameters
     ----------
-    store : `pfs.qa.dashboard.store.MetricsStore`
+    store : `pfs.qa.dashboard.live.QadbStore`
         The store: its ``raw`` tables are judged, and its ``refresh`` is called
-        before each page (a live store limits how often that reads qadb).
+        before each page (the store limits how often that reads qadb).
     readInfo : callable, optional
         ``readInfo(first, last)`` returns every visit taken in the range
         (`readVisitInfo` over the opdb), read from ``firstVisit`` to the latest
@@ -1212,14 +1212,12 @@ class ReportCache:
     def take(self) -> tuple[int, dict[str, pd.DataFrame], pd.DataFrame]:
         """Read the store's source and return what a page is made from: its version, tables and visit times.
 
-        Call it on the thread the store is used from (the server's loop, as the metric views do): a
-        refresh rebuilds the store's tables, which its queries read.
+        Call it on one thread (the server's loop): a refresh replaces the store's tables.
         """
         self.store.refresh()
         # A store that has read no image yet holds no table: the page then says so, with no visit.
         tables = {name: self.store.raw.get(name, pd.DataFrame(columns=_IMAGE)) for name in _TABLES}
-        times = self.store.table[["visit", "timeExpStart"]].drop_duplicates("visit")
-        return self.store.version, tables, times.rename(columns={"timeExpStart": "time"})
+        return self.store.version, tables, self.store.times
 
     def build(self, taken: tuple[int, dict[str, pd.DataFrame], pd.DataFrame]) -> str:
         """Return the page for what `take` returned, made only if the store has changed since the last one."""
@@ -1248,8 +1246,8 @@ def indexHandler(cache: ReportCache) -> type:
 
     class RunReportHandler(RequestHandler):
         async def get(self) -> None:
-            # The store is read here, on the server's loop, as the metric views read it. Judging every
-            # image and reading the opdb are off it, so the views stay live meanwhile.
+            # The store is read here, on the server's loop; judging every image and reading the opdb
+            # are off it.
             taken = cache.take()
             page = await IOLoop.current().run_in_executor(None, cache.build, taken)
             self.set_header("Content-Type", "text/html; charset=utf-8")

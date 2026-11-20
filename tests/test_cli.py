@@ -9,7 +9,8 @@ import pandas as pd
 import pytest
 
 import pfs.drp.qa.qadb.reader
-from pfs.qa.dashboard.live import QadbMetricsStore
+from pfs.qa.dashboard.live import QadbStore
+from pfs.qa.dashboard.qadbSource import readSnapshot
 
 
 def _cli():
@@ -93,12 +94,12 @@ def testSnapshotWritesWhatServeReads(tmp_path, monkeypatch):
 
     _cli().main(["snapshot", "--collection", "c", "--out", str(tmp_path / "snap")])
     assert connected[0]["user"] == "pfs"
-    store = QadbMetricsStore.fromSnapshot(tmp_path / "snap")
-    assert store.provenance["collection"] == "c (qadb snapshot)"
-    assert store.images()["visit"].tolist() == [1001]
-    # The thresholds cited travel with the snapshot.
-    assert store.thresholdsFiles["name"].tolist() == ["iqQaThresholds-test.yaml"]
-    assert store.trend("iqQaMetrics", "medFwhm").empty  # not measured: NaN values are left out
+    tables, provenance = readSnapshot(tmp_path / "snap")
+    assert provenance["collection"] == "c (qadb snapshot)" and "references" not in provenance
+    store = QadbStore.fromTables(tables)
+    assert store.raw["iqQaMetrics"]["visit"].tolist() == [1001] and store.times["visit"].tolist() == [1001]
+    # Every table read travels with the snapshot, the thresholds cited included.
+    assert tables["thresholdsFiles"]["name"].tolist() == ["iqQaThresholds-test.yaml"]
     # Negative control: a snapshot needs somewhere to go.
     with pytest.raises(SystemExit):
         _cli().makeParser().parse_args(["snapshot", "--collection", "c"])
@@ -125,15 +126,12 @@ def testServeRefusesADirectoryThatIsNotASnapshot(tmp_path, monkeypatch, capsys):
     assert served and served[0].snapshot == tmp_path / "snap"
 
 
-def testReferencesNeedTheirOwnNames(capsys):
-    """Two references of one name would show as one, the second's visits under both descriptions."""
-    cli = _cli()
-    with pytest.raises(SystemExit):
-        cli.main(["serve", "--collection", "c", "--reference", "a=1-2", "--reference", "a=5-6"])
-    assert "each needs its own name" in capsys.readouterr().err
-    with pytest.raises(ValueError, match="a given more than once"):
-        QadbMetricsStore.fromQadb(None, "c", references=[cli._reference("a=1-2"), cli._reference("a=5-6")])
-    # Negative control: the same visits under two names are two references.
-    argv = ["serve", "--collection", "c", "--reference", "a=1-2", "--reference", "b=1-2"]
-    args = cli.makeParser().parse_args(argv)
-    assert [reference.name for reference in args.reference] == ["a", "b"]
+def testOptionsOfTheMetricViewsAreGone(capsys):
+    """The reference visits and the websocket origins were the metric views': ``serve`` refuses them."""
+    parser = _cli().makeParser()
+    for option in (["--reference", "a=1-2"], ["--allow-origin", "host"]):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["serve", "--collection", "c", *option])
+        assert "unrecognized arguments" in capsys.readouterr().err
+    # Negative control: the address to listen on is still an option.
+    assert parser.parse_args(["serve", "--collection", "c", "--address", "0.0.0.0"]).address == "0.0.0.0"
