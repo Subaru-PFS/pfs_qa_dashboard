@@ -25,6 +25,9 @@ _IMAGE = ["visit", "arm", "spectrograph"]
 #: The tables of a qadb read the store keeps: one row per image, or per image and metric.
 _RAW = ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics")
 
+#: Those with one row per image, which say what a read loaded.
+_PER_IMAGE = ("iqQaMetrics", "dmLineResidualSummary")
+
 _TIMES = ["pfs_visit_id", "time_exp_start"]
 
 
@@ -100,16 +103,15 @@ class QadbStore:
 
     def _takeLoads(self, tables: Mapping[str, pd.DataFrame]) -> bool:
         """Replace the rows of the images in ``tables`` (a qadb read); return whether any load was new."""
-        iq = tables["iqQaMetrics"]
-        if iq.empty:
-            return False
         # ``since`` is inclusive, so the last read's newest loads come back every time: only
-        # an image load not seen before (image and time) is new.
-        loads = set(iq[[*_IMAGE, "decidedAt"]].itertuples(index=False, name=None))
+        # an image load not seen before (image and time) is new. From either task's table of
+        # images: one may have line residuals and no image-quality row.
+        columns = [*_IMAGE, "decidedAt"]
+        loaded = pd.concat([tables[name].reindex(columns=columns) for name in _PER_IMAGE], ignore_index=True)
+        loads = set(loaded.itertuples(index=False, name=None))
         if loads <= self._seenAtSince:
             return False
-        # Every image the read holds rows of, in whichever table: an image may have line
-        # residuals and no image-quality row.
+        # Every image the read holds rows of, in whichever table.
         judged = pd.MultiIndex.from_frame(
             pd.concat([tables[name][_IMAGE] for name in _RAW], ignore_index=True).drop_duplicates()
         )
@@ -127,8 +129,7 @@ class QadbStore:
             self._times = times.drop_duplicates("pfs_visit_id", keep="last").sort_values(
                 "pfs_visit_id", ignore_index=True
             )
-        stamps = pd.concat([tables[name]["decidedAt"] for name in ("iqQaMetrics", "dmLineResidualSummary")])
-        self.since = stamps.max()
+        self.since = loaded["decidedAt"].max()
         self._seenAtSince = {load for load in loads if load[-1] == self.since}
         return True
 

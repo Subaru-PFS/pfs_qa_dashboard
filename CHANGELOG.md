@@ -43,6 +43,12 @@ All notable changes to this project are documented here. The format follows
   A page written by `report`, or served from a snapshot, is as before and fetches nothing.
 - A database connection that is not answered is given up on after 10 s (`PGCONNECT_TIMEOUT`, when not set).
 
+### Fixed
+
+- A read from qadb that brought only images with line residuals and no image-quality row was not taken as new,
+  so those images showed only once a later image was loaded. `snapshot` and `report` likewise left such
+  visits out of the range they read from the opdb.
+
 ### Removed
 
 - **The metric views** (the provenance strip, the verdicts so far and the comparison of a night against

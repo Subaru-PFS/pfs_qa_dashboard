@@ -160,6 +160,12 @@ def connect(args: argparse.Namespace):
     return qadb, opdb
 
 
+def judgedVisits(tables: dict) -> list[int]:
+    """Return the visits a qadb read holds a result for, from either task."""
+    names = ("iqQaMetrics", "dmLineResidualSummary")
+    return sorted({int(visit) for name in names for visit in tables[name]["visit"]})
+
+
 def reportOptions(args: argparse.Namespace, source: str) -> dict:
     """Return what `pfs.qa.dashboard.runReport.buildReport` takes from the command line."""
     from pfs.qa.dashboard.runReport import Limits
@@ -254,7 +260,7 @@ def snapshot(args: argparse.Namespace) -> None:
     start = time.monotonic()
     tables = readQadb(qadb, args.collection, args.first_visit, args.last_visit)
     if opdb is not None:
-        visits = sorted({int(visit) for visit in tables["iqQaMetrics"]["visit"]})
+        visits = judgedVisits(tables)
         # What the run report shows of each visit taken: its time, exposure, sequence and how that ended.
         if visits:
             # From the first visit asked for, so a visit taken before the first one judged shows as unjudged.
@@ -285,7 +291,7 @@ def report(args: argparse.Namespace) -> None:
         qadb, opdb = connect(args)
         tables = readQadb(qadb, args.collection, args.first_visit, args.last_visit)
         if opdb is not None:
-            visits = sorted({int(visit) for visit in tables["iqQaMetrics"]["visit"]})
+            visits = judgedVisits(tables)
             if visits:
                 info = readVisitInfo(opdb, args.first_visit or visits[0], visits[-1])
         source = sourceText(args.collection, opdb is not None, f"{datetime.now(HST):%Y-%m-%d}")

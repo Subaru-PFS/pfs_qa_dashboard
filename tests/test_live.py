@@ -175,3 +175,36 @@ def testAnImageWithOnlyLineResidualsIsReplacedOnReload():
     assert summary["visit"].tolist() == [1002] and summary["qaStatus"].tolist() == ["PASS"]
     # Negative control: the images of the first read that the second does not hold stay.
     assert store.raw["iqQaMetrics"]["visit"].tolist() == [1001, 1003]
+
+
+def testAReadOfOnlyLineResidualsIsNew():
+    """An image with line residuals and no image-quality row is taken when it is all a read brings."""
+
+    def lines(visit, decidedAt):
+        return pd.DataFrame(
+            {
+                "visit": [visit],
+                "arm": ["b"],
+                "spectrograph": [1],
+                "obsType": ["allsky"],
+                "qaStatus": ["WARN"],
+                "qaReason": [""],
+                "decidedAt": [decidedAt],
+            }
+        )
+
+    def read(since):
+        if since is None:
+            return tables([image(1001, "b", "PASS", 2.5, "t1")])
+        held = tables([])
+        held["iqQaMetrics"] = pd.DataFrame(columns=["visit", "arm", "spectrograph", "decidedAt"])
+        held["dmLineResidualSummary"] = lines(1002, "t2")
+        return held
+
+    store = QadbStore(read)
+    assert store.version == 1 and store.since == "t1"
+    assert store.refresh() and store.version == 2 and store.since == "t2"
+    assert store.raw["dmLineResidualSummary"]["visit"].tolist() == [1002]
+    assert store.raw["iqQaMetrics"]["visit"].tolist() == [1001]
+    # Negative control: the same load read again is not new.
+    assert not store.refresh() and store.version == 2
