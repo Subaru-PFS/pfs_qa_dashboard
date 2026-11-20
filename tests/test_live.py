@@ -1,7 +1,6 @@
 """Tests for the qadb store (`pfs.qa.dashboard.live.QadbStore`), with a stand-in for qadb."""
 
 import pandas as pd
-import pytest
 
 from pfs.qa.dashboard.live import QadbStore, qadbProvenance
 from pfs.qa.dashboard.qadbSource import readSnapshot, writeSnapshot
@@ -57,31 +56,19 @@ class FakeQadb:
         return tables([row for row in latest.values() if since is None or row["decidedAt"] >= since])
 
 
-@pytest.fixture
-def clock():
-    now = [0.0]
-    tick = lambda: now[0]  # noqa: E731
-    tick.advance = lambda seconds: now.__setitem__(0, now[0] + seconds)
-    return tick
-
-
 def _statuses(store):
     iq = store.raw["iqQaMetrics"]
     return dict(zip(zip(iq["visit"], iq["arm"], strict=True), iq["qaStatus"], strict=True))
 
 
-def testRefreshReplacesRejudgedImagesAndAddsNewOnes(clock):
+def testRefreshReplacesRejudgedImagesAndAddsNewOnes():
     qadb = FakeQadb()
     qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1"), image(1001, "r", "PASS", 2.7, "t1")])
-    store = QadbStore(qadb.read, minInterval=10, clock=clock)
+    store = QadbStore(qadb.read)
     assert store.version == 1 and store.since == "t1"
     assert _statuses(store) == {(1001, "b"): "PASS", (1001, "r"): "PASS"}
 
-    # Within minInterval nothing is read.
     qadb.loads.append([image(1002, "b", "PASS", 2.5, "t2")])
-    assert not store.refresh() and len(qadb.calls) == 1
-
-    clock.advance(10)
     qadb.loads.append([image(1001, "b", "FAIL", 9.0, "t3")])
     assert store.refresh()
     assert qadb.calls[-1] == "t1"
@@ -91,10 +78,10 @@ def testRefreshReplacesRejudgedImagesAndAddsNewOnes(clock):
     assert store.since == "t3" and store.version == 2
 
 
-def testTimesAreQadbsForEveryVisitRead(clock):
+def testTimesAreQadbsForEveryVisitRead():
     qadb = FakeQadb()
     qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1")])
-    store = QadbStore(qadb.read, minInterval=0, clock=clock)
+    store = QadbStore(qadb.read)
     qadb.loads.append([image(1002, "b", "PASS", 2.5, "t2"), image(1002, "r", "PASS", 2.5, "t2")])
     store.refresh()
     times = store.times
@@ -102,20 +89,20 @@ def testTimesAreQadbsForEveryVisitRead(clock):
     assert times["time"].tolist() == [pd.Timestamp("2026-11-01 19:01"), pd.Timestamp("2026-11-01 19:02")]
 
 
-def testEmptyUntilTheFirstLoad(clock):
+def testEmptyUntilTheFirstLoad():
     qadb = FakeQadb()
-    store = QadbStore(qadb.read, minInterval=0, clock=clock)
+    store = QadbStore(qadb.read)
     assert store.version == 0 and store.raw == {} and store.times.empty and store.since is None
     assert not store.refresh()
     qadb.loads.append([image(1001, "b", "WARN", 2.9, "t1")])
     assert store.refresh() and _statuses(store) == {(1001, "b"): "WARN"}
 
 
-def testUnchangedRefreshIsNotNew(clock):
+def testUnchangedRefreshIsNotNew():
     """``since`` is inclusive, so the last load comes back on every read: that is not new data."""
     qadb = FakeQadb()
     qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1")])
-    store = QadbStore(qadb.read, minInterval=0, clock=clock)
+    store = QadbStore(qadb.read)
     assert not store.refresh() and not store.refresh()
     assert store.version == 1 and qadb.calls[-1] == "t1"
 
@@ -126,10 +113,10 @@ def testUnchangedRefreshIsNotNew(clock):
     assert not store.refresh()
 
 
-def testASnapshotHoldsWhatQadbHeldAndNeverChanges(tmp_path, clock):
+def testASnapshotHoldsWhatQadbHeldAndNeverChanges(tmp_path):
     qadb = FakeQadb()
     qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1"), image(1002, "r", "FAIL", 9.0, "t1")])
-    liveStore = QadbStore(qadb.read, minInterval=0, clock=clock)
+    liveStore = QadbStore(qadb.read)
     provenance = qadbProvenance("c (qadb snapshot)", builtAt="2026-10-28T10:00:00-10:00")
     read, readProvenance = readSnapshot(writeSnapshot(qadb.read(None), tmp_path / "snap", provenance))
     store = QadbStore.fromTables(read)
@@ -158,7 +145,7 @@ def testSnapshotHoldsOnlyItsOwnRead(tmp_path):
     assert len(read["iqQaMetrics"]) == 1
 
 
-def testAnImageWithOnlyLineResidualsIsReplacedOnReload(clock):
+def testAnImageWithOnlyLineResidualsIsReplacedOnReload():
     """A reload of an image that has line residuals and no image-quality row replaces its rows."""
 
     def lines(visit, decidedAt, status):
@@ -181,9 +168,8 @@ def testAnImageWithOnlyLineResidualsIsReplacedOnReload(clock):
         held["dmLineResidualSummary"] = lines(1002, "t1", "WARN") if first else lines(1002, "t2", "PASS")
         return held
 
-    store = QadbStore(read, minInterval=0, clock=clock)
+    store = QadbStore(read)
     assert store.raw["dmLineResidualSummary"]["qaStatus"].tolist() == ["WARN"]
-    clock.advance(1)
     assert store.refresh()
     summary = store.raw["dmLineResidualSummary"]
     assert summary["visit"].tolist() == [1002] and summary["qaStatus"].tolist() == ["PASS"]

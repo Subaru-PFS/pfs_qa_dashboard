@@ -29,15 +29,17 @@ The input is what `pfs.drp.qa.qadb.reader.readQadb` returns (``iqQaMetrics``,
 ``dmLineResidualSummary``, ``dmLineResidualMetrics``): a live read, a
 `qadbSource.readSnapshot`, or a `live.QadbStore`'s ``raw`` tables.
 `buildReport` is the whole of it; `ReportCache` keeps the page of a store for
-the server's index (`indexHandler`).
+the server (`routes`).
 """
 
 import base64
 import functools
 import html
 import json
+import logging
 import re
 import threading
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -59,7 +61,6 @@ __all__ = [
     "buildReport",
     "grade",
     "imageTable",
-    "indexHandler",
     "infoFromTables",
     "judge",
     "kmsPerPixel",
@@ -67,6 +68,7 @@ __all__ = [
     "modeOffsets",
     "readVisitInfo",
     "renderPage",
+    "routes",
     "sourceText",
     "visitTable",
     "worst",
@@ -128,6 +130,8 @@ _DATA = Path(__file__).parent / "data"
 _INFO = ["visit", "time", "exptime", "sequenceType", "expType", "cameras", "iis", "sequenceEnd"]
 _TABLES = ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics")
 _COUNT_WORDS = {2: "two", 3: "three", 4: "four", 5: "five"}
+
+_log = logging.getLogger(__name__)
 
 # Every visit that exposed the spectrograph in a range: one row each (a visit is in one sequence at most).
 _VISIT_INFO_SQL = """
@@ -1174,11 +1178,17 @@ def buildReport(
 class ReportCache:
     """The report of a store's collection, made again when the store's tables change.
 
+    `update` reads the store's source and makes the page again if anything
+    changed. `watch` has a thread of its own do that every so often, so `page`,
+    what the server answers with, is the last page made and never waits on a
+    database: a read that fails or hangs leaves the page as it was, and
+    `status` says since when.
+
     Parameters
     ----------
     store : `pfs.qa.dashboard.live.QadbStore`
-        The store: its ``raw`` tables are judged, and its ``refresh`` is called
-        before each page (the store limits how often that reads qadb).
+        The store: its ``refresh`` is called by each `update`, and its ``raw``
+        tables are judged.
     readInfo : callable, optional
         ``readInfo(first, last)`` returns every visit taken in the range
         (`readVisitInfo` over the opdb), read from ``firstVisit`` to the latest
@@ -1190,6 +1200,19 @@ class ReportCache:
         The first visit of the run; the earliest visit judged when None.
     **options
         ``limits``, ``correctModes``, ``title`` and ``source`` for `buildReport`.
+
+    Attributes
+    ----------
+    report : `Report`
+        The last report made; None before the first `update`.
+    built : `int`
+        Counts the pages made.
+    readAt : `datetime.datetime`
+        When the last `update` finished (HST); None before the first.
+    error : `str`
+        What the last `poll` failed with; None when it worked.
+    interval : `float`
+        Seconds between the watching thread's updates; None when not watched.
     """
 
     def __init__(
@@ -1208,50 +1231,119 @@ class ReportCache:
         self._lock = threading.Lock()
         self._version: int | None = None
         self.report: Report | None = None
+        self.built = 0
+        self.readAt: datetime | None = None
+        self.error: str | None = None
+        self.interval: float | None = None
 
-    def take(self) -> tuple[int, dict[str, pd.DataFrame], pd.DataFrame]:
-        """Read the store's source and return what a page is made from: its version, tables and visit times.
+    def update(self) -> bool:
+        """Read the store's source and make the report again if the store changed; return whether it did.
 
-        Call it on one thread (the server's loop): a refresh replaces the store's tables.
+        This reads qadb, and the opdb when the store changed: call it where waiting is no harm
+        (before serving, and then on `watch`'s thread).
         """
-        self.store.refresh()
-        # A store that has read no image yet holds no table: the page then says so, with no visit.
-        tables = {name: self.store.raw.get(name, pd.DataFrame(columns=_IMAGE)) for name in _TABLES}
-        return self.store.version, tables, self.store.times
-
-    def build(self, taken: tuple[int, dict[str, pd.DataFrame], pd.DataFrame]) -> str:
-        """Return the page for what `take` returned, made only if the store has changed since the last one."""
-        version, tables, times = taken
         with self._lock:
-            if self.report is None or self._version != version:
+            self.store.refresh()
+            version = self.store.version
+            changed = self.report is None or self._version != version
+            if changed:
+                # A store that has read no image yet holds no table: the page then says so, with no visit.
+                tables = {name: self.store.raw.get(name, pd.DataFrame(columns=_IMAGE)) for name in _TABLES}
                 info = self._info
                 visits = sorted({int(visit) for name in tables for visit in tables[name]["visit"]})
                 if info is None and self._readInfo is not None and visits:
                     info = self._readInfo(self._firstVisit or visits[0], visits[-1])
                 elif info is None:
-                    info = times
-                self.report = buildReport(tables, info=info, **self._options)
+                    info = self.store.times
+                # Together, so a page is never served under another's count.
+                self.report, self.built = buildReport(tables, info=info, **self._options), self.built + 1
                 self._version = version
-            return self.report.html
+            self.readAt = datetime.now(HST)
+            self.error = None
+            return changed
+
+    def poll(self) -> None:
+        """`update`, keeping the last page and noting the ``error`` when it fails."""
+        try:
+            self.update()
+        except Exception as error:
+            _log.exception("Reading the results failed; keeping the last page")
+            lines = f"{type(error).__name__}: {error}".splitlines()
+            self.error = lines[0][:200] if lines else type(error).__name__
+
+    def watch(self, interval: float) -> threading.Thread:
+        """Start a thread that calls `poll` every ``interval`` seconds, and return it."""
+        self.interval = float(interval)
+
+        def loop() -> None:
+            while True:
+                time.sleep(interval)
+                self.poll()
+
+        thread = threading.Thread(target=loop, name="runReport", daemon=True)
+        thread.start()
+        return thread
 
     def html(self) -> str:
-        """Return the page for the store as it is now, reading the store's source first."""
-        return self.build(self.take())
+        """Return the report's page for the store as it is now, reading the store's source first."""
+        self.update()
+        return self.report.html
+
+    @property
+    def page(self) -> str:
+        """The last page made, which reads nothing; when watched, with the script that follows `status`.
+
+        That script reloads the page when a newer one has been made, and says when the results
+        were last read. A report written to a file has none of it.
+        """
+        if self.report is None:
+            self.update()
+        # One read of both: the watching thread may make the next page meanwhile.
+        report, built = self.report, self.built
+        if self.interval is None:
+            return report.html
+        pollMs = int(1000 * min(15.0, max(2.0, self.interval / 2)))
+        live = (_DATA / "liveStatus.html").read_text()
+        live = live.replace("{{BUILT}}", str(built)).replace("{{POLL_MS}}", str(pollMs))
+        head, end, tail = report.html.rpartition("</body>")
+        return f"{head}{live}{end}{tail}"
+
+    def status(self) -> dict:
+        """Return what the served page asks for: ``built``, ``readAt``, ``stale`` and ``error``.
+
+        ``readAt`` is the time of the last update that worked (HST, with its date when that is
+        not today); ``stale`` is whether a watched cache has gone three intervals, and at least
+        90 s, without one, as when a read hangs.
+        """
+        now = datetime.now(HST)
+        readAt = self.readAt
+        if readAt is None:
+            return {"built": self.built, "readAt": "", "stale": False, "error": self.error}
+        age = (now - readAt).total_seconds()
+        return {
+            "built": self.built,
+            "readAt": f"{readAt:%H:%M:%S}" if readAt.date() == now.date() else f"{readAt:%Y-%m-%d %H:%M}",
+            "stale": self.interval is not None and age > max(3 * self.interval, 90.0),
+            "error": self.error,
+        }
 
 
-def indexHandler(cache: ReportCache) -> type:
-    """Return the Tornado handler serving a `ReportCache`'s page, for the server's index."""
-    from tornado.ioloop import IOLoop
+def routes(cache: ReportCache) -> list[tuple[str, type]]:
+    """Return the Tornado routes serving a `ReportCache`: its page at ``/`` and its `status` at ``/status``.
+
+    Neither reads a database: both answer from what the cache last made.
+    """
     from tornado.web import RequestHandler
 
     class RunReportHandler(RequestHandler):
-        async def get(self) -> None:
-            # The store is read here, on the server's loop; judging every image and reading the opdb
-            # are off it.
-            taken = cache.take()
-            page = await IOLoop.current().run_in_executor(None, cache.build, taken)
+        def get(self) -> None:
             self.set_header("Content-Type", "text/html; charset=utf-8")
             self.set_header("Cache-Control", "no-cache")
-            self.write(page)
+            self.write(cache.page)
 
-    return RunReportHandler
+    class StatusHandler(RequestHandler):
+        def get(self) -> None:
+            self.set_header("Cache-Control", "no-store")
+            self.write(cache.status())
+
+    return [(r"/", RunReportHandler), (r"/status", StatusHandler)]

@@ -22,6 +22,7 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import os
 import time
 from collections.abc import Sequence
 from datetime import datetime
@@ -88,9 +89,7 @@ def makeParser() -> argparse.ArgumentParser:
     source.add_argument(
         "--snapshot", type=Path, metavar="DIR", help="a snapshot written by the snapshot command"
     )
-    serve.add_argument(
-        "--refresh", type=float, default=15.0, help="least seconds between qadb reads (default 15)"
-    )
+    serve.add_argument("--refresh", type=float, default=30.0, help="seconds between qadb reads (default 30)")
     serve.add_argument("--port", type=int, default=5006)
     serve.add_argument(
         "--address", default="localhost", help="interface to listen on; 0.0.0.0 for the local network"
@@ -126,6 +125,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         warn, fail = getattr(args, name, (1, 1))
         if not 0 < warn <= fail:
             parser.error(f"--{name.replace('_', '-')}: WARN then FAIL, both above zero")
+    if args.command == "serve" and args.refresh < 1:
+        parser.error("--refresh: at least 1 second")
     if args.command in ("serve", "report") and args.snapshot is not None:
         missing = [
             name for name in ("provenance.json", "iqQaMetrics.parquet") if not (args.snapshot / name).exists()
@@ -142,6 +143,8 @@ def connect(args: argparse.Namespace):
     """Return the qadb, and the opdb or None, that ``args`` name; both are only read."""
     from pfs.utils.database.qadb import QaDB
 
+    # A database that does not answer is given up on, not waited for; the environment's own value wins.
+    os.environ.setdefault("PGCONNECT_TIMEOUT", "10")
     qadb = QaDB(host=args.qadb_host, port=args.qadb_port, dbname=args.qadb_dbname, user=args.qadb_user)
     opdb = None
     if args.opdb_host:
@@ -191,18 +194,15 @@ def serve(args: argparse.Namespace) -> None:
     from pfs.qa.dashboard.qadbSource import readSnapshot
     from pfs.qa.dashboard.runReport import (
         ReportCache,
-        indexHandler,
         infoFromTables,
         readVisitInfo,
+        routes,
         sourceText,
     )
 
     if args.collection:
         qadb, opdb = connect(args)
-        # One store for every browser: qadb is read once, whoever asks, and not again within --refresh.
-        store = QadbStore.fromQadb(
-            qadb, args.collection, args.first_visit, args.last_visit, minInterval=args.refresh
-        )
+        store = QadbStore.fromQadb(qadb, args.collection, args.first_visit, args.last_visit)
         print(f"{len(store.times)} visits so far", flush=True)
         readInfo = None if opdb is None else (lambda first, last: readVisitInfo(opdb, first, last))
         cache = ReportCache(
@@ -211,6 +211,10 @@ def serve(args: argparse.Namespace) -> None:
             firstVisit=args.first_visit or None,
             **reportOptions(args, sourceText(args.collection, opdb is not None)),
         )
+        cache.update()
+        # The databases are read on a thread of the cache's own from here on: a browser gets the last
+        # page made at once, whatever the databases are doing.
+        cache.watch(args.refresh)
     else:
         tables, provenance = readSnapshot(args.snapshot)
         store = QadbStore.fromTables(tables)
@@ -218,9 +222,10 @@ def serve(args: argparse.Namespace) -> None:
         cache = ReportCache(
             store, info=infoFromTables(tables), **reportOptions(args, snapshotSource(tables, provenance))
         )
+        cache.update()
 
     print(f"Serving on http://{args.address}:{args.port}", flush=True)
-    listen(Application([(r"/", indexHandler(cache))]), args.address, args.port, args.show)
+    listen(Application(routes(cache)), args.address, args.port, args.show)
 
 
 def listen(application, address: str, port: int, show: bool = False) -> None:

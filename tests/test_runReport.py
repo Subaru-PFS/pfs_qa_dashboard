@@ -289,17 +289,17 @@ class _Store:
 
 
 def testTheCachedPageIsMadeAgainOnlyWhenTheStoreChanges(monkeypatch):
-    built = []
+    made = []
     real = runReport.buildReport
-    monkeypatch.setattr(runReport, "buildReport", lambda *a, **k: built.append(1) or real(*a, **k))
+    monkeypatch.setattr(runReport, "buildReport", lambda *a, **k: made.append(1) or real(*a, **k))
     store = _Store(_twoModes())
     cache = ReportCache(store, title="Live")
     first = cache.html()
-    assert cache.html() == first and len(built) == 1 and store.refreshed == 2
+    assert cache.html() == first and len(made) == 1 and store.refreshed == 2 and cache.built == 1
     assert "2026-11-04 20:00" in first  # the store's own visit times, without the opdb
     store.raw = _tables((300, "r1", "science", _science(x=2.0)))
     store.version += 1
-    assert "[300," in cache.html() and len(built) == 2
+    assert "[300," in cache.html() and len(made) == 2 and cache.built == 2
     # Negative control: the page did change with the store.
     assert "[300," not in first
 
@@ -309,6 +309,83 @@ def testAStoreWithNoImageYetStillHasAPage():
     store.times = store.times.iloc[:0]
     page = ReportCache(store, readInfo=lambda first, last: pytest.fail("no visit to read")).html()
     assert "const DATA = [];" in page and "0 visits" in page
+
+
+def testThePageServedReadsNothing():
+    """What the server answers with is the last page made: asking for it reads no database."""
+    store = _Store(_tables((1, "r1", "science", _science())))
+    cache = ReportCache(store)
+    cache.update()
+    assert store.refreshed == 1
+    page, status = cache.page, cache.status()
+    assert store.refreshed == 1 and "const DATA = [[1," in page
+    assert status["built"] == 1 and not status["stale"] and status["error"] is None
+    # Negative control: an update does read the store.
+    cache.update()
+    assert store.refreshed == 2
+
+
+def testAReadThatFailsKeepsTheLastPageAndSaysSo():
+    store = _Store(_tables((1, "r1", "science", _science())))
+    cache = ReportCache(store)
+    cache.update()
+    page, readAt = cache.page, cache.readAt
+
+    def down():
+        raise ConnectionError("connection refused\nsecond line")
+
+    working, store.refresh = store.refresh, down
+    cache.poll()
+    assert cache.page == page and cache.readAt == readAt
+    assert cache.status()["error"] == "ConnectionError: connection refused"
+    # Negative control: the next read that works clears it.
+    store.refresh = working
+    cache.poll()
+    assert cache.status()["error"] is None and cache.readAt > readAt
+
+
+def testAWatchedPageFollowsTheStatusAndAReportOnItsOwnDoesNot():
+    """Served live, the page asks the server for its status; made once, it fetches nothing."""
+    import time
+
+    store = _Store(_tables((1, "r1", "science", _science())))
+    cache = ReportCache(store)
+    cache.update()
+    alone = cache.page
+    assert "fetch(" not in alone and alone == cache.report.html
+
+    thread = cache.watch(0.01)
+    assert thread.daemon
+    watched = cache.page
+    assert 'fetch("status"' in watched and "const built = 1," in watched and "{{" not in watched
+    assert "keepView(); location.reload();" in watched  # a reload it makes keeps what the reader chose
+    assert watched.rstrip().endswith("</body>\n</html>") and watched.count("</body>") == 1
+    # The thread makes the next page when the store changes, and the page served carries its count.
+    store.raw = _tables((300, "r1", "science", _science(x=2.0)))
+    store.version += 1
+    deadline = time.monotonic() + 10
+    while cache.built < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert cache.built == 2 and "const built = 2," in cache.page and "[300," in cache.page
+
+
+def testStatusSaysWhenNoReadHasWorkedForLong():
+    """A read that hangs raises nothing: the time since the last one that worked tells."""
+    from datetime import timedelta
+
+    cache = ReportCache(_Store(_tables((1, "r1", "science", _science()))))
+    cache.update()
+    cache.interval = 30.0
+    cache.readAt -= timedelta(seconds=89)
+    assert not cache.status()["stale"]  # three intervals, and at least 90 s
+    cache.readAt -= timedelta(seconds=2)
+    assert cache.status()["stale"]
+    # A read on an earlier day says which.
+    cache.readAt -= timedelta(days=2)
+    assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d", cache.status()["readAt"])
+    # Negative control: a cache nothing watches is never stale.
+    cache.interval = None
+    assert not cache.status()["stale"]
 
 
 def _snapshot(directory):
@@ -347,13 +424,29 @@ def testReportCommandWritesThePageAndTakesTheLimits(tmp_path, capsys):
     assert "--kms-r: WARN then FAIL" in capsys.readouterr().err
 
 
-def testServeAnswersTheIndexWithTheReport(tmp_path, monkeypatch):
-    """``serve`` gives the run report the server's root, and serves nothing else."""
+def _fetch(application, path):
+    """Return the response of ``application`` to a GET of ``path``, served on a port of its own."""
     import asyncio
 
-    from tornado.httpclient import AsyncHTTPClient, HTTPClientError
+    from tornado.httpclient import AsyncHTTPClient
     from tornado.httpserver import HTTPServer
     from tornado.testing import bind_unused_port
+
+    async def fetch():
+        socket, port = bind_unused_port()
+        server = HTTPServer(application)
+        server.add_sockets([socket])
+        try:
+            return await AsyncHTTPClient().fetch(f"http://127.0.0.1:{port}{path}")
+        finally:
+            server.stop()
+
+    return asyncio.run(fetch())
+
+
+def testServeAnswersTheIndexWithTheReport(tmp_path, monkeypatch):
+    """``serve`` gives the run report the server's root and its status ``/status``, and serves nothing else."""
+    from tornado.httpclient import HTTPClientError
 
     cli = _cli()
     served = {}
@@ -363,22 +456,54 @@ def testServeAnswersTheIndexWithTheReport(tmp_path, monkeypatch):
     cli.main(["serve", "--snapshot", str(_snapshot(tmp_path / "snap")), "--title", "Run99", "--port", "5123"])
     assert (served["address"], served["port"], served["show"]) == ("localhost", 5123, False)
 
-    async def fetch(path):
-        socket, port = bind_unused_port()
-        server = HTTPServer(served["application"])
-        server.add_sockets([socket])
-        try:
-            return await AsyncHTTPClient().fetch(f"http://127.0.0.1:{port}{path}")
-        finally:
-            server.stop()
-
-    response = asyncio.run(fetch("/"))
+    response = _fetch(served["application"], "/")
     body = response.body.decode()
     assert response.headers["Content-Type"].startswith("text/html")
     assert "<h1>Run99</h1>" in body and "residual +0.60 km/s, limit 0.5" in body
+    # A snapshot never changes: its page is the report alone, with nothing to follow.
+    assert "fetch(" not in body
+    status = json.loads(_fetch(served["application"], "/status").body)
+    assert status["built"] == 1 and status["error"] is None and not status["stale"]
     # Negative control: the metric views' address is gone.
     with pytest.raises(HTTPClientError, match="404"):
-        asyncio.run(fetch("/dashboard"))
+        _fetch(served["application"], "/dashboard")
+
+
+def testServeFromQadbWatchesItAndThePageFollows(monkeypatch):
+    """Live, ``serve`` makes the first page, then leaves the reading to the cache's thread."""
+    import sys
+
+    import pfs.drp.qa.qadb.reader
+
+    tables = {
+        **_tables((1, "r1", "science", _science(x=0.7))),
+        "visitTimes": pd.DataFrame({"pfs_visit_id": [1], "time_exp_start": [pd.Timestamp("2026-11-04")]}),
+    }
+    for name in ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics"):
+        tables[name]["decidedAt"] = pd.Timestamp("2026-11-04 21:00")
+    reads = []
+    monkeypatch.setattr(
+        pfs.drp.qa.qadb.reader, "readQadb", lambda *args, **kwargs: reads.append(args) or tables
+    )
+    monkeypatch.setattr("pfs.qa.dashboard.live.readQadb", pfs.drp.qa.qadb.reader.readQadb)
+    monkeypatch.setitem(sys.modules, "pfs.utils.database.qadb", types.SimpleNamespace(QaDB=lambda **k: None))
+    monkeypatch.delenv("PGCONNECT_TIMEOUT", raising=False)
+    watched = []
+    monkeypatch.setattr(runReport.ReportCache, "watch", lambda self, interval: watched.append(interval))
+    cli = _cli()
+    served = {}
+    monkeypatch.setattr(cli, "listen", lambda application, address, port, show: served.update(locals()))
+    cli.main(["serve", "--collection", "c", "--refresh", "20"])
+    assert watched == [20.0] and len(reads) == 2  # the store's first read, and the first page's
+    assert cli.os.environ["PGCONNECT_TIMEOUT"] == "10"
+
+    body = _fetch(served["application"], "/").body.decode()
+    assert "x offset +0.70 px, limit 0.5" in body
+    # Asking for the page read nothing more.
+    assert len(reads) == 2
+    # Negative control: a refresh shorter than a second is refused.
+    with pytest.raises(SystemExit):
+        cli.main(["serve", "--collection", "c", "--refresh", "0"])
 
 
 def testSnapshotKeepsWhatTheReportShowsOfEachVisit(tmp_path, monkeypatch):

@@ -66,9 +66,18 @@ or, without a venv, `uv run --no-project --python 3.12 --with numpy,pandas,pyarr
 with `python:` first on `PYTHONPATH`.
 
 **Live, from qadb.** qaActor loads every visit it judges into qadb. `serve` reads a collection back
-(`pfs.drp.qa.qadb.reader.readQadb`) and, when the page is asked for and the last read is at least `--refresh`
-seconds old, reads only the images loaded since (`qa_gate.decided_at`), so a reload follows the run. One read
-serves every browser. An image judged in more than one RUN of the collection shows the latest.
+(`pfs.drp.qa.qadb.reader.readQadb`) and every `--refresh` seconds reads only the images loaded since
+(`qa_gate.decided_at`), making the page again when there are any. An image judged in more than one RUN of the
+collection shows the latest.
+
+The databases are read on a thread of their own, and a browser is answered at once with the last page made, so
+a database that fails or hangs does not hold the page up. The page served follows the server: every few seconds
+it asks for `/status`, reloads itself when a newer page has been made (keeping the filters, buttons and place
+as they were left), and says at the bottom right when the results were last read. That turns red, with the
+error, when a read fails, or when none has worked for three intervals (90 s at least), as when a connection
+hangs. A connection that is not answered is given up on after 10 s (`PGCONNECT_TIMEOUT`, when not already set);
+a query that hangs on an open connection is not interrupted, and the server may then need restarting. A page
+written by `report`, or served from a snapshot, has none of this and fetches nothing.
 
 **With the opdb** (`--opdb-host`, read-only `public_user`), each visit has the time it was taken, its exposure
 time, cameras and IIC sequence, and visits with no result are shown (above). Without it, times are qadb's
@@ -77,7 +86,7 @@ time, cameras and IIC sequence, and visits with no result are shown (above). Wit
 ```bash
 # qadb as pfs (--qadb-user), the opdb as read-only public_user; credentials in ~/.pgpass
 python bin/qaDashboard.py serve --collection qaActor/reductions --first-visit <first visit of the run> \
-    --qadb-host 127.0.0.1 --qadb-port 5436 --opdb-host 127.0.0.1 --opdb-port 5432 [--refresh 15]
+    --qadb-host 127.0.0.1 --qadb-port 5436 --opdb-host 127.0.0.1 --opdb-port 5432 [--refresh 30]
 ```
 
 **Offline, from a snapshot.** `snapshot --out <dir>` reads the collection once and writes what was read, one

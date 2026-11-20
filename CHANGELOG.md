@@ -33,9 +33,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
-- **`serve` serves the run report**, at `/`, made again when qadb holds new results, from a plain Tornado
-  server. `--refresh` is now the least time between qadb reads, 15 s by default: the same as before, when
-  the default of 30 s was halved.
+- **`serve` serves the run report**, at `/`, from a plain Tornado server. It reads qadb every `--refresh`
+  seconds (30 by default) on a thread of its own and makes the page again when there are new results, so a
+  browser is answered at once with the last page made: a database that fails or hangs no longer holds the
+  page up, or the server.
+- **The page served follows the server.** Every few seconds it asks for `/status`, reloads itself when a newer
+  page has been made, keeping the filters, buttons and place as they were left, and says when the results were
+  last read: in red, with the error, when a read fails or none has worked for three intervals (90 s at least).
+  A page written by `report`, or served from a snapshot, is as before and fetches nothing.
+- A database connection that is not answered is given up on after 10 s (`PGCONNECT_TIMEOUT`, when not set).
 
 ### Removed
 
@@ -43,7 +49,8 @@ All notable changes to this project are documented here. The format follows
   reference visits), with `/dashboard`, `--reference` and `--allow-origin`, and the modules only they used:
   `app`, `figures`, `comparison`, `store`, `serving` and `schema`. Panel, Bokeh and DuckDB are no longer
   needed; Tornado is. `live.QadbMetricsStore` is now `live.QadbStore`, holding the tables qadb returned and
-  each visit's time, and reads no opdb; `QadbStore.fromTables` replaces `fromSnapshot`.
+  each visit's time; it reads no opdb and has no `minInterval`. `QadbStore.fromTables` replaces
+  `fromSnapshot`.
 - `snapshot` no longer writes the opdb's sequences and notes (`opdbVisitTimes`, `notes`) or the reference
   visits' metrics. A snapshot that has them is still read.
 

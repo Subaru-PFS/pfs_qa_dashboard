@@ -3,13 +3,11 @@
 `QadbStore` holds the tables `pfs.drp.qa.qadb.reader.readQadb` returns for a
 collection. Its `refresh` reads from qadb only the images loaded since the last
 read (the reader's ``since``) and replaces their rows, so a refresh costs what
-the new visits cost; a refresh within ``minInterval`` of the last reads nothing.
-Offline, the same store holds a snapshot of a qadb read
+the new visits cost. Offline, the same store holds a snapshot of a qadb read
 (`qadbSource.readSnapshot`), and never changes.
 """
 
 import threading
-import time
 from collections.abc import Callable, Mapping
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -43,10 +41,6 @@ class QadbStore:
     read : callable
         ``read(since)`` returns rows as `pfs.drp.qa.qadb.reader.readQadb` does:
         every image when ``since`` is None, else those loaded at or after it.
-    minInterval : `float`
-        Seconds within which a second `refresh` reads nothing.
-    clock : callable
-        Seconds, for ``minInterval``; `time.monotonic`.
 
     Attributes
     ----------
@@ -62,17 +56,9 @@ class QadbStore:
         The latest load read (``qa_gate.decided_at``); None before the first.
     """
 
-    def __init__(
-        self,
-        read: Callable[[Any], Mapping[str, pd.DataFrame]],
-        minInterval: float = 15.0,
-        clock: Callable[[], float] = time.monotonic,
-    ):
+    def __init__(self, read: Callable[[Any], Mapping[str, pd.DataFrame]]):
         self._read = read
-        self.minInterval = minInterval
-        self._clock = clock
         self._lock = threading.Lock()
-        self._lastRead: float | None = None
         self.since: Any = None
         self._seenAtSince: set[tuple] = set()
         self.version = 0
@@ -82,21 +68,16 @@ class QadbStore:
 
     @classmethod
     def fromQadb(
-        cls,
-        qadb: Any,
-        collection: str,
-        first: int = FIRST_VISIT,
-        last: int = LAST_VISIT,
-        minInterval: float = 15.0,
+        cls, qadb: Any, collection: str, first: int = FIRST_VISIT, last: int = LAST_VISIT
     ) -> "QadbStore":
         """Return the store of one collection's visits ``first``..``last`` in a qadb (read-only)."""
-        return cls(lambda since: readQadb(qadb, collection, first, last, since), minInterval)
+        return cls(lambda since: readQadb(qadb, collection, first, last, since))
 
     @classmethod
     def fromTables(cls, tables: Mapping[str, pd.DataFrame]) -> "QadbStore":
         """Return the store of one qadb read (a snapshot's, `qadbSource.readSnapshot`); it never changes."""
         none = {name: frame.iloc[:0] for name, frame in tables.items()}
-        return cls(lambda since: tables if since is None else none, 0)
+        return cls(lambda since: tables if since is None else none)
 
     @property
     def times(self) -> pd.DataFrame:
@@ -109,13 +90,9 @@ class QadbStore:
         Returns
         -------
         `bool`
-            Whether any load was new. False within ``minInterval`` of the last read.
+            Whether any load was new.
         """
         with self._lock:
-            now = self._clock()
-            if self._lastRead is not None and now - self._lastRead < self.minInterval:
-                return False
-            self._lastRead = now
             changed = self._takeLoads(self._read(self.since))
             if changed:
                 self.version += 1
