@@ -1,9 +1,11 @@
 """A collection's QA results in qadb, kept up to date while a run is observed.
 
-`QadbStore` holds the tables `pfs.drp.qa.qadb.reader.readQadb` returns for a
-collection. Its `refresh` reads from qadb only the images loaded since the last
-read (the reader's ``since``) and replaces their rows, so a refresh costs what
-the new visits cost. Offline, the same store holds a snapshot of a qadb read
+`QadbStore` holds what `readCollection` reads of a collection: the numbers
+`pfs.drp.qa.qadb.reader.readQadb` returns and each image's gate verdict
+(`pfs.drp.qa.qadb.reader.readGate`, as ``qaGate``). Its `refresh` reads from
+qadb only the images loaded or judged since the last read (the reader's
+``since``) and replaces their rows, so a refresh costs what the new visits
+cost. Offline, the same store holds a snapshot of a qadb read
 (`qadbSource.readSnapshot`), and never changes.
 """
 
@@ -14,21 +16,53 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from pfs.drp.qa.qadb.reader import FIRST_VISIT, LAST_VISIT, readQadb
+from pfs.drp.qa.qadb.reader import FIRST_VISIT, GATE_COLUMNS, LAST_VISIT, readGate, readQadb
 
-__all__ = ["HST", "QadbStore", "qadbProvenance"]
+__all__ = ["GATE", "HST", "QadbStore", "qadbProvenance", "readCollection"]
 
 HST = ZoneInfo("Pacific/Honolulu")
 
 _IMAGE = ["visit", "arm", "spectrograph"]
 
-#: The tables of a qadb read the store keeps: one row per image, or per image and metric.
-_RAW = ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics")
+#: The table of a read holding each image's gate verdict: `pfs.drp.qa.qadb.reader.readGate`.
+GATE = "qaGate"
+
+#: The numbers of a qadb read the store keeps: one row per image, or per image and metric.
+_NUMBERS = ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics")
+
+#: Every table of a read the store keeps.
+_RAW = (*_NUMBERS, GATE)
 
 #: Those with one row per image, which say what a read loaded.
 _PER_IMAGE = ("iqQaMetrics", "dmLineResidualSummary")
 
 _TIMES = ["pfs_visit_id", "time_exp_start"]
+
+
+def readCollection(
+    qadb: Any, collection: str, first: int = FIRST_VISIT, last: int = LAST_VISIT, since: Any = None
+) -> dict[str, pd.DataFrame]:
+    """Read a collection's numbers and verdicts from qadb (read-only).
+
+    Returns
+    -------
+    `dict` [`str`, `pandas.DataFrame`]
+        What `pfs.drp.qa.qadb.reader.readQadb` returns, with ``since``, and
+        `GATE`: each image's latest gate row (`pfs.drp.qa.qadb.reader.readGate`).
+        With ``since``, the gate rows of the visit range the numbers read
+        covers, which holds every image they hold; none when they hold none.
+    """
+    tables = dict(readQadb(qadb, collection, first, last, since))
+    if since is None:
+        tables[GATE] = readGate(qadb, collection, first, last)
+        return tables
+    visits = [int(visit) for name in _PER_IMAGE for visit in tables[name]["visit"]]
+    tables[GATE] = (
+        readGate(qadb, collection, min(visits), max(visits))
+        if visits
+        else pd.DataFrame(columns=list(GATE_COLUMNS))
+    )
+    return tables
 
 
 def qadbProvenance(collection: str, **extra: Any) -> dict:
@@ -42,15 +76,16 @@ class QadbStore:
     Parameters
     ----------
     read : callable
-        ``read(since)`` returns rows as `pfs.drp.qa.qadb.reader.readQadb` does:
-        every image when ``since`` is None, else those loaded at or after it.
+        ``read(since)`` returns tables as `readCollection` does: every image
+        when ``since`` is None, else those loaded or judged at or after it (and,
+        in `GATE`, maybe others).
 
     Attributes
     ----------
     raw : `dict` [`str`, `pandas.DataFrame`]
-        ``iqQaMetrics``, ``dmLineResidualSummary`` and ``dmLineResidualMetrics``
-        as qadb returned them, each image's latest load; empty before the
-        first image is read.
+        ``iqQaMetrics``, ``dmLineResidualSummary``, ``dmLineResidualMetrics``
+        and `GATE` as qadb returned them, each image's latest load; empty
+        before the first image is read.
     times : `pandas.DataFrame`
         qadb's own time for each visit read: ``visit`` and ``time`` (HST).
     version : `int`
@@ -74,7 +109,7 @@ class QadbStore:
         cls, qadb: Any, collection: str, first: int = FIRST_VISIT, last: int = LAST_VISIT
     ) -> "QadbStore":
         """Return the store of one collection's visits ``first``..``last`` in a qadb (read-only)."""
-        return cls(lambda since: readQadb(qadb, collection, first, last, since))
+        return cls(lambda since: readCollection(qadb, collection, first, last, since))
 
     @classmethod
     def fromTables(cls, tables: Mapping[str, pd.DataFrame]) -> "QadbStore":
@@ -111,17 +146,19 @@ class QadbStore:
         loads = set(loaded.itertuples(index=False, name=None))
         if loads <= self._seenAtSince:
             return False
-        # Every image the read holds rows of, in whichever table.
-        judged = pd.MultiIndex.from_frame(
-            pd.concat([tables[name][_IMAGE] for name in _RAW], ignore_index=True).drop_duplicates()
-        )
+        # Every image the read holds numbers of, in whichever table; the gate's rows replace their own images'.
+        loadedImages = _images(pd.concat([tables[name][_IMAGE] for name in _NUMBERS], ignore_index=True))
         for name in _RAW:
+            read = tables.get(name)
+            if read is None:
+                continue
+            replaced = _images(read[_IMAGE]) if name == GATE else loadedImages
             held = self.raw.get(name)
             if held is None or held.empty:
-                self.raw[name] = tables[name]
+                self.raw[name] = read
                 continue
-            others = held[~pd.MultiIndex.from_frame(held[_IMAGE]).isin(judged)]
-            parts = [part for part in (others, tables[name]) if len(part)]
+            others = held[~_images(held[_IMAGE]).isin(replaced)]
+            parts = [part for part in (others, read) if len(part)]
             self.raw[name] = pd.concat(parts, ignore_index=True) if parts else held.iloc[:0]
         read = tables.get("visitTimes")
         if read is not None:
@@ -132,6 +169,11 @@ class QadbStore:
         self.since = loaded["decidedAt"].max()
         self._seenAtSince = {load for load in loads if load[-1] == self.since}
         return True
+
+
+def _images(keys: pd.DataFrame) -> pd.MultiIndex:
+    """Return the images of some rows' keys (visit, arm, spectrograph), once each."""
+    return pd.MultiIndex.from_frame(keys.drop_duplicates())
 
 
 def _drpQaVersion() -> str:

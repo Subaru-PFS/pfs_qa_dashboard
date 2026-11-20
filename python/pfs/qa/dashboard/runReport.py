@@ -1,35 +1,29 @@
-"""Judge a collection's visits and write the run report: one stand-alone HTML page.
+"""Write the run report of a collection's verdicts: one stand-alone HTML page.
 
 The report gives every visit of a collection one verdict, the worst among its
 detectors, and shows the run at a glance: a square per visit by night, counts by
 kind of frame, what was measured on the science frames, and the visits that do
 not pass.
 
-Science frames are judged here, from what ``dmLineResiduals`` measured, against
-`Limits`:
+It judges nothing: each image's verdict and reason are its row of qadb's
+``qa_gate``, which drp_qa's gate (`pfs.drp.qa.metrics.gate`) wrote, on every
+kind of frame. The checks the gate applies, and their limits, are drp_qa's
+(`pfs.drp.qa.metrics.registry.CHECKS`); the page lists them, and draws the
+science checks' limits beside what was measured:
 
 - the offset from the calibration in pixels: the traces' in x
   (``medianDeltaX`` of ``Trace``) and the sky lines' in y (``medianDeltaY`` of
-  the species furthest off);
+  the species furthest off), as measured;
 - the sky-line residual after the visit's detectorMap adjustment
   (``medianDeltaY`` of the held-back lines against the visit's own
   detectorMap), in km/s on the best-measured species of the arm
   (`BEST_SPECIES`), with the dispersion at that species' lines (`kmsPerPixel`).
 
-A value at a limit has crossed it. Every other kind of frame keeps the verdict
-its QA tasks stored: the worst of ``imageQualityQa`` and ``dmLineResiduals``,
-and on all-sky frames ``dmLineResiduals`` alone.
-
-On visits read with the m arm the calibration, made with the r arm, sits a
-steady fraction of a pixel from the b arm's traces and the n arm's lines.
-`modeOffsets` measures that from the collection's own quartz and Neon arcs
-taken in both modes, and `measure` subtracts it before the pixel limits.
-
-The input is what `pfs.drp.qa.qadb.reader.readQadb` returns (``iqQaMetrics``,
-``dmLineResidualSummary``, ``dmLineResidualMetrics``): a live read, a
-`qadbSource.readSnapshot`, or a `live.QadbStore`'s ``raw`` tables.
-`buildReport` is the whole of it; `ReportCache` keeps the page of a store for
-the server (`routes`).
+The input is what `pfs.qa.dashboard.live.readCollection` returns
+(``iqQaMetrics``, ``dmLineResidualSummary``, ``dmLineResidualMetrics`` and
+``qaGate``): a live read, a `qadbSource.readSnapshot`, or a `live.QadbStore`'s
+``raw`` tables. `buildReport` is the whole of it; `ReportCache` keeps the page
+of a store for the server (`routes`).
 """
 
 import base64
@@ -41,7 +35,7 @@ import re
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -49,23 +43,20 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from pfs.qa.dashboard.live import HST
+from pfs.drp.qa.metrics.registry import CHECKS, FIXED, specFor
+from pfs.qa.dashboard.live import GATE, HST
 
 __all__ = [
-    "ALTERNATIVE_KMS",
     "BEST_SPECIES",
-    "DEFAULT_KMS",
-    "Limits",
+    "FRAME_KINDS",
     "Report",
     "ReportCache",
     "buildReport",
-    "grade",
+    "checkNotes",
     "imageTable",
     "infoFromTables",
-    "judge",
     "kmsPerPixel",
     "measure",
-    "modeOffsets",
     "readVisitInfo",
     "renderPage",
     "routes",
@@ -86,14 +77,31 @@ BEST_SPECIES = {"b": "OI", "r": "OH", "n": "OH", "m": "OH"}
 #: How the report writes a species.
 SPECIES_LABEL = {"OI": "[O I]", "OH": "OH"}
 
-#: WARN and FAIL limits, in km/s, on each arm's sky-line residual.
-DEFAULT_KMS = {"b": (1.5, 2.5), "r": (0.5, 1.0), "n": (0.5, 1.0), "m": (0.5, 1.0)}
+#: The report's kind of frame, and what lit it, for each frame type the gate names
+#: (`pfs.drp.qa.metrics.registry.FRAME_TYPES`); any other is unclassified.
+FRAME_KINDS = {
+    "science": ("science", "full"),
+    "allsky": ("all-sky", "full"),
+    "arc": ("arc", "full"),
+    "quartz": ("quartz", "full"),
+    "twilight": ("twilight", "full"),
+    "iisArc": ("arc", "iis"),
+    "iisQuartz": ("quartz", "iis"),
+}
 
-#: Sets of km/s limits the report tabulates beside its own, loosest first: b, then r, n and m.
-ALTERNATIVE_KMS = (((2.0, 3.0), (1.0, 2.0)), ((1.5, 2.5), (0.5, 1.0)), ((1.0, 2.0), (0.25, 0.5)))
-
-#: The report's kind of frame for each ``obsType`` the QA tasks name; any other is unclassified.
+#: The report's kind of frame for each ``obsType`` the QA tasks name, for a gate row with no frame type.
 KINDS = {"science": "science", "allsky": "all-sky", "arc": "arc", "trace": "quartz", "twilight": "twilight"}
+
+#: How the page names each frame type the gate judges, in the order it lists them.
+FRAME_LABELS = {
+    "science": "Science",
+    "allsky": "All-sky",
+    "arc": "Arcs, full slit",
+    "quartz": "Quartz, full slit",
+    "twilight": "Twilights",
+    "iisArc": "Arcs, engineering fibers",
+    "iisQuartz": "Quartz, engineering fibers",
+}
 
 #: What an unclassified visit is called, by its IIC sequence type.
 SEQUENCE_LABELS = {
@@ -121,15 +129,11 @@ SEQUENCE_KINDS = {
     "scienceTrace": "quartz",
 }
 
-#: Fewest visits in each red-arm mode for `modeOffsets` to give a detector a constant.
-MIN_MODE_VISITS = 3
-
 _IMAGE = ["visit", "arm", "spectrograph"]
 _KEY = ["visit", "camera"]
 _DATA = Path(__file__).parent / "data"
 _INFO = ["visit", "time", "exptime", "sequenceType", "expType", "cameras", "iis", "sequenceEnd"]
-_TABLES = ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics")
-_COUNT_WORDS = {2: "two", 3: "three", 4: "four", 5: "five"}
+_TABLES = ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics", GATE)
 
 _log = logging.getLogger(__name__)
 
@@ -150,58 +154,52 @@ WHERE v.pfs_visit_id BETWEEN :first AND :last
 """
 
 
-def _pair(values: Iterable[float]) -> tuple[float, float]:
-    warn, fail = (float(value) for value in values)
-    return warn, fail
-
-
-@dataclass(frozen=True)
-class Limits:
-    """The limits science frames are judged with, each WARN then FAIL.
-
-    Parameters
-    ----------
-    offsetX, offsetY : `tuple` [`float`, `float`]
-        Pixels, on the size of the trace offset (x) and the sky-line offset (y)
-        from the calibration.
-    kms : mapping [`str`, `tuple` [`float`, `float`]]
-        km/s by arm, on the size of the sky-line residual after the visit's
-        adjustment.
-    """
-
-    offsetX: tuple[float, float] = (0.5, 1.0)
-    offsetY: tuple[float, float] = (0.5, 1.0)
-    kms: Mapping[str, tuple[float, float]] = field(default_factory=lambda: dict(DEFAULT_KMS))
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "offsetX", _pair(self.offsetX))
-        object.__setattr__(self, "offsetY", _pair(self.offsetY))
-        object.__setattr__(self, "kms", {arm: _pair(self.kms[arm]) for arm in ARMS})
-
-    def withKms(self, b: Iterable[float], red: Iterable[float]) -> "Limits":
-        """Return these limits with other km/s limits: ``b`` on the b arm, ``red`` on r, n and m."""
-        return replace(self, kms={"b": b, "r": red, "n": red, "m": red})
-
-    @property
-    def sameRed(self) -> bool:
-        """Whether the r, n and m arms share their km/s limits."""
-        return len({self.kms[arm] for arm in "rnm"}) == 1
-
-
 def worst(statuses: Iterable[Any]) -> str:
     """Return the worst of some verdicts; UNKNOWN when none is a verdict."""
     known = [status for status in statuses if isinstance(status, str) and status in STATUS_RANK]
     return max(known, key=STATUS_RANK.get) if known else "UNKNOWN"
 
 
-def grade(value: pd.Series, warn: Any, fail: Any) -> np.ndarray:
-    """Return PASS, WARN or FAIL for the size of each value, and an empty string where there is none.
+def _skyLimits(arm: str) -> tuple[float, float]:
+    """Return the gate's WARN and FAIL on an arm's sky-line residual after the visit's adjustment, in km/s."""
+    check = next(
+        check for check in CHECKS.values() if "medianDeltaYKms" in check.metrics and arm in check.arms
+    )
+    return check.warn, check.fail
 
-    A value at a limit has crossed it.
+
+def _unit(units: str) -> str:
+    return {"pixels": " px", "percent": "%"}.get(units, f" {units}")
+
+
+def checkNotes() -> list[str]:
+    """Return, for each frame type the gate judges, the checks it applies and their limits, as HTML items.
+
+    From drp_qa's `pfs.drp.qa.metrics.registry.CHECKS`, so the page says what the gate that wrote its
+    verdicts applies.
     """
-    size = value.abs()
-    verdict = np.where(size >= fail, "FAIL", np.where(size >= warn, "WARN", "PASS"))
-    return np.where(value.isna(), "", verdict)
+    items = []
+    for frame, label in FRAME_LABELS.items():
+        rules = []
+        for check in CHECKS.values():
+            if frame not in check.frames:
+                continue
+            arms = (
+                f" on the {', '.join(check.arms)} arm{'s' if len(check.arms) > 1 else ''}"
+                if check.arms
+                else ""
+            )
+            if check.kind == FIXED:
+                unit = _unit(specFor(check.metrics[0]).units)
+                limits = f"WARN at {check.warn:g}{unit}, FAIL at {check.fail:g}{unit}"
+            else:
+                limits = (
+                    f"WARN at {check.warn:g}%, FAIL at {check.fail:g}% from the {check.by[0]}'s normal value"
+                )
+            rules.append(f"{html.escape(check.title)}{arms}: {limits}")
+        if rules:
+            items.append(f"<li><strong>{label}:</strong> {'; '.join(rules)}.</li>")
+    return items
 
 
 def kmsPerPixel() -> pd.DataFrame:
@@ -230,46 +228,45 @@ def _keyed(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
 
 
 def imageTable(tables: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
-    """Return one row per detector image with what the QA tasks stored of it.
+    """Return one row per detector image: what it is and its gate verdict.
 
     Parameters
     ----------
     tables : mapping
-        From `pfs.drp.qa.qadb.reader.readQadb`.
+        From `pfs.qa.dashboard.live.readCollection`.
 
     Returns
     -------
     `pandas.DataFrame`
-        ``visit``, ``arm``, ``spectrograph``, ``camera``; ``obsType`` and the
-        report's ``kind`` of frame; ``illumination`` (``full`` where not
-        stored); ``lamp`` on arcs and quartz; each task's verdict and reason
-        (``iqStatus``, ``iqReason``, ``dmStatus``, ``dmReason``) and the worse
-        of the two (``storedStatus``, ``storedReason``); ``cameraSet``; and
-        ``withM``, whether the visit was read with the m arm.
+        ``visit``, ``arm``, ``spectrograph``, ``camera``; ``obsType``, the
+        gate's ``frameType`` and the report's ``kind`` of frame (from the frame
+        type, else from ``obsType``); ``illumination`` (``full`` where not
+        stored); ``lamp`` on arcs and quartz; the gate's ``status`` (UNKNOWN
+        for an image with no gate row), ``decidedBy`` and ``reason`` (empty
+        unless WARN or FAIL); ``cameraSet``; and ``withM``, whether the visit
+        was read with the m arm.
     """
-    iq = _keyed(tables["iqQaMetrics"], ["obsType", "illumination", "seqName", "qaStatus", "qaReason"])
-    iq = iq.rename(columns={"qaStatus": "iqStatus", "qaReason": "iqReason"}).drop_duplicates(
+    iq = _keyed(tables["iqQaMetrics"], ["obsType", "illumination", "seqName"]).drop_duplicates(
         _KEY, keep="last"
     )
-    dm = _keyed(tables["dmLineResidualSummary"], ["obsType", "cameraSet", "qaStatus", "qaReason"])
-    dm = dm.rename(columns={"obsType": "dmObsType", "qaStatus": "dmStatus", "qaReason": "dmReason"})
-    dm = dm.drop_duplicates(_KEY, keep="last")
-    images = iq.merge(dm, on=[*_IMAGE, "camera"], how="outer")
+    dm = _keyed(tables["dmLineResidualSummary"], ["obsType", "cameraSet"])
+    dm = dm.rename(columns={"obsType": "dmObsType"}).drop_duplicates(_KEY, keep="last")
+    gate = _keyed(tables.get(GATE, pd.DataFrame()), ["frameType", "qaStatus", "qaDecidedBy", "qaReason"])
+    gate = gate.rename(columns={"qaStatus": "status", "qaDecidedBy": "decidedBy", "qaReason": "reason"})
+    gate = gate.drop_duplicates(_KEY, keep="last")
+    on = [*_IMAGE, "camera"]
+    images = iq.merge(dm, on=on, how="outer").merge(gate, on=on, how="outer")
     images["obsType"] = images["obsType"].where(images["obsType"].notna(), images["dmObsType"])
-    images["illumination"] = images["illumination"].where(images["illumination"].notna(), "full")
-    images["kind"] = images["obsType"].map(KINDS).fillna("other")
-    images["lamp"] = images["seqName"].where(images["obsType"].isin(["arc", "trace"]))
-    images["storedStatus"] = [
-        worst(pair) for pair in zip(images["iqStatus"], images["dmStatus"], strict=True)
-    ]
-    images["storedReason"] = [
-        "; ".join(f"{task}: {reason}" for task, reason in tasks if isinstance(reason, str) and reason)
-        for tasks in zip(
-            (("imageQualityQa", reason) for reason in images["iqReason"]),
-            (("dmLineResiduals", reason) for reason in images["dmReason"]),
-            strict=True,
-        )
-    ]
+    framed = images["frameType"].map(FRAME_KINDS)
+    byFrame = framed.map(lambda pair: pair[0], na_action="ignore")
+    images["kind"] = byFrame.where(images["frameType"].notna(), images["obsType"].map(KINDS)).fillna("other")
+    lit = framed.map(lambda pair: pair[1], na_action="ignore")
+    images["illumination"] = images["illumination"].where(images["illumination"].notna(), lit).fillna("full")
+    images["lamp"] = images["seqName"].where(images["kind"].isin(["arc", "quartz"]))
+    images["status"] = images["status"].where(images["status"].isin(list(STATUS_RANK)), "UNKNOWN")
+    flagged = images["status"].isin(["WARN", "FAIL"])
+    images["reason"] = images["reason"].where(flagged & images["reason"].notna(), "").astype(str)
+    images["decidedBy"] = images["decidedBy"].fillna("").astype(str)
     withM = set(images.loc[images["arm"] == "m", "visit"])
     cameraSet = images["cameraSet"].where(images["cameraSet"].notna(), "").astype(str)
     images["withM"] = images["visit"].isin(withM) | cameraSet.str.contains("m")
@@ -285,83 +282,13 @@ def _calibrationOffsets(tables: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     return metrics[metrics["metric"].isin(["medianDeltaX", "medianDeltaY"])].dropna(subset=["value"])
 
 
-def modeOffsets(tables: Mapping[str, pd.DataFrame], minVisits: float = MIN_MODE_VISITS) -> pd.DataFrame:
-    """Return how far each b and n detector sits from the calibration when the red arm is m instead of r.
-
-    The b arm in x, from the collection's quartz lit through the full slit
-    (the traces' offset), and the n arm in y, from its Neon arcs (the Ne I
-    lines' offset): each the median over the visits read with m minus the
-    median over the visits read with r.
+def measure(tables: Mapping[str, pd.DataFrame], scale: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Return `imageTable` with what was measured on the science frames, as measured.
 
     Parameters
     ----------
     tables : mapping
-        From `pfs.drp.qa.qadb.reader.readQadb`.
-    minVisits : `float`
-        A detector with fewer visits than this in either mode gets no constant
-        (infinity: no detector gets one).
-
-    Returns
-    -------
-    `pandas.DataFrame`
-        ``camera``, ``axis`` (``x`` or ``y``), ``constant`` (pixels), ``source``
-        (the frames measured), ``withM`` and ``withR`` (visits in each mode) and
-        ``first``, ``last`` (their visit range); empty when the collection has
-        no such frames in both modes.
-    """
-    images = imageTable(tables)
-    full = images[images["illumination"] == "full"]
-    offsets = _calibrationOffsets(tables)
-    offsets = offsets[(offsets["reference"] == "calib") & (offsets["statusType"] == "BOTH")]
-    offsets = offsets.merge(full[[*_KEY, "obsType", "withM"]], on=_KEY)
-    quartz = offsets[
-        (offsets["arm"] == "b")
-        & (offsets["obsType"] == "trace")
-        & (offsets["description"] == "Trace")
-        & (offsets["metric"] == "medianDeltaX")
-    ]
-    neon = offsets[
-        (offsets["arm"] == "n")
-        & (offsets["obsType"] == "arc")
-        & (offsets["description"] == "NeI")
-        & (offsets["metric"] == "medianDeltaY")
-    ]
-    rows = []
-    for frame, axis, source in ((quartz, "x", "quartz"), (neon, "y", "Neon arcs")):
-        for camera, group in frame.groupby("camera"):
-            withM, withR = group[group["withM"]], group[~group["withM"]]
-            if min(withM["visit"].nunique(), withR["visit"].nunique()) < minVisits:
-                continue
-            rows.append(
-                {
-                    "camera": camera,
-                    "axis": axis,
-                    "constant": withM["value"].median() - withR["value"].median(),
-                    "source": source,
-                    "withM": withM["visit"].nunique(),
-                    "withR": withR["visit"].nunique(),
-                    "first": int(group["visit"].min()),
-                    "last": int(group["visit"].max()),
-                }
-            )
-    columns = ["camera", "axis", "constant", "source", "withM", "withR", "first", "last"]
-    return pd.DataFrame(rows, columns=columns)
-
-
-def measure(
-    tables: Mapping[str, pd.DataFrame],
-    constants: pd.DataFrame | None = None,
-    scale: pd.DataFrame | None = None,
-) -> pd.DataFrame:
-    """Return `imageTable` with what the science frames are judged on.
-
-    Parameters
-    ----------
-    tables : mapping
-        From `pfs.drp.qa.qadb.reader.readQadb`.
-    constants : `pandas.DataFrame`, optional
-        `modeOffsets`: subtracted from the offsets of the visits read with the
-        m arm. None, or empty, subtracts nothing.
+        From `pfs.qa.dashboard.live.readCollection`.
     scale : `pandas.DataFrame`, optional
         `kmsPerPixel`, by default.
 
@@ -371,28 +298,16 @@ def measure(
         `imageTable` and, on science frames: ``xOffset`` (the traces' median
         offset from the calibration, pixels), ``yOffset`` (that of the sky
         species furthest off, pixels, signed), ``yOffsetKms`` (the largest
-        species' offset in km/s, each with the dispersion at its own lines),
-        ``kms`` (the residual of the arm's `BEST_SPECIES` after the visit's
-        adjustment, km/s) and ``corrected`` (whether a constant was
-        subtracted).
+        species' offset in km/s, each with the dispersion at its own lines)
+        and ``kms`` (the residual of the arm's `BEST_SPECIES` after the visit's
+        adjustment, km/s).
     """
     scale = kmsPerPixel() if scale is None else scale
     scale = scale.rename(columns={"species": "description"})[["camera", "description", "kmsPerPixel"]]
     images = imageTable(tables)
-    science = images.loc[images["kind"] == "science", [*_KEY, "withM"]]
+    science = images.loc[images["kind"] == "science", _KEY]
     offsets = _calibrationOffsets(tables).merge(science, on=_KEY)
     calib = offsets[(offsets["reference"] == "calib") & offsets["statusType"].isin(["BOTH", "UNFITTED"])]
-    calib = calib.copy()
-    images["corrected"] = False
-    if constants is not None and len(constants):
-        for axis, metric in (("x", "medianDeltaX"), ("y", "medianDeltaY")):
-            ofAxis = constants[constants["axis"] == axis]
-            shift = calib["camera"].map(dict(zip(ofAxis["camera"], ofAxis["constant"], strict=True)))
-            shift = pd.to_numeric(shift, errors="coerce").astype("float64")
-            use = calib["withM"] & (calib["metric"] == metric) & shift.notna()
-            calib.loc[use, "value"] = calib.loc[use, "value"] - shift[use]
-        corrected = images["withM"] & images["camera"].isin(constants["camera"])
-        images["corrected"] = corrected & (images["kind"] == "science")
     isTrace = calib["description"] == "Trace"
     x = calib[isTrace & (calib["metric"] == "medianDeltaX")].groupby(_KEY)["value"].first()
     lines = calib[~isTrace & (calib["metric"] == "medianDeltaY")]
@@ -410,72 +325,6 @@ def measure(
     for name, values in (("xOffset", x), ("yOffset", y), ("yOffsetKms", yKms), ("kms", kms)):
         images = images.join(values.rename(name).astype("float64"), on=_KEY)
     return images
-
-
-def judge(images: pd.DataFrame, limits: Limits | None = None) -> pd.DataFrame:
-    """Give each image its verdict and the reason for a WARN or FAIL.
-
-    Parameters
-    ----------
-    images : `pandas.DataFrame`
-        From `measure`.
-    limits : `Limits`, optional
-        The science frames' limits; the defaults when None.
-
-    Returns
-    -------
-    `pandas.DataFrame`
-        ``images`` with ``xStatus``, ``yStatus`` and ``kmsStatus`` (empty off
-        science frames and where nothing was measured), ``status`` and
-        ``reason``. A science frame takes the worst of the three; one with no
-        offset measured takes the stored ``dmLineResiduals`` verdict with them.
-        An all-sky frame takes the stored ``dmLineResiduals`` verdict, any
-        other frame the worse of the two tasks'.
-    """
-    limits = Limits() if limits is None else limits
-    judged = images.copy()
-    science = (judged["kind"] == "science").to_numpy()
-    arm = judged["arm"]
-    kmsWarn = arm.map({a: limits.kms[a][0] for a in ARMS})
-    kmsFail = arm.map({a: limits.kms[a][1] for a in ARMS})
-    judged["xStatus"] = np.where(science, grade(judged["xOffset"], *limits.offsetX), "")
-    judged["yStatus"] = np.where(science, grade(judged["yOffset"], *limits.offsetY), "")
-    judged["kmsStatus"] = np.where(science, grade(judged["kms"], kmsWarn, kmsFail), "")
-
-    def rank(column: str) -> pd.Series:
-        return judged[column].map(STATUS_RANK).fillna(-1)
-
-    measured = pd.concat([rank("xStatus"), rank("yStatus"), rank("kmsStatus")], axis=1).max(axis=1)
-    noOffsets = (judged["xStatus"] == "") & (judged["yStatus"] == "")
-    scienceRank = measured.where(~noOffsets, np.maximum(measured, rank("dmStatus")))
-    names = {value: name for name, value in STATUS_RANK.items()} | {-1: "UNKNOWN"}
-    dmStatus = judged["dmStatus"].where(judged["dmStatus"].isin(list(STATUS_RANK)), "UNKNOWN")
-    stored = judged["storedStatus"].where(judged["kind"] != "all-sky", dmStatus)
-    judged["status"] = np.where(science, scienceRank.map(names), stored)
-
-    flagged = judged["status"].isin(["WARN", "FAIL"])
-    storedReason = judged["storedReason"].where(judged["kind"] != "all-sky", judged["dmReason"])
-    reason = storedReason.where(flagged & storedReason.notna(), "").astype(str).to_numpy(dtype=object)
-    # A science frame that passes has no reason to give.
-    for index in np.flatnonzero(science & (judged["status"] != "PASS").to_numpy()):
-        row = judged.iloc[index]
-        if row["status"] == "UNKNOWN":
-            reason[index] = "nothing measured"
-            continue
-        bits = []
-        if row["kmsStatus"] in ("WARN", "FAIL"):
-            species = SPECIES_LABEL.get(BEST_SPECIES.get(row["arm"]), "sky-line")
-            limit = limits.kms[row["arm"]][row["kmsStatus"] == "FAIL"]
-            bits.append(f"{species} residual {row['kms']:+.2f} km/s, limit {limit:g}")
-        for axis, pair in (("x", limits.offsetX), ("y", limits.offsetY)):
-            status = row[f"{axis}Status"]
-            if status in ("WARN", "FAIL"):
-                bits.append(f"{axis} offset {row[f'{axis}Offset']:+.2f} px, limit {pair[status == 'FAIL']:g}")
-        if not bits and flagged.iloc[index] and isinstance(row["dmReason"], str) and row["dmReason"]:
-            bits.append(f"dmLineResiduals: {row['dmReason']}")
-        reason[index] = "; ".join(bits)
-    judged["reason"] = reason
-    return judged
 
 
 def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
@@ -622,7 +471,7 @@ def _noResultRows(info: pd.DataFrame, judgedVisits: set[int]) -> list[dict]:
     return rows
 
 
-def visitTable(judged: pd.DataFrame, info: pd.DataFrame | None = None) -> pd.DataFrame:
+def visitTable(images: pd.DataFrame, info: pd.DataFrame | None = None) -> pd.DataFrame:
     """Return one row per visit: its worst verdict, the detectors behind it, and when it was taken.
 
     With the opdb's listing of the visits taken (``info`` from
@@ -631,8 +480,8 @@ def visitTable(judged: pd.DataFrame, info: pd.DataFrame | None = None) -> pd.Dat
 
     Parameters
     ----------
-    judged : `pandas.DataFrame`
-        From `judge`.
+    images : `pandas.DataFrame`
+        From `imageTable` or `measure`.
     info : `pandas.DataFrame`, optional
         `readVisitInfo` or `infoFromTables`: ``visit`` and any of ``time``
         (HST), ``exptime`` and ``sequenceType``.
@@ -641,15 +490,14 @@ def visitTable(judged: pd.DataFrame, info: pd.DataFrame | None = None) -> pd.Dat
     -------
     `pandas.DataFrame`
         Sorted by ``visit``: ``kind``, ``label`` (the kind as shown), ``lamp``,
-        ``illumination``, ``slit``, ``arms`` (with † where a constant was
-        subtracted), ``detectors``, ``status``, ``flagged`` (``b1 W n3 F``),
+        ``illumination``, ``slit``, ``arms``, ``detectors``, ``status``, ``flagged`` (``b1 W n3 F``),
         ``detectorsStatus`` (``b1P b2W ...``), ``why``, ``time``, ``hst``,
         ``night`` (the HST date of the evening), ``exptime`` and
         ``sequenceType``. A `NO_RESULT` row has the cameras that exposed for its
         detectors (``b1N b2N ...``) and how its sequence ended for ``why``.
     """
     rows = []
-    for visit, group in judged.sort_values("camera").groupby("visit"):
+    for visit, group in images.sort_values("camera").groupby("visit"):
         bad = group[group["status"].isin(["WARN", "FAIL"])]
         reasons = (
             f"{camera}: {reason}"
@@ -663,7 +511,7 @@ def visitTable(judged: pd.DataFrame, info: pd.DataFrame | None = None) -> pd.Dat
                 "kind": group["kind"].mode().iloc[0],
                 "lamp": _first(group["lamp"]),
                 "illumination": _first(group["illumination"]),
-                "arms": arms + (" †" if group["corrected"].any() else ""),
+                "arms": arms,
                 "detectors": len(group),
                 "status": worst(group["status"]),
                 "flagged": " ".join(f"{c} {s[0]}" for c, s in zip(bad["camera"], bad["status"], strict=True)),
@@ -785,10 +633,8 @@ def _nightCell(visits: pd.DataFrame) -> str:
 
 
 def renderPage(
-    judged: pd.DataFrame,
+    images: pd.DataFrame,
     visits: pd.DataFrame,
-    limits: Limits | None = None,
-    constants: pd.DataFrame | None = None,
     title: str = "Visit verdicts",
     source: str = "",
     now: datetime | None = None,
@@ -797,15 +643,10 @@ def renderPage(
 
     Parameters
     ----------
-    judged : `pandas.DataFrame`
-        From `judge`, with ``limits``.
+    images : `pandas.DataFrame`
+        From `measure`.
     visits : `pandas.DataFrame`
-        `visitTable` of ``judged``.
-    limits : `Limits`, optional
-        What ``judged`` was judged with; the defaults when None.
-    constants : `pandas.DataFrame`, optional
-        The `modeOffsets` that `measure` subtracted, for the appendix; none by
-        default.
+        `visitTable` of ``images``.
     title : `str`
         The page's title and heading.
     source : `str`
@@ -814,8 +655,9 @@ def renderPage(
     now : `datetime.datetime`, optional
         When the page was made; the current time (HST) by default.
     """
-    limits = Limits() if limits is None else limits
-    kms, offsetX, offsetY = limits.kms, limits.offsetX, limits.offsetY
+    # The gate's limits on what the science sections draw: drp_qa's, as it judged with them.
+    offsetWarn = CHECKS["skyOffset"].warn
+    kms = {arm: _skyLimits(arm) for arm in ARMS}
     scales = kmsPerPixel()
     centre = scales[scales["species"] == "centre"]
     centre = centre.groupby(centre["camera"].str[0])["kmsPerPixel"].median()
@@ -854,9 +696,9 @@ def renderPage(
         f"<td>{len(noResult) or '–'}</td></tr>"
     )
 
-    science = judged[judged["kind"] == "science"]
+    science = images[images["kind"] == "science"]
     width, height = 260, 28
-    span = 1.3 * max(offsetX[0], offsetY[0])
+    span = 1.3 * offsetWarn
 
     def xo(value: float) -> float:
         return round((_clip(value, -span, span) + span) / (2 * span) * width, 1)
@@ -868,18 +710,18 @@ def renderPage(
         )
         refs = "".join(
             f'<line class="ref" x1="{xo(v)}" x2="{xo(v)}" y1="1" y2="{height / 2 - 1}"/>'
-            for v in (-offsetX[0], offsetX[0])
+            for v in (-offsetWarn, offsetWarn)
         )
         refs += "".join(
             f'<line class="ref" x1="{xo(v)}" x2="{xo(v)}" y1="{height / 2 + 1}" y2="{height - 1}"/>'
-            for v in (-offsetY[0], offsetY[0])
+            for v in (-offsetWarn, offsetWarn)
         )
         return (
             f'<svg class="bar" viewBox="0 0 {width} {height}" width="{width}" height="{height}" role="img" aria-label="{tip}">'
             f'<line class="zero" x1="{xo(0)}" x2="{xo(0)}" y1="0" y2="{height}"/>'
             + refs
-            + _strip(group, "xOffset", "xStatus", "px in x", xo, 4, "rng", 6)
-            + _strip(group, "yOffset", "yStatus", "px in y", xo, 18, "rng2", 6)
+            + _strip(group, "xOffset", "status", "px in x", xo, 4, "rng", 6)
+            + _strip(group, "yOffset", "status", "px in y", xo, 18, "rng2", 6)
             + "</svg>"
         )
 
@@ -897,7 +739,7 @@ def renderPage(
             f'<line class="zero" x1="{xr(0)}" x2="{xr(0)}" y1="0" y2="22"/>'
             + "".join(f'<line class="ref" x1="{xr(v)}" x2="{xr(v)}" y1="1" y2="21"/>' for v in (-warn, warn))
             + "".join(f'<line class="lim" x1="{xr(v)}" x2="{xr(v)}" y1="1" y2="21"/>' for v in (-fail, fail))
-            + _strip(group, "kms", "kmsStatus", "km/s", xr, 7, "rng", 8)
+            + _strip(group, "kms", "status", "km/s", xr, 7, "rng", 8)
             + "</svg>"
         )
 
@@ -912,11 +754,11 @@ def renderPage(
             f'<tr class="arm"><th colspan="9" scope="colgroup">{arm} arm{perPixel if arm in centre else ""}</th></tr>'
         )
         residualRows.append(
-            f'<tr class="arm"><th colspan="8" scope="colgroup">{arm} arm · {species} lines · '
+            f'<tr class="arm"><th colspan="6" scope="colgroup">{arm} arm · {species} lines · '
             f"WARN at {kms[arm][0]:g} km/s, FAIL at {kms[arm][1]:g} km/s</th></tr>"
         )
         for camera, group in ofArm.groupby("camera"):
-            flags = (group["xStatus"].isin(["WARN", "FAIL"]) | group["yStatus"].isin(["WARN", "FAIL"])).sum()
+            flags = group["status"].isin(["WARN", "FAIL"]).sum()
             if group[["xOffset", "yOffset"]].notna().any(axis=None):
                 offsetRows.append(
                     f"<tr><th scope='row'>{camera}</th><td>{len(group):,}</td>"
@@ -930,42 +772,14 @@ def renderPage(
                 residualRows.append(
                     f"<tr><th scope='row'>{camera}</th><td>{len(values):,}</td><td class='key'>{values.median():+.2f}</td>"
                     f"<td>{_range(values)}</td><td>{values.abs().max():.2f}</td>"
-                    f"<td class='viz'>{residualBar(camera, group, *kms[arm])}</td>"
-                    f"<td>{int((group['kmsStatus'] == 'WARN').sum())}</td>"
-                    f"<td>{int((group['kmsStatus'] == 'FAIL').sum())}</td></tr>"
+                    f"<td class='viz'>{residualBar(camera, group, *kms[arm])}</td></tr>"
                 )
-    tickAt = max(offsetX[0], offsetY[0])
+    tickAt = offsetWarn
     ticks = "".join(
         f'<text x="{xo(v)}" y="12" text-anchor="middle">{f"{v:+g}" if v else "0"}</text>'
         for v in (-tickAt, -tickAt / 2, 0, tickAt / 2, tickAt)
     )
     offsetAxis = f'<svg class="bar axis" viewBox="0 0 {width} 16" width="{width}" height="16" aria-hidden="true">{ticks}</svg>'
-
-    sets = [limits.withKms(b, red) for b, red in ALTERNATIVE_KMS]
-    if limits not in sets:
-        sets.append(limits)
-    limitRows = []
-    for other in sets:
-        own = other == limits
-        rejudged = judged if own else judge(judged, other)
-        ofScience = rejudged[rejudged["kind"] == "science"]
-        perVisit = ofScience.groupby("visit")["status"].agg(worst)
-        cells = "".join(
-            f"<td>{int(((ofScience['kmsStatus'] == 'WARN') & (ofScience['arm'] == a)).sum())} / "
-            f"{int(((ofScience['kmsStatus'] == 'FAIL') & (ofScience['arm'] == a)).sum())}</td>"
-            for a in ARMS
-        )
-        red = (
-            f"{other.kms['r'][0]:g} and {other.kms['r'][1]:g}"
-            if other.sameRed
-            else "; ".join(f"{a} {other.kms[a][0]:g} and {other.kms[a][1]:g}" for a in "rnm")
-        )
-        limitRows.append(
-            f"<tr{' class="own"' if own else ''}><th scope='row'>{'This report' if own else ''}</th><td>{red}</td>"
-            f"<td>{other.kms['b'][0]:g} and {other.kms['b'][1]:g}</td>{cells}"
-            + "".join(f"<td>{int((perVisit == k).sum())}</td>" for k in ("PASS", "WARN", "FAIL"))
-            + "</tr>"
-        )
 
     nights = [
         f"<tr><th scope='row'>{night}</th><td>{group['visit'].min()} to {group['visit'].max()}</td>"
@@ -976,32 +790,6 @@ def renderPage(
         f"<td>{int((noResult['night'] == night).sum()) or '–'}</td></tr>"
         for night, group in visits[visits["night"] != ""].groupby("night")
     ]
-
-    modeNote = modePointer = ""
-    nCorrected = int(visits.loc[visits["kind"] == "science", "arms"].str.contains("†").sum())
-    if constants is not None and len(constants) and nCorrected:
-        modeRows = "\n".join(
-            f"<tr><th scope='row'>{r.camera}</th><td>{r.axis}</td><td class='key'>{r.constant:+.2f}</td>"
-            f"<td class='l'>{r.source}, {r.withM} visits with m and {r.withR} with r</td>"
-            f"<td>{r.first} to {r.last}</td></tr>"
-            for r in constants.itertuples()
-        )
-        modePointer = (
-            " On visits read with the m arm, a standing offset has been subtracted from the b arm in x and "
-            "the n arm in y; see the <a href='#appendix-m-arm'>appendix</a>."
-        )
-        modeNote = (
-            "<section class='block' id='appendix-m-arm'><h2>Appendix: visits read with the m arm</h2>"
-            f"<p>On the {nCorrected} science visits read with the m arm, the b arm's x offset and the n arm's y "
-            "offset are measured from where those detectors sit in that mode. The calibration was made with the "
-            "r arm, and with m the b-arm traces and the n-arm lines land a steady fraction of a pixel away. The "
-            "amount subtracted on each detector is the difference between the run's own calibration frames taken "
-            "in the two modes. Those visits are marked † in the list of every visit.</p>"
-            "<div class='tablewrap'><table><thead><tr><th scope='col' class='l'>Detector</th>"
-            "<th scope='col'>Direction</th><th scope='col'>Subtracted on visits read with m (px)</th>"
-            "<th scope='col' class='l'>Measured from</th><th scope='col'>Visits</th></tr></thead>"
-            f"<tbody>\n{modeRows}\n</tbody></table></div></section>"
-        )
 
     def flaggedDetectors(flagged: str) -> str:
         names = {"W": "WARN", "F": "FAIL"}
@@ -1066,23 +854,6 @@ def renderPage(
         + _tally("Calibs", calibs, int(unjudgedCalibs.sum()))
         + _tally("Engineering", visits[engineering], int((noResult["illumination"] == "iis").sum()))
     )
-    if limits.sameRed:
-        kmsRule = (
-            f"WARN at {kms['r'][0]:g} km/s and FAIL at {kms['r'][1]:g} km/s on the r, n and m arms (OH lines)"
-        )
-    else:
-        kmsRule = "; ".join(
-            f"WARN at {kms[a][0]:g} and FAIL at {kms[a][1]:g} km/s on the {a} arm" for a in "rnm"
-        )
-        kmsRule += " (OH lines)"
-    kmsRule += f", WARN at {kms['b'][0]:g} km/s and FAIL at {kms['b'][1]:g} km/s on the b arm ([O I])"
-    if offsetX == offsetY:
-        offsetRule = f"WARN at {offsetX[0]:g} px and FAIL at {offsetX[1]:g} px"
-    else:
-        offsetRule = (
-            f"WARN at {offsetX[0]:g} px and FAIL at {offsetX[1]:g} px in x, "
-            f"WARN at {offsetY[0]:g} px and FAIL at {offsetY[1]:g} px in y"
-        )
     when = everyVisit["time"].dropna()
     dates = ""
     if len(when):
@@ -1097,15 +868,13 @@ def renderPage(
         "{{OFFSETS}}": "\n".join(offsetRows),
         "{{RESIDUALS}}": "\n".join(residualRows),
         "{{OAXIS}}": offsetAxis,
-        "{{LIMITS}}": "\n".join(limitRows),
-        "{{NSETS}}": _COUNT_WORDS.get(len(sets), str(len(sets))),
         "{{NIGHTS}}": "\n".join(nights),
         "{{FLAGGED}}": flagged,
         "{{NVISITS}}": f"{len(visits):,}",
         "{{NO_RESULT_META}}": f", {len(noResult):,} more with no QA result" if len(noResult) else "",
         "{{NO_RESULT_SECTION}}": missingSection,
         "{{NO_RESULT_NOTE}}": noResultNote,
-        "{{NIMAGES}}": f"{len(judged):,}",
+        "{{NIMAGES}}": f"{len(images):,}",
         "{{FIRST}}": str(everyVisit["visit"].min()) if len(everyVisit) else "–",
         "{{LAST}}": str(everyVisit["visit"].max()) if len(everyVisit) else "–",
         "{{NFLAGGED}}": str(len(notPassing)),
@@ -1113,11 +882,7 @@ def renderPage(
         "{{DATES}}": dates,
         "{{TODAY}}": f"{now:%Y-%m-%d}",
         "{{SOURCE}}": source,
-        "{{MODE_NOTE}}": modeNote,
-        "{{MODE_POINTER}}": modePointer,
-        "{{KMS_RULE}}": kmsRule,
-        "{{OFFSET_RULE}}": offsetRule,
-        "{{NSCIENCE}}": str(int((kind == "science").sum())),
+        "{{CHECKS}}": "\n      ".join(checkNotes()),
         # Last, and with "<" escaped: the visits' reasons are qadb's text, inside a script element.
         "{{DATA}}": json.dumps(data, separators=(",", ":")).replace("<", "\\u003c"),
     }
@@ -1129,50 +894,35 @@ def renderPage(
 
 @dataclass(frozen=True)
 class Report:
-    """A collection's report: the judged images and visits, what was subtracted, and the page."""
+    """A collection's report: its images and visits with their verdicts, and the page."""
 
     images: pd.DataFrame
     visits: pd.DataFrame
-    constants: pd.DataFrame
     html: str
 
 
 def buildReport(
     tables: Mapping[str, pd.DataFrame],
-    limits: Limits | None = None,
     info: pd.DataFrame | None = None,
-    correctModes: bool = True,
     title: str = "Visit verdicts",
     source: str = "",
     now: datetime | None = None,
-    constants: pd.DataFrame | None = None,
 ) -> Report:
-    """Judge what a qadb read holds and return its report.
+    """Return the report of what a qadb read holds: its gate verdicts, by image and visit, and the page.
 
     Parameters
     ----------
     tables : mapping
-        From `pfs.drp.qa.qadb.reader.readQadb`.
-    limits : `Limits`, optional
-        The science frames' limits; the defaults when None.
+        From `pfs.qa.dashboard.live.readCollection`.
     info : `pandas.DataFrame`, optional
         The visits' times, exposure times and sequence types (`readVisitInfo`);
         `infoFromTables` when None.
-    correctModes : `bool`
-        Whether to subtract the `modeOffsets` on visits read with the m arm.
     title, source, now
         As `renderPage` takes them.
-    constants : `pandas.DataFrame`, optional
-        The `modeOffsets` to subtract, when they were measured elsewhere than
-        on ``tables``; measured on ``tables`` when None.
     """
-    limits = Limits() if limits is None else limits
-    if constants is None or not correctModes:
-        constants = modeOffsets(tables, minVisits=MIN_MODE_VISITS if correctModes else np.inf)
-    judged = judge(measure(tables, constants), limits)
-    visits = visitTable(judged, infoFromTables(tables) if info is None else info)
-    page = renderPage(judged, visits, limits, constants, title=title, source=source, now=now)
-    return Report(judged, visits, constants, page)
+    images = measure(tables)
+    visits = visitTable(images, infoFromTables(tables) if info is None else info)
+    return Report(images, visits, renderPage(images, visits, title=title, source=source, now=now))
 
 
 class ReportCache:
@@ -1188,7 +938,7 @@ class ReportCache:
     ----------
     store : `pfs.qa.dashboard.live.QadbStore`
         The store: its ``refresh`` is called by each `update`, and its ``raw``
-        tables are judged.
+        tables are reported.
     readInfo : callable, optional
         ``readInfo(first, last)`` returns every visit taken in the range
         (`readVisitInfo` over the opdb), read from ``firstVisit`` to the latest
@@ -1199,7 +949,7 @@ class ReportCache:
     firstVisit : `int`, optional
         The first visit of the run; the earliest visit judged when None.
     **options
-        ``limits``, ``correctModes``, ``title`` and ``source`` for `buildReport`.
+        ``title`` and ``source`` for `buildReport`.
 
     Attributes
     ----------

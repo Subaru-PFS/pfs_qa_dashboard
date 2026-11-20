@@ -12,8 +12,8 @@ Examples::
     # Read it once into a snapshot (parquet and provenance.json), then serve that offline
     python bin/qaDashboard.py snapshot --collection qaActor/reductions --opdb-host 127.0.0.1 --out run31-qadb
     python bin/qaDashboard.py serve --snapshot run31-qadb
-    # Write the run report as one stand-alone page, for any web server, with other limits
-    python bin/qaDashboard.py report --snapshot run31-qadb --out run31-report --kms-r 1 2
+    # Write the run report as one stand-alone page, for any web server
+    python bin/qaDashboard.py report --snapshot run31-qadb --out run31-report
 
 then open http://localhost:5006. To serve the local network, add ``--address 0.0.0.0``.
 """
@@ -47,31 +47,8 @@ def makeParser() -> argparse.ArgumentParser:
     opdb.add_argument("--opdb-dbname", default="opdb")
     opdb.add_argument("--opdb-user", default="public_user", help="a read-only user (default public_user)")
 
-    limits = argparse.ArgumentParser(add_help=False)
-    report = limits.add_argument_group("the run report: its science frames' limits, each WARN then FAIL")
-    for arm, (warn, fail) in (("b", (1.5, 2.5)), ("r", (0.5, 1.0)), ("n", (0.5, 1.0)), ("m", (0.5, 1.0))):
-        report.add_argument(
-            f"--kms-{arm}",
-            type=float,
-            nargs=2,
-            default=(warn, fail),
-            metavar=("WARN", "FAIL"),
-            help=f"km/s, on the {arm} arm's sky-line residual after the visit's adjustment (default {warn:g} {fail:g})",
-        )
-    for axis, what in (("x", "trace"), ("y", "sky-line")):
-        report.add_argument(
-            f"--offset-{axis}",
-            type=float,
-            nargs=2,
-            default=(0.5, 1.0),
-            metavar=("WARN", "FAIL"),
-            help=f"pixels, on the {what} offset from the calibration (default 0.5 1)",
-        )
-    report.add_argument(
-        "--no-mode-correction",
-        action="store_true",
-        help="judge visits read with the m arm against the calibration as it is, subtracting nothing",
-    )
+    page = argparse.ArgumentParser(add_help=False)
+    report = page.add_argument_group("the run report")
     report.add_argument(
         "--title", default="Visit verdicts", help="the report's title, e.g. 'Run31 visit verdicts'"
     )
@@ -81,7 +58,7 @@ def makeParser() -> argparse.ArgumentParser:
 
     serve = commands.add_parser(
         "serve",
-        parents=[databases, limits],
+        parents=[databases, page],
         help="serve the run report, live from qadb or from a snapshot",
     )
     source = serve.add_mutually_exclusive_group(required=True)
@@ -106,7 +83,7 @@ def makeParser() -> argparse.ArgumentParser:
 
     report = commands.add_parser(
         "report",
-        parents=[databases, limits],
+        parents=[databases, page],
         help="write the run report as one stand-alone page (index.html), with its visits and images as CSV",
     )
     source = report.add_mutually_exclusive_group(required=True)
@@ -121,19 +98,17 @@ def makeParser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> None:
     parser = makeParser()
     args = parser.parse_args(argv)
-    for name in ("kms_b", "kms_r", "kms_n", "kms_m", "offset_x", "offset_y"):
-        warn, fail = getattr(args, name, (1, 1))
-        if not 0 < warn <= fail:
-            parser.error(f"--{name.replace('_', '-')}: WARN then FAIL, both above zero")
     if args.command == "serve" and args.refresh < 1:
         parser.error("--refresh: at least 1 second")
     if args.command in ("serve", "report") and args.snapshot is not None:
         missing = [
-            name for name in ("provenance.json", "iqQaMetrics.parquet") if not (args.snapshot / name).exists()
+            name
+            for name in ("provenance.json", "iqQaMetrics.parquet", "qaGate.parquet")
+            if not (args.snapshot / name).exists()
         ]
         if missing:
             parser.error(
-                f"{args.snapshot} is not a snapshot (no {', '.join(missing)}): write one with "
+                f"{args.snapshot} is not a snapshot with the gate's verdicts (no {', '.join(missing)}): write one with "
                 f"`qaDashboard.py snapshot --collection <collection> --out {args.snapshot}`"
             )
     {"snapshot": snapshot, "report": report, "serve": serve}[args.command](args)
@@ -168,15 +143,7 @@ def judgedVisits(tables: dict) -> list[int]:
 
 def reportOptions(args: argparse.Namespace, source: str) -> dict:
     """Return what `pfs.qa.dashboard.runReport.buildReport` takes from the command line."""
-    from pfs.qa.dashboard.runReport import Limits
-
-    limits = Limits(args.offset_x, args.offset_y, {arm: getattr(args, f"kms_{arm}") for arm in "brnm"})
-    return {
-        "limits": limits,
-        "correctModes": not args.no_mode_correction,
-        "title": args.title,
-        "source": source,
-    }
+    return {"title": args.title, "source": source}
 
 
 def snapshotSource(tables: dict, provenance: dict) -> str:
@@ -251,14 +218,13 @@ def listen(application, address: str, port: int, show: bool = False) -> None:
 
 def snapshot(args: argparse.Namespace) -> None:
     """Read the collection from qadb (and the opdb) once and write it, with its provenance, to ``--out``."""
-    from pfs.drp.qa.qadb.reader import readQadb
-    from pfs.qa.dashboard.live import HST, qadbProvenance
+    from pfs.qa.dashboard.live import HST, qadbProvenance, readCollection
     from pfs.qa.dashboard.qadbSource import writeSnapshot
     from pfs.qa.dashboard.runReport import readVisitInfo
 
     qadb, opdb = connect(args)
     start = time.monotonic()
-    tables = readQadb(qadb, args.collection, args.first_visit, args.last_visit)
+    tables = readCollection(qadb, args.collection, args.first_visit, args.last_visit)
     if opdb is not None:
         visits = judgedVisits(tables)
         # What the run report shows of each visit taken: its time, exposure, sequence and how that ended.
@@ -279,17 +245,17 @@ def snapshot(args: argparse.Namespace) -> None:
 
 
 def report(args: argparse.Namespace) -> None:
-    """Judge the collection (``--collection``) or a snapshot (``--snapshot``) and write its report to ``--out``."""
+    """Write the report of the collection (``--collection``) or a snapshot (``--snapshot``) to ``--out``."""
     from pfs.qa.dashboard.live import HST
     from pfs.qa.dashboard.runReport import buildReport, readVisitInfo, sourceText
 
     start = time.monotonic()
     info = None
     if args.collection:
-        from pfs.drp.qa.qadb.reader import readQadb
+        from pfs.qa.dashboard.live import readCollection
 
         qadb, opdb = connect(args)
-        tables = readQadb(qadb, args.collection, args.first_visit, args.last_visit)
+        tables = readCollection(qadb, args.collection, args.first_visit, args.last_visit)
         if opdb is not None:
             visits = judgedVisits(tables)
             if visits:
@@ -319,9 +285,6 @@ def report(args: argparse.Namespace) -> None:
         f"all visits: {tally(made.visits)}",
         flush=True,
     )
-    if len(made.constants):
-        subtracted = ", ".join(f"{r.camera} {r.axis} {r.constant:+.2f}" for r in made.constants.itertuples())
-        print(f"Subtracted on visits read with m (px): {subtracted}", flush=True)
     print(f"Wrote {args.out / 'index.html'} in {time.monotonic() - start:.1f} s", flush=True)
 
 

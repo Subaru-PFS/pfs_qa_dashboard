@@ -12,32 +12,26 @@ taken, for the kinds of frame, arm and spectrograph ticked (science and full-sli
 the visits counted by kind, what was measured on the science frames per detector, each night, the visits that do not pass,
 and a filterable list of every visit. A visit takes the worst verdict among its detectors.
 
-Science frames are judged here, from what `dmLineResiduals` measured, at limits given on the command line (each
-WARN then FAIL; a value at a limit has crossed it):
+The report judges nothing. Every image's verdict and reason are its row of qadb's `qa_gate`, which drp_qa's gate
+wrote (read back with `pfs.drp.qa.qadb.reader.readGate`), on every kind of frame; the kind of frame is the gate's
+frame type, or the tasks' `obsType` on a gate row written before qadb 0.6.0. An image with no gate row is UNKNOWN.
+The page lists the checks the gate applies and their limits, from drp_qa's `pfs.drp.qa.metrics.registry.CHECKS`,
+and draws the science checks' limits beside what was measured on the science frames: the offsets from the
+calibration in x (traces) and y (the sky species furthest off), and the sky-line residual after the visit's
+adjustment in km/s on the arm's best-measured species (OH on r, n and m; [O I] on b), with the dispersion at those
+lines (`data/kmsPerPixel.csv`). Those values are as measured: on visits read with the m arm the gate subtracts a
+standing offset first, where qadb holds one.
 
-| What | Measured as | Default limits |
-|---|---|---|
-| Offset from the calibration, x | `medianDeltaX` of the traces against the calibration detectorMap | `--offset-x 0.5 1` px |
-| Offset from the calibration, y | `medianDeltaY` of the sky species furthest off | `--offset-y 0.5 1` px |
-| Sky-line residual after the visit's adjustment | `medianDeltaY` of the held-back lines of the arm's best-measured species (OH on r, n and m; [O I] on b) against the visit's own detectorMap, in km/s with the dispersion at those lines (`data/kmsPerPixel.csv`) | `--kms-r`, `--kms-n`, `--kms-m 0.5 1`; `--kms-b 1.5 2.5` km/s |
-
-Width and line scatter are not judged on science frames. Every other kind of frame keeps the verdict its QA tasks
-stored (all-sky frames `dmLineResiduals`' alone).
-
-On visits read with the m arm, the calibration (made with the r arm) sits a steady fraction of a pixel from the b
-arm's traces and the n arm's lines. The report measures that per detector from the collection's own full-slit
-quartz (b, x) and Neon arcs (n, y), as the median with m minus the median with r where there are at least three
-visits in each mode, subtracts it before the pixel limits, and says so in an appendix. `--no-mode-correction` turns
-that off.
+The report is made for any collection in qadb: the live one (`qaActor/reductions`) or a redone run's.
 
 ```bash
 # The page, with visits.csv and images.csv beside it, from qadb or from a snapshot
 python bin/qaDashboard.py report --collection qaActor/reductions --first-visit <first visit of the run> \
-    --opdb-host 127.0.0.1 --opdb-port 5432 --title "Run31 visit verdicts" --out <dir> [--kms-r 1 2 ...]
+    --opdb-host 127.0.0.1 --opdb-port 5432 --title "Run31 visit verdicts" --out <dir>
 python bin/qaDashboard.py report --snapshot <dir> --out <dir>
 ```
 
-`serve` takes the same limits and title, and answers `/` with the page, made again whenever qadb holds new
+`serve` takes the same title, and answers `/` with the page, made again whenever qadb holds new
 results.
 
 **Visits with no result.** With the opdb, the report reads every visit that exposed the spectrograph from
@@ -53,7 +47,8 @@ Built on drp_qa (`pfs.drp.qa`) for reading qadb back, and served with Tornado.
 
 ## Running it
 
-The dashboard needs drp_qa (`pfs.drp.qa`, with `pfs.drp.qa.qadb.reader`) and pfs_utils importable: set up in the
+The dashboard needs drp_qa 0.5.0 or later (`pfs.drp.qa`, with `pfs.drp.qa.qadb.reader.readGate` and the gate's
+`metrics.registry`), for a qadb at spt_qa_database 0.6.0, and pfs_utils importable: set up in the
 LSST/PFS stack, or their checkouts' `python/` on `PYTHONPATH`. Stack-free, [uv](https://docs.astral.sh/uv/) makes
 `.venv` from `pyproject.toml` on its own Python, apart from the system's:
 
@@ -66,8 +61,9 @@ or, without a venv, `uv run --no-project --python 3.12 --with numpy,pandas,pyarr
 with `python:` first on `PYTHONPATH`.
 
 **Live, from qadb.** qaActor loads every visit it judges into qadb. `serve` reads a collection back
-(`pfs.drp.qa.qadb.reader.readQadb`) and every `--refresh` seconds reads only the images loaded since
-(`qa_gate.decided_at`), making the page again when there are any. An image judged in more than one RUN of the
+(`pfs.drp.qa.qadb.reader.readQadb`, and `readGate` for the verdicts) and every `--refresh` seconds reads only the
+images loaded or judged again since (`qa_gate.decided_at`), and their visits' gate rows, making the page again
+when there are any. An image judged in more than one RUN of the
 collection shows the latest.
 
 The databases are read on a thread of their own, and a browser is answered at once with the last page made, so
@@ -91,7 +87,9 @@ python bin/qaDashboard.py serve --collection qaActor/reductions --first-visit <f
 
 **Offline, from a snapshot.** `snapshot --out <dir>` reads the collection once and writes what was read, one
 parquet file per table (with what the run report shows of each visit, given `--opdb-host`), and
-`provenance.json` (the databases, the time read and the drp_qa that read). `serve --snapshot <dir>` and
+`provenance.json` (the databases, the time read and the drp_qa that read); the gate's verdicts are
+`qaGate.parquet`, and a snapshot without it (written before the dashboard read the gate) is refused: write it again.
+`serve --snapshot <dir>` and
 `report --snapshot <dir>` use it without a database. A run judged after the fact is loaded into a qadb first
 (drp_qa's `bin.src/loadQadb.py`; a local copy will do).
 

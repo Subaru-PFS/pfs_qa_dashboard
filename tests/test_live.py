@@ -2,7 +2,9 @@
 
 import pandas as pd
 
-from pfs.qa.dashboard.live import QadbStore, qadbProvenance
+from pfs.drp.qa.qadb.reader import GATE_COLUMNS
+from pfs.qa.dashboard import live
+from pfs.qa.dashboard.live import GATE, QadbStore, qadbProvenance, readCollection
 from pfs.qa.dashboard.qadbSource import readSnapshot, writeSnapshot
 
 
@@ -208,3 +210,53 @@ def testAReadOfOnlyLineResidualsIsNew():
     assert store.raw["iqQaMetrics"]["visit"].tolist() == [1001]
     # Negative control: the same load read again is not new.
     assert not store.refresh() and store.version == 2
+
+
+def verdict(visit, arm, status, decidedAt):
+    """Return a gate row as `pfs.drp.qa.qadb.reader.readGate` gives it."""
+    return {"visit": visit, "arm": arm, "spectrograph": 1, "qaStatus": status, "decidedAt": decidedAt}
+
+
+def testTheGateIsReadOverTheVisitsTheNumbersRead(monkeypatch):
+    """A refresh reads the gate rows of the new images' visits only; the first read, the whole range."""
+    asked = []
+
+    def readGate(qadb, collection, first, last):
+        asked.append((first, last))
+        return pd.DataFrame([verdict(1001, "b", "PASS", "t1")])
+
+    numbers = {"t1": tables([image(1002, "b", "PASS", 2.5, "t1"), image(1005, "r", "PASS", 2.5, "t1")])}
+    numbers["t2"] = tables([])
+    numbers["t2"]["iqQaMetrics"] = pd.DataFrame(columns=["visit", "arm", "spectrograph", "decidedAt"])
+    monkeypatch.setattr(live, "readGate", readGate)
+    monkeypatch.setattr(live, "readQadb", lambda qadb, collection, first, last, since: numbers[since or "t1"])
+
+    assert readCollection(None, "c", 1000, 2000)[GATE]["visit"].tolist() == [1001]
+    readCollection(None, "c", 1000, 2000, since="t1")
+    assert asked == [(1000, 2000), (1002, 1005)]
+    # A read that brings no image asks the gate nothing.
+    empty = readCollection(None, "c", 1000, 2000, since="t2")[GATE]
+    assert len(asked) == 2 and empty.empty and list(empty.columns) == list(GATE_COLUMNS)
+    # Negative control: the numbers' own tables come back as the reader gave them.
+    assert readCollection(None, "c", 1000, 2000)["iqQaMetrics"]["visit"].tolist() == [1002, 1005]
+
+
+def testGateRowsReplaceTheirOwnImages():
+    """A gate row read again replaces the image's earlier one, and leaves the other tables' rows alone."""
+
+    def read(since):
+        if since is None:
+            held = tables([image(1001, "b", "PASS", 2.5, "t1"), image(1002, "b", "PASS", 2.5, "t1")])
+            held[GATE] = pd.DataFrame([verdict(1001, "b", "PASS", "t1"), verdict(1002, "b", "PASS", "t1")])
+            return held
+        # Visit 1002 judged again; the gate read covers 1001 to 1002, and so brings 1001's row too.
+        held = tables([image(1002, "b", "FAIL", 2.5, "t2")])
+        held[GATE] = pd.DataFrame([verdict(1001, "b", "PASS", "t1"), verdict(1002, "b", "FAIL", "t2")])
+        return held
+
+    store = QadbStore(read)
+    assert store.refresh()
+    gate = store.raw[GATE].sort_values("visit")
+    assert gate["visit"].tolist() == [1001, 1002] and gate["qaStatus"].tolist() == ["PASS", "FAIL"]
+    # Negative control: 1001's numbers, which the second read did not hold, are kept.
+    assert sorted(store.raw["iqQaMetrics"]["visit"]) == [1001, 1002]

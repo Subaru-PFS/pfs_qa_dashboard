@@ -15,7 +15,7 @@ concurrency:
 
 env:
   # The drp_qa the dashboard reads qadb with (pfs.drp.qa.qadb.reader): a release tag.
-  DRP_QA_REF: 0.3.0
+  DRP_QA_REF: 0.6.1
 
 jobs:
   tests:

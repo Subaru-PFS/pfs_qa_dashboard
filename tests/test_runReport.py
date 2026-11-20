@@ -1,5 +1,6 @@
-"""Tests for the run report (``runReport``): how images and visits are judged, the page, and its commands."""
+"""Tests for the run report (``runReport``): the gate's verdicts by image and visit, the page, and its commands."""
 
+import dataclasses
 import importlib.util
 import json
 import re
@@ -11,9 +12,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pfs.qa.dashboard import runReport
+from pfs.drp.qa.metrics import registry
+from pfs.qa.dashboard import live, runReport
 from pfs.qa.dashboard.qadbSource import writeSnapshot
-from pfs.qa.dashboard.runReport import Limits, ReportCache, buildReport, grade, judge, measure, modeOffsets
+from pfs.qa.dashboard.runReport import ReportCache, buildReport, imageTable, measure
 
 _OH_R1 = runReport.kmsPerPixel().set_index(["camera", "species"]).loc[("r1", "OH"), "kmsPerPixel"]
 
@@ -26,39 +28,41 @@ def _cli():
     return module
 
 
+#: The gate's frame type of each ``obsType`` the fixtures use, lit through the full slit.
+_FRAME = {"science": "science", "allsky": "allsky", "arc": "arc", "trace": "quartz", "twilight": "twilight"}
+
+
 def _tables(*images):
-    """Return a qadb read's three tables for ``images``.
+    """Return a qadb read's tables for ``images``, as `live.readCollection` returns them.
 
     Each image is ``(visit, camera, obsType, measures)`` and options: ``measures`` maps
-    ``(reference, species, metric)`` to a value; ``iq`` and ``dm`` are the tasks' stored
-    verdicts as ``(status, reason)``; ``cameraSet`` and ``illumination`` as stored.
+    ``(reference, species, metric)`` to a value; ``gate`` is the image's gate row as
+    ``(status, reason)``, None for none; ``frameType`` the gate's (by default from
+    ``obsType`` and the illumination); ``cameraSet`` and ``illumination`` as stored.
     """
-    iq, dm, metrics = [], [], []
+    iq, dm, gate, metrics = [], [], [], []
     for visit, camera, obsType, measures, *rest in images:
         options = rest[0] if rest else {}
         key = {"visit": visit, "arm": camera[0], "spectrograph": int(camera[1])}
-        iqStatus, iqReason = options.get("iq", ("PASS", ""))
-        dmStatus, dmReason = options.get("dm", ("PASS", ""))
         seqName = {"arc": "Arc: Neon", "trace": "Trace"}.get(obsType, "")
-        iq.append(
-            {
-                **key,
-                "obsType": obsType,
-                "seqName": seqName,
-                "illumination": options.get("illumination", "full"),
-                "qaStatus": iqStatus,
-                "qaReason": iqReason,
-            }
-        )
-        dm.append(
-            {
-                **key,
-                "obsType": obsType,
-                "cameraSet": options.get("cameraSet", "brn"),
-                "qaStatus": dmStatus,
-                "qaReason": dmReason,
-            }
-        )
+        illumination = options.get("illumination", "full")
+        iq.append({**key, "obsType": obsType, "seqName": seqName, "illumination": illumination})
+        dm.append({**key, "obsType": obsType, "cameraSet": options.get("cameraSet", "brn")})
+        verdict = options.get("gate", ("PASS", ""))
+        if verdict is not None:
+            frame = _FRAME.get(obsType)
+            if frame in ("arc", "quartz") and illumination == "iis":
+                frame = "iis" + frame.capitalize()
+            status, reason = verdict
+            gate.append(
+                {
+                    **key,
+                    "frameType": options.get("frameType", frame),
+                    "qaStatus": status,
+                    "qaDecidedBy": "",
+                    "qaReason": reason,
+                }
+            )
         for (reference, species, metric), value in measures.items():
             statusType = "RESERVED" if reference == "visit" else "BOTH"
             metrics.append(
@@ -72,10 +76,12 @@ def _tables(*images):
                 }
             )
     columns = ["visit", "arm", "spectrograph", "reference", "description", "statusType", "metric", "value"]
+    gateColumns = ["visit", "arm", "spectrograph", "frameType", "qaStatus", "qaDecidedBy", "qaReason"]
     return {
         "iqQaMetrics": pd.DataFrame(iq),
         "dmLineResidualSummary": pd.DataFrame(dm),
         "dmLineResidualMetrics": pd.DataFrame(metrics, columns=columns),
+        "qaGate": pd.DataFrame(gate, columns=gateColumns),
     }
 
 
@@ -88,32 +94,42 @@ def _science(x=0.0, y=0.0, heldBack=0.0, species="OH"):
     }
 
 
-def _status(tables, limits=None, constants=None):
-    judged = judge(measure(tables, constants), limits)
-    return dict(zip(zip(judged["visit"], judged["camera"], strict=True), judged["status"], strict=True))
+def _status(tables):
+    images = imageTable(tables)
+    return dict(zip(zip(images["visit"], images["camera"], strict=True), images["status"], strict=True))
 
 
-def testAValueAtALimitHasCrossedIt():
-    values = pd.Series([0.2, 0.5, -0.5, 1.0, -3.0, np.nan])
-    assert grade(values, 0.5, 1.0).tolist() == ["PASS", "WARN", "WARN", "FAIL", "FAIL", ""]
-    # Negative control: just inside a limit has not crossed it.
-    assert grade(pd.Series([0.4999, 0.9999]), 0.5, 1.0).tolist() == ["PASS", "WARN"]
-
-
-def testScienceIsJudgedOnWhatWasMeasuredNotOnTheStoredVerdicts():
-    stored = {"iq": ("FAIL", "medFWHM=3.6px >= fail threshold 3.5px")}
+def testEveryVerdictIsTheGatesAndNoneIsMadeFromTheNumbers():
     tables = _tables(
-        (1, "r1", "science", _science(x=0.2, y=-0.6), stored),
-        (2, "r1", "science", _science(x=-1.0, y=0.1), stored),
-        (3, "r1", "science", _science(x=0.1, y=0.1), stored),
-        (4, "r1", "arc", {}, stored),
+        (1, "r1", "science", _science(x=2.0, y=-3.0), {"gate": ("PASS", "")}),
+        (2, "r1", "science", _science(), {"gate": ("FAIL", "OH residual +1.20 km/s >= fail 1")}),
+        (3, "r1", "arc", {}, {"gate": ("WARN", "line and trace width 4% above normal")}),
+        (4, "r1", "science", _science(), {"gate": None}),
     )
-    judged = judge(measure(tables)).set_index("visit")
-    assert judged["status"].to_dict() == {1: "WARN", 2: "FAIL", 3: "PASS", 4: "FAIL"}
-    assert judged.loc[1, "reason"] == "y offset -0.60 px, limit 0.5"
-    assert judged.loc[2, "reason"] == "x offset -1.00 px, limit 1"
-    # Negative control: the stored width verdict is what an arc keeps, and what a science frame does not.
-    assert "medFWHM" in judged.loc[4, "reason"] and "medFWHM" not in judged.loc[2, "reason"]
+    images = imageTable(tables).set_index("visit")
+    assert images["status"].to_dict() == {1: "PASS", 2: "FAIL", 3: "WARN", 4: "UNKNOWN"}
+    assert images.loc[2, "reason"] == "OH residual +1.20 km/s >= fail 1"
+    assert images.loc[1, "reason"] == "" and images.loc[4, "reason"] == ""
+    # Negative control: the measured offsets are far beyond the gate's limits, and the page still says PASS.
+    assert abs(measure(tables).set_index("visit").loc[1, "xOffset"]) > registry.CHECKS["skyOffset"].fail
+    # Negative control: verdict columns a task's table still carries (before qadb 0.6.0) are not read.
+    tables["iqQaMetrics"]["qaStatus"] = "FAIL"
+    assert _status(tables)[(1, "r1")] == "PASS"
+
+
+def testTheKindOfFrameIsTheGatesFrameType():
+    tables = _tables(
+        (1, "r1", "arc", {}, {"frameType": "iisArc"}),
+        (2, "r1", "science", {}, {"frameType": "dotRoach"}),
+        (3, "r1", "trace", {}, {"frameType": None}),
+    )
+    tables["iqQaMetrics"] = tables["iqQaMetrics"].iloc[:0]
+    images = imageTable(tables).set_index("visit")
+    # Lit through the engineering fibers, by the frame type, with no image-quality row to say so.
+    assert images.loc[1, ["kind", "illumination"]].tolist() == ["arc", "iis"]
+    assert images.loc[2, "kind"] == "other"
+    # Negative control: a gate row with no frame type (written before qadb 0.6.0) is typed by obsType.
+    assert images.loc[3, ["kind", "illumination"]].tolist() == ["quartz", "full"]
 
 
 def testTheYOffsetIsTheSpeciesFurthestOff():
@@ -125,84 +141,25 @@ def testTheYOffsetIsTheSpeciesFurthestOff():
 
 
 def testTheResidualIsInKmPerSecondOnTheArmsBestSpecies():
-    warnPixels = 0.5 / _OH_R1  # the r arm's WARN limit, in pixels at r1's OH lines
+    pixels = 0.6 / _OH_R1
     tables = _tables(
-        (1, "r1", "science", _science(heldBack=1.2 * warnPixels)),
-        (2, "r1", "science", _science(heldBack=-1.2 * warnPixels)),
-        (3, "b1", "science", _science(heldBack=1.2 * warnPixels, species="OI")),
-        (4, "r1", "science", {**_science(), ("visit", "O2", "medianDeltaY"): 5.0}),
+        (1, "r1", "science", _science(heldBack=pixels)),
+        (2, "r1", "science", {**_science(), ("visit", "O2", "medianDeltaY"): 5.0}),
     )
-    judged = judge(measure(tables)).set_index("visit")
-    assert judged.loc[1, "kms"] == pytest.approx(0.6)
-    assert judged["status"].to_dict() == {1: "WARN", 2: "WARN", 3: "PASS", 4: "PASS"}
-    assert judged.loc[1, "reason"] == "OH residual +0.60 km/s, limit 0.5"
-    # Negative control: the same residual read as pixels would be far inside the limit.
-    assert abs(1.2 * warnPixels) < 0.5 <= abs(judged.loc[1, "kms"])
-    # Negative control: the limits are arguments; looser ones pass the same image.
-    looser = Limits(kms={**runReport.DEFAULT_KMS, "r": (1.0, 2.0)})
-    assert _status(tables, looser)[(1, "r1")] == "PASS"
-
-
-def _twoModes(nWithM=3):
-    """Return quartz and Neon arcs in both red-arm modes, and science visits read with m and with r."""
-    quartz = [
-        (100 + i, "b1", "trace", {("calib", "Trace", "medianDeltaX"): 0.02}, {"cameraSet": "brn"})
-        for i in range(3)
-    ]
-    quartz += [
-        (110 + i, "b1", "trace", {("calib", "Trace", "medianDeltaX"): -0.48}, {"cameraSet": "bmn"})
-        for i in range(nWithM)
-    ]
-    neon = [
-        (120 + i, "n1", "arc", {("calib", "NeI", "medianDeltaY"): 0.0}, {"cameraSet": "brn"})
-        for i in range(3)
-    ]
-    neon += [
-        (130 + i, "n1", "arc", {("calib", "NeI", "medianDeltaY"): -0.12}, {"cameraSet": "bmn"})
-        for i in range(nWithM)
-    ]
-    science = [
-        (200, "b1", "science", _science(x=-0.55, species="OI"), {"cameraSet": "bmn"}),
-        (200, "n1", "science", _science(y=-0.58), {"cameraSet": "bmn"}),
-        (200, "m1", "science", _science(), {"cameraSet": "bmn"}),
-        (201, "b1", "science", _science(x=-0.55, species="OI"), {"cameraSet": "brn"}),
-    ]
-    return _tables(*quartz, *neon, *science)
-
-
-def testVisitsReadWithMAreMeasuredFromWhereTheDetectorsSitInThatMode():
-    tables = _twoModes()
-    constants = modeOffsets(tables).set_index(["camera", "axis"])
-    assert constants["constant"].to_dict() == pytest.approx({("b1", "x"): -0.5, ("n1", "y"): -0.12})
-    assert constants.loc[("b1", "x"), ["withM", "withR"]].tolist() == [3, 3]
-
-    corrected = judge(measure(tables, modeOffsets(tables))).set_index(["visit", "camera"])
-    assert corrected.loc[(200, "b1"), "xOffset"] == pytest.approx(-0.05)
-    assert corrected.loc[(200, "n1"), "yOffset"] == pytest.approx(-0.46)
-    assert corrected.loc[[(200, "b1"), (200, "n1")], "status"].tolist() == ["PASS", "PASS"]
-    assert corrected.loc[(200, "b1"), "corrected"] and not corrected.loc[(201, "b1"), "corrected"]
-    # The visit read with r is judged against the calibration as it is.
-    assert corrected.loc[(201, "b1"), "status"] == "WARN"
-    # Negative control: without the constants the same m-arm visit is flagged.
-    asMeasured = _status(tables)
-    assert asMeasured[(200, "b1")] == "WARN" and asMeasured[(200, "n1")] == "WARN"
-    # Negative control: adding the constant instead of subtracting it moves the image further off.
-    flipped = modeOffsets(tables).assign(constant=lambda frame: -frame["constant"])
-    assert _status(tables, constants=flipped)[(200, "b1")] == "FAIL"
-
-
-def testADetectorNeedsEnoughVisitsInBothModesForAConstant():
-    assert modeOffsets(_twoModes(nWithM=2)).empty
-    # Negative control: one more visit with m and there is a constant.
-    assert len(modeOffsets(_twoModes(nWithM=3))) == 2
+    images = measure(tables).set_index("visit")
+    assert images.loc[1, "kms"] == pytest.approx(0.6)
+    # Negative control: the residual is the arm's best species', not another species' held-back lines.
+    assert images.loc[2, "kms"] == pytest.approx(0.0)
+    # Negative control: read as pixels, the same residual is a different number.
+    assert pixels != pytest.approx(images.loc[1, "kms"])
 
 
 def testAVisitTakesItsWorstDetectorAndTheEveningsDate():
     tables = _tables(
         (1, "b1", "science", _science(species="OI")),
-        (1, "r1", "science", _science(x=1.5)),
-        (2, "r1", "allsky", {}, {"iq": ("FAIL", "width"), "dm": ("PASS", "")}),
-        (3, "n1", "arc", {}, {"dm": ("WARN", "calib NeI: |medianDeltaY|=1.5px >= warn threshold 1px")}),
+        (1, "r1", "science", _science(), {"gate": ("FAIL", "x offset +1.50 px >= fail 1")}),
+        (2, "r1", "allsky", {}),
+        (3, "n1", "arc", {}, {"gate": ("WARN", "calib NeI: |medianDeltaY|=1.5px >= warn threshold 1px")}),
         (4, "r1", "unknown", {}, {"illumination": "iis"}),
     )
     info = pd.DataFrame(
@@ -213,7 +170,7 @@ def testAVisitTakesItsWorstDetectorAndTheEveningsDate():
             "sequenceType": ["scienceObject", None, "scienceArc", "dotRoach"],
         }
     )
-    visits = runReport.visitTable(judge(measure(tables)), info).set_index("visit")
+    visits = runReport.visitTable(measure(tables), info).set_index("visit")
     assert visits["status"].to_dict() == {1: "FAIL", 2: "PASS", 3: "WARN", 4: "PASS"}
     assert visits.loc[1, ["flagged", "detectorsStatus", "arms"]].tolist() == ["r1 F", "b1P r1F", "br"]
     assert visits["label"].to_dict() == {
@@ -230,8 +187,10 @@ def testAVisitTakesItsWorstDetectorAndTheEveningsDate():
 
 
 def testThePageStandsAlone():
-    tables = _twoModes()
-    tables["dmLineResidualSummary"].loc[0, ["qaStatus", "qaReason"]] = ["FAIL", "x <script> & y"]
+    tables = _tables(
+        (200, "b1", "science", _science(x=-0.55, species="OI"), {"gate": ("FAIL", "x <script> & y")}),
+        (201, "r1", "science", _science()),
+    )
     info = pd.DataFrame(
         {"visit": [200, 201], "time": pd.to_datetime(["2026-11-04 20:00", "2026-11-04 21:00"])}
     )
@@ -253,25 +212,31 @@ def testThePageStandsAlone():
     assert page.count("@font-face") == 2 and "url(data:font/woff2;base64," in page
     # Nothing is fetched: no stylesheet, script or image comes from elsewhere.
     assert not re.findall(r"""(?:src|href)=["'](?:https?:)?//""", page) and "url(http" not in page
-    assert "judged 2026-11-05" in page and "4 November to 4 November 2026 (HST)" in page
+    assert "made 2026-11-05" in page and "4 November to 4 November 2026 (HST)" in page
     data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
     assert [row[0] for row in data] == made.visits["visit"].tolist()
     # qadb's text is escaped wherever it lands: in the table and in the script.
     assert "<script> & y" not in page and "x &lt;script&gt; &amp; y" in page
-    # The appendix names what was subtracted, and the offsets section points to it.
-    assert "id='appendix-m-arm'" in page and "href='#appendix-m-arm'" in page
-    # Negative control: with nothing subtracted there is no appendix, and no pointer to one.
-    plain = buildReport(tables, info=info, correctModes=False).html
-    assert "appendix-m-arm" not in plain and plain.count("†") == page.count("†") - 1
+    # The report's own judging is gone: no limits table, no m-arm appendix.
+    assert "sets of km/s limits" not in page and "appendix-m-arm" not in page
 
 
-def testTheLimitsTableMarksTheReportsOwnSet():
-    tables = _twoModes()
+def testThePageListsTheGatesChecks(monkeypatch):
+    """What the page says the gate applies, and the limits it draws, are drp_qa's."""
+    tables = _tables((1, "b1", "science", _science(heldBack=0.1, species="OI")))
     page = buildReport(tables).html
-    assert "three sets of km/s limits" in page and page.count('<tr class="own">') == 1
-    # A set that is none of the tabulated ones gets a row of its own.
-    other = buildReport(tables, limits=Limits(kms={**runReport.DEFAULT_KMS, "b": (3.0, 4.0)})).html
-    assert "four sets of km/s limits" in other and other.count('<tr class="own">') == 1
+    assert "<strong>Science:</strong> offset from the calibration: WARN at 0.5 px, FAIL at 1 px" in page
+    assert (
+        "[O I] residual after the visit&#x27;s adjustment on the b arm: WARN at 1.5 km/s, FAIL at 2.5 km/s"
+        in page
+    )
+    assert "line and trace width: WARN at 3%, FAIL at 5% from the camera's normal value" in page
+    assert "b arm · [O I] lines · WARN at 1.5 km/s, FAIL at 2.5 km/s" in page
+    # Negative control: a change of a check in drp_qa is a change of the page.
+    changed = dataclasses.replace(registry.CHECKS["skyLineResidualBlue"], warn=2.0, fail=3.0)
+    monkeypatch.setitem(registry.CHECKS, "skyLineResidualBlue", changed)
+    other = buildReport(tables).html
+    assert "on the b arm: WARN at 2 km/s, FAIL at 3 km/s" in other and "WARN at 1.5 km/s" not in other
 
 
 class _Store:
@@ -292,7 +257,9 @@ def testTheCachedPageIsMadeAgainOnlyWhenTheStoreChanges(monkeypatch):
     made = []
     real = runReport.buildReport
     monkeypatch.setattr(runReport, "buildReport", lambda *a, **k: made.append(1) or real(*a, **k))
-    store = _Store(_twoModes())
+    store = _Store(
+        _tables((200, "b1", "science", _science(species="OI")), (201, "r1", "science", _science()))
+    )
     cache = ReportCache(store, title="Live")
     first = cache.html()
     assert cache.html() == first and len(made) == 1 and store.refreshed == 2 and cache.built == 1
@@ -390,7 +357,7 @@ def testStatusSaysWhenNoReadHasWorkedForLong():
 
 def _snapshot(directory):
     tables = _tables(
-        (1, "r1", "science", _science(heldBack=0.6 / _OH_R1)),
+        (1, "r1", "science", _science(heldBack=0.6 / _OH_R1), {"gate": ("WARN", "OH residual +0.60 km/s")}),
         (2, "r1", "science", _science()),
     )
     times = pd.DataFrame(
@@ -404,7 +371,7 @@ def _snapshot(directory):
     return writeSnapshot({**tables, "visitTimes": times}, directory, provenance)
 
 
-def testReportCommandWritesThePageAndTakesTheLimits(tmp_path, capsys):
+def testReportCommandWritesThePage(tmp_path, capsys):
     cli = _cli()
     snapshot = _snapshot(tmp_path / "snap")
     cli.main(["report", "--snapshot", str(snapshot), "--out", str(tmp_path / "out"), "--title", "Run99"])
@@ -414,14 +381,10 @@ def testReportCommandWritesThePageAndTakesTheLimits(tmp_path, capsys):
     assert visits["status"].to_dict() == {1: "WARN", 2: "PASS"}
     assert len(pd.read_csv(tmp_path / "out" / "images.csv")) == 2
     assert "science visits: 1 PASS, 1 WARN;" in capsys.readouterr().out
-
-    # The limits are arguments: looser on the r arm, the same visit passes.
-    cli.main(["report", "--snapshot", str(snapshot), "--out", str(tmp_path / "loose"), "--kms-r", "1", "2"])
-    assert pd.read_csv(tmp_path / "loose" / "visits.csv")["status"].tolist() == ["PASS", "PASS"]
-    # Negative control: limits out of order are refused.
+    # Negative control: the report's own limits are no longer arguments.
     with pytest.raises(SystemExit):
-        cli.main(["report", "--snapshot", str(snapshot), "--out", str(tmp_path / "bad"), "--kms-r", "2", "1"])
-    assert "--kms-r: WARN then FAIL" in capsys.readouterr().err
+        cli.main(["report", "--snapshot", str(snapshot), "--out", str(tmp_path / "bad"), "--kms-r", "1", "2"])
+    assert "unrecognized arguments: --kms-r" in capsys.readouterr().err
 
 
 def _fetch(application, path):
@@ -459,7 +422,7 @@ def testServeAnswersTheIndexWithTheReport(tmp_path, monkeypatch):
     response = _fetch(served["application"], "/")
     body = response.body.decode()
     assert response.headers["Content-Type"].startswith("text/html")
-    assert "<h1>Run99</h1>" in body and "residual +0.60 km/s, limit 0.5" in body
+    assert "<h1>Run99</h1>" in body and "OH residual +0.60 km/s" in body
     # A snapshot never changes: its page is the report alone, with nothing to follow.
     assert "fetch(" not in body
     status = json.loads(_fetch(served["application"], "/status").body)
@@ -473,19 +436,16 @@ def testServeFromQadbWatchesItAndThePageFollows(monkeypatch):
     """Live, ``serve`` makes the first page, then leaves the reading to the cache's thread."""
     import sys
 
-    import pfs.drp.qa.qadb.reader
-
     tables = {
-        **_tables((1, "r1", "science", _science(x=0.7))),
+        **_tables((1, "r1", "science", _science(x=0.7), {"gate": ("WARN", "x offset +0.70 px >= warn 0.5")})),
         "visitTimes": pd.DataFrame({"pfs_visit_id": [1], "time_exp_start": [pd.Timestamp("2026-11-04")]}),
     }
-    for name in ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics"):
+    for name in ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics", "qaGate"):
         tables[name]["decidedAt"] = pd.Timestamp("2026-11-04 21:00")
+    gate = tables.pop("qaGate")
     reads = []
-    monkeypatch.setattr(
-        pfs.drp.qa.qadb.reader, "readQadb", lambda *args, **kwargs: reads.append(args) or tables
-    )
-    monkeypatch.setattr("pfs.qa.dashboard.live.readQadb", pfs.drp.qa.qadb.reader.readQadb)
+    monkeypatch.setattr(live, "readQadb", lambda *args, **kwargs: reads.append(args) or tables)
+    monkeypatch.setattr(live, "readGate", lambda *args: gate)
     monkeypatch.setitem(sys.modules, "pfs.utils.database.qadb", types.SimpleNamespace(QaDB=lambda **k: None))
     monkeypatch.delenv("PGCONNECT_TIMEOUT", raising=False)
     watched = []
@@ -498,7 +458,7 @@ def testServeFromQadbWatchesItAndThePageFollows(monkeypatch):
     assert cli.os.environ["PGCONNECT_TIMEOUT"] == "10"
 
     body = _fetch(served["application"], "/").body.decode()
-    assert "x offset +0.70 px, limit 0.5" in body
+    assert "x offset +0.70 px &gt;= warn 0.5" in body
     # Asking for the page read nothing more.
     assert len(reads) == 2
     # Negative control: a refresh shorter than a second is refused.
@@ -509,8 +469,6 @@ def testServeFromQadbWatchesItAndThePageFollows(monkeypatch):
 def testSnapshotKeepsWhatTheReportShowsOfEachVisit(tmp_path, monkeypatch):
     """With the opdb, ``snapshot`` keeps each visit's time, exposure time and sequence type for the report."""
     import sys
-
-    import pfs.drp.qa.qadb.reader
 
     info = pd.DataFrame(
         {
@@ -536,9 +494,11 @@ def testSnapshotKeepsWhatTheReportShowsOfEachVisit(tmp_path, monkeypatch):
         **_tables((1, "r1", "science", _science())),
         "visitTimes": pd.DataFrame({"pfs_visit_id": [1], "time_exp_start": [pd.Timestamp("2026-11-04")]}),
     }
-    for name in ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics"):
+    for name in ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics", "qaGate"):
         tables[name]["decidedAt"] = pd.Timestamp("2026-11-04 21:00")
-    monkeypatch.setattr(pfs.drp.qa.qadb.reader, "readQadb", lambda *args, **kwargs: tables)
+    gate = tables.pop("qaGate")
+    monkeypatch.setattr(live, "readQadb", lambda *args, **kwargs: tables)
+    monkeypatch.setattr(live, "readGate", lambda *args: gate)
     monkeypatch.setitem(sys.modules, "pfs.utils.database.qadb", types.SimpleNamespace(QaDB=lambda **k: None))
     monkeypatch.setitem(
         sys.modules, "pfs.utils.database.opdb", types.SimpleNamespace(OpDB=lambda **k: Opdb())
@@ -584,7 +544,7 @@ def testAVisitTakenAndNeverJudgedShowsAsNoResult():
         (5, "object", "scienceObject", False, "completed"),
         (6, "object", "scienceObject", False, "completed"),
     )
-    visits = runReport.visitTable(judge(measure(tables)), info).set_index("visit")
+    visits = runReport.visitTable(measure(tables), info).set_index("visit")
     # Visits 1 and 3 were taken before the latest visit judged (5) and have no result.
     assert visits["status"].to_dict() == {1: "NO RESULT", 2: "PASS", 3: "NO RESULT", 5: "PASS"}
     assert visits.loc[1, ["kind", "slit", "arms", "detectorsStatus", "why"]].tolist() == [
@@ -599,7 +559,7 @@ def testAVisitTakenAndNeverJudgedShowsAsNoResult():
     # Negative control: a dark has no QA method, and a visit newer than the latest judged may still be on its way.
     assert 4 not in visits.index and 6 not in visits.index
     # Negative control: without the opdb's listing nothing is known to be missing.
-    plain = runReport.visitTable(judge(measure(tables)), info[["visit", "time"]])
+    plain = runReport.visitTable(measure(tables), info[["visit", "time"]])
     assert plain["visit"].tolist() == [2, 5]
 
     page = buildReport(tables, info=info).html

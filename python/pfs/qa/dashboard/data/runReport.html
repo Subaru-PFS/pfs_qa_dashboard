@@ -129,7 +129,7 @@
 <main>
   <header>
     <h1>{{TITLE}}</h1>
-    <p class="meta">Visits {{FIRST}} to {{LAST}}{{DATES}} · {{NVISITS}} visits judged, {{NIMAGES}} detector images{{NO_RESULT_META}} · judged {{TODAY}}</p>
+    <p class="meta">Visits {{FIRST}} to {{LAST}}{{DATES}} · {{NVISITS}} visits judged, {{NIMAGES}} detector images{{NO_RESULT_META}} · made {{TODAY}}</p>
     <ul class="lead">{{LEAD}}</ul>
   </header>
 
@@ -191,12 +191,12 @@
 
   <section class="block">
     <h2>Science frames: offsets from the calibration</h2>
-    <p>The x offset is the median offset of every fiber's trace from the calibration. The y offset is that of the sky lines, taking the species furthest off on each image. The km/s value converts each species' offset with the dispersion at its own lines.{{MODE_POINTER}}</p>
+    <p>The x offset is the median offset of every fiber's trace from the calibration. The y offset is that of the sky lines, taking the species furthest off on each image. The km/s value converts each species' offset with the dispersion at its own lines. Values are as measured: on visits read with the m arm the gate first subtracts a standing offset (the b arm's in x, the n arm's in y) where qadb holds one, so a value drawn here may sit beyond a limit it passed.</p>
     <div class="legend">
       <span><svg width="34" height="14" aria-hidden="true"><rect x="1" y="4" width="32" height="6" rx="3" fill="var(--series-1-soft)" stroke="var(--series-1)"/><rect x="15" y="1" width="2" height="12" fill="var(--fg)"/></svg>x offset, every fiber's trace: 5th to 95th percentile with the median, and the full range as a line</span>
       <span><svg width="34" height="14" aria-hidden="true"><rect x="1" y="4" width="32" height="6" rx="3" fill="var(--series-2-soft)" stroke="var(--series-2)"/><rect x="15" y="1" width="2" height="12" fill="var(--fg)"/></svg>y offset, sky lines</span>
-      <span><svg width="12" height="14" aria-hidden="true"><line x1="6" x2="6" y1="0" y2="14" stroke="var(--fg-3)" stroke-dasharray="2 3"/></svg>WARN limit, either side</span>
-      <span><svg width="40" height="14" aria-hidden="true"><circle cx="6" cy="7" r="1.5" fill="var(--fg-3)"/><circle cx="20" cy="7" r="3.2" fill="var(--warn-fill)" stroke="var(--surface)"/><circle cx="33" cy="7" r="3.2" fill="var(--fail-fill)" stroke="var(--surface)"/></svg>One dot per image outside that range; larger and coloured where WARN or FAIL</span>
+      <span><svg width="12" height="14" aria-hidden="true"><line x1="6" x2="6" y1="0" y2="14" stroke="var(--fg-3)" stroke-dasharray="2 3"/></svg>The gate's WARN limit, either side</span>
+      <span><svg width="40" height="14" aria-hidden="true"><circle cx="6" cy="7" r="1.5" fill="var(--fg-3)"/><circle cx="20" cy="7" r="3.2" fill="var(--warn-fill)" stroke="var(--surface)"/><circle cx="33" cy="7" r="3.2" fill="var(--fail-fill)" stroke="var(--surface)"/></svg>One dot per image outside that range, and per image the gate gave WARN or FAIL, larger and coloured, whichever check gave it</span>
     </div>
     <div class="tablewrap">
       <table>
@@ -204,7 +204,7 @@
           <tr><th scope="col" class="l">Detector</th><th scope="col">Images</th>
           <th scope="col">x offset, 5th to 95th percentile (px)</th><th scope="col">Largest x (px)</th>
           <th scope="col">y offset, 5th to 95th percentile (px)</th><th scope="col">Largest y (px)</th><th scope="col">Largest y (km/s)</th>
-          <th scope="col" class="viz">Offset (px){{OAXIS}}</th><th scope="col">WARN or FAIL</th></tr>
+          <th scope="col" class="viz">Offset (px){{OAXIS}}</th><th scope="col">Images WARN or FAIL</th></tr>
         </thead>
         <tbody>
 {{OFFSETS}}
@@ -215,18 +215,18 @@
 
   <section class="block">
     <h2>Science frames: sky-line residual after the visit's adjustment</h2>
-    <p>The residual is the median offset of the held-back sky lines from the visit's own detectorMap, converted to km/s with the dispersion at those lines. Each bar is drawn on its arm's own scale, so the limits sit in the same place in every row.</p>
+    <p>The residual is the median offset of the held-back sky lines from the visit's own detectorMap, converted to km/s with the dispersion at those lines. Each bar is drawn on its arm's own scale, so the gate's limits sit in the same place in every row.</p>
     <div class="legend">
       <span><svg width="34" height="14" aria-hidden="true"><line x1="0" x2="34" y1="7" y2="7" stroke="var(--series-1)"/><rect x="6" y="3" width="22" height="8" rx="4" fill="var(--series-1-soft)" stroke="var(--series-1)"/><rect x="15" y="0" width="2" height="14" fill="var(--fg)"/></svg>5th to 95th percentile with the median; the line runs from the smallest to the largest</span>
-      <span><svg width="12" height="14" aria-hidden="true"><line x1="6" x2="6" y1="0" y2="14" stroke="var(--fg-3)" stroke-dasharray="2 3"/></svg>WARN limit</span>
+      <span><svg width="12" height="14" aria-hidden="true"><line x1="6" x2="6" y1="0" y2="14" stroke="var(--fg-3)" stroke-dasharray="2 3"/></svg>The gate's WARN limit</span>
       <span><svg width="12" height="14" aria-hidden="true"><line x1="6" x2="6" y1="0" y2="14" stroke="var(--fg-2)" stroke-width="1.5"/></svg>FAIL limit</span>
-      <span><svg width="40" height="14" aria-hidden="true"><circle cx="6" cy="7" r="1.5" fill="var(--fg-3)"/><circle cx="20" cy="7" r="3.2" fill="var(--warn-fill)" stroke="var(--surface)"/><circle cx="33" cy="7" r="3.2" fill="var(--fail-fill)" stroke="var(--surface)"/></svg>One dot per image outside that range; larger and coloured where WARN or FAIL</span>
+      <span><svg width="40" height="14" aria-hidden="true"><circle cx="6" cy="7" r="1.5" fill="var(--fg-3)"/><circle cx="20" cy="7" r="3.2" fill="var(--warn-fill)" stroke="var(--surface)"/><circle cx="33" cy="7" r="3.2" fill="var(--fail-fill)" stroke="var(--surface)"/></svg>One dot per image outside that range, and per image the gate gave WARN or FAIL, larger and coloured, whichever check gave it</span>
     </div>
     <div class="tablewrap">
       <table>
         <thead>
           <tr><th scope="col" class="l">Detector</th><th scope="col">Images with a residual</th><th scope="col">Median (km/s)</th><th scope="col">5th to 95th percentile (km/s)</th><th scope="col">Largest (km/s)</th>
-          <th scope="col" class="viz">Residual against its limits</th><th scope="col">WARN</th><th scope="col">FAIL</th></tr>
+          <th scope="col" class="viz">Residual against its limits</th></tr>
         </thead>
         <tbody>
 {{RESIDUALS}}
@@ -281,37 +281,16 @@
 
   <section class="text notes">
     <h2>How each kind is judged</h2>
+    <p>Every verdict on this page is the one drp_qa's gate stored in qadb for the image; the page judges nothing itself. The gate's checks today, each WARN then FAIL (a value at a limit has crossed it):</p>
     <ul>
-      <li><strong>Science:</strong> the offset of traces (x) and sky lines (y) from the calibration, {{OFFSET_RULE}}; and the sky-line residual after the visit's detectorMap adjustment, {{KMS_RULE}}. Width and line scatter are not judged on science frames.</li>
-      <li><strong>All-sky:</strong> the offsets from the calibration, WARN at 1 px and FAIL at 2 px.</li>
-      <li><strong>Arcs and quartz, full slit:</strong> width, line or trace scatter and lines per fiber, each against the detector's own reference; and the offsets from the calibration.</li>
-      <li><strong>Twilights:</strong> the offsets from the calibration, and the consistency of each exposure with the rest of its sequence.</li>
-      <li><strong>Engineering-fiber frames:</strong> width and lines per fiber against their own references, the trace offset, and line residuals. Their line residuals are compared with full-slit references, which were not made for these frames; most of their FAILs come from that comparison and from the trace offset.</li>
-      <li><strong>A visit</strong> takes the worst verdict among its detectors. UNKNOWN means the QA ran and nothing could be judged.</li>
+      {{CHECKS}}
+      <li><strong>A visit</strong> takes the worst verdict among its detectors. UNKNOWN means the QA ran and nothing could be judged, or qadb holds no verdict for the image. A verdict stored before a check was changed is as it was judged then.</li>
       {{NO_RESULT_NOTE}}
       <li><strong>Not covered:</strong> visits after the latest one judged, whose results may be on their way; and darks, biases and master frames, which have no QA method. Whether a flagged frame is truly faulty has not been checked.</li>
       <li><strong>Source:</strong> {{SOURCE}}</li>
     </ul>
   </section>
 
-  <section class="block">
-    <h2>Science verdicts at {{NSETS}} sets of km/s limits</h2>
-    <p>The same {{NSCIENCE}} science visits judged at each set of limits on the sky-line residual. The marked row is the set this report uses.</p>
-    <div class="tablewrap">
-      <table>
-        <thead>
-          <tr><th scope="col" class="l"></th><th scope="col">r, n and m: WARN and FAIL (km/s)</th><th scope="col">b: WARN and FAIL (km/s)</th>
-          <th scope="col">b images, WARN / FAIL</th><th scope="col">r images</th><th scope="col">n images</th><th scope="col">m images</th>
-          <th scope="col">Visits PASS</th><th scope="col">Visits WARN</th><th scope="col">Visits FAIL</th></tr>
-        </thead>
-        <tbody>
-{{LIMITS}}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-{{MODE_NOTE}}
 </main>
 
 <script>
