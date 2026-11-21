@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-20
+
 ### Added
 
 - **The night page** (PIPE2D-2022), now the index (`/`): the current night at a glance — the latest visit, the
