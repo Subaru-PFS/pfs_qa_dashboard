@@ -29,7 +29,6 @@ from pfs.qa.dashboard.runReport import (
     kmsPerPixel,
     measure,
     visitTable,
-    worst,
 )
 
 __all__ = ["buildVisitPage"]
@@ -279,10 +278,7 @@ def buildVisitPage(tables: Any, info: pd.DataFrame | None, visit: int, now: date
         .reset_index(drop=True)
     )
 
-    overall = worst(perCam["status"])
-    if vrow is not None:
-        vrow = vrow.copy()
-        vrow["status"] = overall
+    # vrow["status"] is already the worst of the visit's detectors (visitTable), so it is the overall verdict.
     body = "\n".join(
         [
             _header(int(visit), vrow, infoRow),

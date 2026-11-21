@@ -41,6 +41,8 @@ def testVisitPageShowsSkyResidualBySpecies():
     assert "Sky-line residual by species (km/s)" in page
     # The held-back OH residual, converted to km/s with the r1 OH dispersion.
     assert "OH" in page and "+0.60" in page
+    # Negative control: read as pixels the same residual is a different number, so the units matter.
+    assert f"{0.6 / _OH_R1:+.2f}" != "+0.60"
     # Negative control: an arc with no sky species has no such section.
     arc = buildVisitPage(_tables((4, "r1", "arc", {}, {"gate": ("PASS", "")})), None, 4)
     assert "Sky-line residual by species" not in arc

@@ -205,12 +205,13 @@ def serve(args: argparse.Namespace) -> None:
 
     def visitPage(number: int) -> str:
         """Build the per-visit page from the cached store (no database read)."""
+        # Fixed names via get(), not raw.items(): the refresh thread may add a table key concurrently.
         raw = cache.store.raw
-        sliced = {
-            name: frame[frame["visit"] == number]
-            for name, frame in raw.items()
-            if "visit" in getattr(frame, "columns", [])
-        }
+        sliced = {}
+        for name in ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics", "qaGate"):
+            frame = raw.get(name)
+            if frame is not None and "visit" in getattr(frame, "columns", []):
+                sliced[name] = frame[frame["visit"] == number]
         return buildVisitPage(sliced, cache.info, number)
 
     mounts = {"/": "night", "/run": "report"}
