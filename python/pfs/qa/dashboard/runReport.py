@@ -557,6 +557,15 @@ _FONTS = (("Inter", "Inter-latin.woff2", "100 900"), ("Space Grotesk", "SpaceGro
 
 
 @functools.cache
+def _theme() -> str:
+    """Return the page's shared styles (``data/theme.css``), with ``{{FONT_FACES}}`` still to substitute.
+
+    The run report and the night page share one stylesheet, inlined into each so the page fetches nothing.
+    """
+    return (_DATA / "theme.css").read_text()
+
+
+@functools.cache
 def _fontFaces() -> str:
     """Return the ``@font-face`` rules carrying the page's fonts in the page, so it fetches nothing."""
     rules = []
@@ -862,6 +871,8 @@ def renderPage(
     now = datetime.now(HST) if now is None else now
     source = source.replace("{date}", f"{now:%Y-%m-%d}")
     fields = {
+        # First, so the stylesheet it injects still carries ``{{FONT_FACES}}`` for the next substitution.
+        "{{THEME}}": _theme(),
         "{{TITLE}}": html.escape(title),
         "{{FONT_FACES}}": _fontFaces(),
         "{{SUMMARY}}": "\n".join(summary),

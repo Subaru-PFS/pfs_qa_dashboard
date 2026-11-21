@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+{{THEME}}
+  /* Night page: the latest visit up top, then the night at a glance. */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; max-width: none; }
+  .tile { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .tile.lead { border-width: 2px; }
+  .tile .lab { color: var(--fg-3); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .tile .big { font-family: var(--display); font-weight: 600; font-size: 1.9rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .tile .row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; color: var(--fg-2); font-size: 0.9rem; }
+  .tile .sub { color: var(--fg-3); font-size: 0.82rem; }
+  .tile.pass { border-color: var(--pass); } .tile.warn { border-color: var(--warn); } .tile.fail { border-color: var(--fail); }
+  .verdict { font-size: 1.1rem; padding: 2px 12px; }
+  tr.now th, tr.now td { background: var(--band); }
+  .awaiting { color: var(--fg-3); font-style: italic; }
+  .cal .cells.time .sq.newest { outline: 2px solid var(--fg); outline-offset: 1px; z-index: 2; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>{{TITLE}}</h1>
+    <p class="meta">{{META}}</p>
+  </header>
+
+  <section class="block">
+    <div class="tiles">{{TILES}}</div>
+  </section>
+
+  <section class="block">
+    <h2>The night on the clock</h2>
+    <p>Every visit of {{NIGHT}} (HST), drawn from its start for as long as it exposed, over the night (18:00 to 07:00). A visit takes the worst verdict among its detectors; the most recent is outlined. Hover or tap a visit for its number, time, kind and verdict.</p>
+    <div class="legend">
+      <span><span class="sq pass"></span>PASS</span><span><span class="sq warn"></span>WARN</span><span><span class="sq fail"></span>FAIL</span><span><span class="sq unknown"></span>UNKNOWN</span><span><span class="sq none"></span>NO RESULT</span>
+    </div>
+    <div class="cal" id="cal" data-night="{{NIGHT}}"></div>
+    <div class="tip" id="tip" hidden></div>
+    <ul class="lead">{{LEAD}}</ul>
+  </section>
+
+  <section class="block">
+    <h2>Latest visits</h2>
+    <p>The night's visits, most recent first. A visit that exposed the spectrograph as a science, arc or flat frame and has no QA result yet is marked <span class="awaiting">awaiting QA</span>.</p>
+    <div class="tablewrap tall">
+      <table>
+        <thead><tr><th scope="col" class="l">Visit</th><th scope="col" class="l">HST</th><th scope="col" class="l">Kind</th><th scope="col">Exp (s)</th><th scope="col" class="l">Arms</th><th scope="col" class="l">Verdict</th><th scope="col" class="l">Detectors</th><th scope="col" class="l">Why</th></tr></thead>
+        <tbody>
+{{FEED}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Science frames tonight: offsets and sky-line residual</h2>
+    <p>Per detector, the median and 5th-to-95th-percentile spread over the night's science frames, as measured: the trace offset in x and the sky-line offset in y from the calibration (pixels), and the held-back sky-line residual after the visit's own adjustment (km/s). The full run report draws these against the gate's limits.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th scope="col" class="l">Detector</th><th scope="col">Images</th><th scope="col">x offset (px)</th><th scope="col">y offset (px)</th><th scope="col">Residual (km/s)</th><th scope="col">WARN/FAIL</th></tr></thead>
+        <tbody>
+{{SCIENCE}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Visits that do not pass tonight, engineering-fiber frames aside ({{NNOTPASS}})</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th scope="col" class="l">Visit</th><th scope="col" class="l">HST</th><th scope="col" class="l">Kind</th><th scope="col" class="l">Verdict</th><th scope="col" class="l">Detectors</th><th scope="col" class="l">Why</th></tr></thead>
+        <tbody>
+{{NOTPASS}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+{{NO_RESULT_SECTION}}
+
+  <section class="text notes">
+    <p class="meta">Made {{TODAY}} (HST). The whole run is in the <a href="{{RUN_URL}}">run report</a>. Every verdict here is the one drp_qa's gate stored in qadb for the image; this page judges nothing itself.</p>
+    <p class="meta">Source: {{SOURCE}}</p>
+  </section>
+
+</main>
+
+<script>
+  const DATA = {{DATA}};
+  const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", UNKNOWN: "unknown", "NO RESULT": "none" };
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  // One night on a clock from 18:00 to 07:00 (HST). Rows: [visit, hst, label, slit, exptime, arms, status, flagged, why, night, detectorsStatus].
+  const NIGHT = [18, 31]; // hours from midnight of the evening date; 07:00 next day is 31.
+  const cal = document.getElementById("cal"), tip = document.getElementById("tip");
+  const minutesOf = (r) => {
+    if (!r[1] || !r[9]) return null;
+    const [date, clock] = r[1].split(" "), [hour, minute] = clock.split(":").map(Number);
+    return (date === r[9] ? hour : hour + 24) * 60 + minute;
+  };
+  const STARTS = DATA.map(minutesOf);
+  const lasts = (i) => (+DATA[i][4] || 0) / 60;
+  const latest = DATA.reduce((best, r, i) => (STARTS[i] !== null && (best < 0 || STARTS[i] > STARTS[best]) ? i : best), -1);
+  function renderCal() {
+    const [firstHour, lastHour] = NIGHT, hours = lastHour - firstHour, from = firstHour * 60, to = lastHour * 60;
+    const along = (m) => ((m - from) / (hours * 60) * 100).toFixed(3);
+    let outside = 0, untimed = 0;
+    const cells = [];
+    DATA.forEach((r, i) => {
+      if (STARTS[i] === null) { untimed += 1; return; }
+      if (STARTS[i] + lasts(i) < from || STARTS[i] > to) { outside += 1; return; }
+      const start = Math.max(STARTS[i], from), end = Math.min(STARTS[i] + lasts(i), to);
+      const w = ((end - start) / (hours * 60) * 100).toFixed(3);
+      cells.push(`<span class="sq ${CLS[r[6]]}${i === latest ? " newest" : ""}" data-i="${i}" style="left:${along(start)}%;width:${w}%" role="img" aria-label="Visit ${r[0]}, ${r[6]}"></span>`);
+    });
+    const step = Math.max(1, Math.ceil(hours / Math.max((cal.clientWidth - 120) / 52, 4)));
+    const ticks = [];
+    for (let h = firstHour; h <= lastHour; h += step) ticks.push(`<span style="left:${along(h * 60)}%">${String(h % 24).padStart(2, "0")}:00</span>`);
+    cal.style.setProperty("--hours", hours);
+    const notes = [];
+    if (outside) notes.push(`${outside} outside 18:00–07:00 not drawn.`);
+    if (untimed) notes.push(`${untimed} without a time not drawn.`);
+    cal.innerHTML = `<div class="night"></div><div class="axis">${ticks.join("")}</div>`
+      + `<div class="night">${cal.dataset.night}</div><div class="cells time">${cells.join("")}</div>`
+      + notes.map((n) => `<div class="night"></div><div class="night">${n}</div>`).join("");
+  }
+  const WORD = { P: "PASS", W: "WARN", F: "FAIL", U: "UNKNOWN", N: "NO RESULT" };
+  // "b1 W n3 F" -> "b1 WARN, n3 FAIL"
+  const flaggedText = (flagged) => {
+    const parts = flagged.split(" ").filter(Boolean), out = [];
+    for (let j = 0; j + 1 < parts.length; j += 2) out.push(`${parts[j]} ${WORD[parts[j + 1]] || parts[j + 1]}`);
+    return out.join(", ");
+  };
+  function showTip(sq, x, y) {
+    const r = DATA[+sq.dataset.i];
+    const detail = r[6] === "NO RESULT" ? esc(r[8]) : r[7] ? esc(flaggedText(r[7])) : r[8] ? esc(r[8]) : "all detectors";
+    tip.innerHTML = `<b>Visit ${r[0]}</b><br>${esc(r[1])} HST · ${r[4]} s<br>${esc(r[2])}${r[3] ? ", " + r[3] : ""}<br>`
+      + `<span class="chip ${CLS[r[6]]}">${r[6]}</span> ${detail}`;
+    tip.hidden = false;
+    tip.style.left = Math.max(8, Math.min(x + 12, window.innerWidth - tip.offsetWidth - 8)) + "px";
+    tip.style.top = (y + 16 + tip.offsetHeight > window.innerHeight ? y - tip.offsetHeight - 10 : y + 16) + "px";
+  }
+  cal.addEventListener("mousemove", (e) => { const sq = e.target.closest(".sq"); if (sq) showTip(sq, e.clientX, e.clientY); else tip.hidden = true; });
+  cal.addEventListener("mouseleave", () => { tip.hidden = true; });
+  cal.addEventListener("click", (e) => { const sq = e.target.closest(".sq"); if (sq) { const b = sq.getBoundingClientRect(); showTip(sq, b.left, b.bottom - 12); } });
+  renderCal();
+  window.addEventListener("resize", renderCal);
+</script>
+</body>
+</html>
