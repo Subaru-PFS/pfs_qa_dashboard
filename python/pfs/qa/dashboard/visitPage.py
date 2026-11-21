@@ -140,19 +140,21 @@ def _links() -> str:
 
 
 def _nav(visit: int) -> str:
-    """Previous/next links for the adjacent visits.
+    """Navigation row: the previous visit left, the night page centre, the next visit right.
 
-    Deliberately dumb: the neighbours are ``visit - 1`` and ``visit + 1`` with no
-    check that either exists, so a gap in the numbering lands on a no-result page.
-    The previous link is dropped below visit 1 so it never points at visit 0.
+    The previous/next links are deliberately dumb: the neighbours are ``visit - 1``
+    and ``visit + 1`` with no check that either exists, so a gap in the numbering
+    lands on a no-result page. The previous link is dropped below visit 1 so it never
+    points at visit 0.
     """
     prev = (
         f"<a href='/visit/{visit - 1}' rel='prev'>&larr; Visit {visit - 1}</a>"
         if visit > 1
         else "<span class='nolink'>&larr; Visit</span>"
     )
+    night = "<a href='/'>Night page</a>"
     nxt = f"<a href='/visit/{visit + 1}' rel='next'>Visit {visit + 1} &rarr;</a>"
-    return f"<nav class='visitnav'>{prev}{nxt}</nav>"
+    return f"<nav class='visitnav'>{prev}{night}{nxt}</nav>"
 
 
 def _detectorTable(perCam: pd.DataFrame) -> str:
