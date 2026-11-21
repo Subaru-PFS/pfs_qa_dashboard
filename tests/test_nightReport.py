@@ -133,6 +133,28 @@ def testTheNightFlipsToTheLatestExposureAwaitingQa():
     assert activeNight(plain) == "2026-11-04"
 
 
+def testAnAwaitingArcShowsItsLamp():
+    tables = _tables((1, "r1", "science", _science(), {"gate": ("PASS", "")}))
+    info = pd.DataFrame(
+        {
+            "visit": [1, 2],
+            "time": pd.to_datetime(["2026-11-04 23:00", "2026-11-05 20:00"]),
+            "exptime": 600.0,
+            "sequenceType": ["scienceObject", "scienceArc"],
+            "sequenceName": [None, "Arc: Neon"],
+            "expType": ["object", "arc"],
+            "cameras": "b1 r1",
+            "iis": False,
+            "sequenceEnd": ["completed", None],
+        }
+    )
+    made = buildNightReport(tables, info=info)
+    row = made.visits.set_index("visit").loc[2]
+    # The arc's lamp comes from the opdb sequence name even before QA runs.
+    assert row["status"] == "AWAITING" and row["label"] == "arc, Neon"
+    assert "arc, Neon" in made.html
+
+
 def testAwaitingAndNoResultAreToldApart():
     tables = _tables((2, "r1", "science", _science()), (5, "r1", "science", _science()))
     # Visit 3 was taken before the latest judged (5) and passed over; visit 7 after it, still awaiting.

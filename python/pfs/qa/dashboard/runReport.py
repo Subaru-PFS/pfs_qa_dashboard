@@ -136,7 +136,17 @@ SEQUENCE_KINDS = {
 _IMAGE = ["visit", "arm", "spectrograph"]
 _KEY = ["visit", "camera"]
 _DATA = Path(__file__).parent / "data"
-_INFO = ["visit", "time", "exptime", "sequenceType", "expType", "cameras", "iis", "sequenceEnd"]
+_INFO = [
+    "visit",
+    "time",
+    "exptime",
+    "sequenceType",
+    "sequenceName",
+    "expType",
+    "cameras",
+    "iis",
+    "sequenceEnd",
+]
 _TABLES = ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics", GATE)
 
 _log = logging.getLogger(__name__)
@@ -148,7 +158,8 @@ SELECT v.pfs_visit_id AS visit, v.issued_at AS time, sv.exp_type,
     (SELECT string_agg(c.arm || c.sps_module_id::text, ' ' ORDER BY c.arm, c.sps_module_id)
         FROM sps_exposure e JOIN sps_camera c ON c.sps_camera_id = e.sps_camera_id
         WHERE e.pfs_visit_id = v.pfs_visit_id) AS cameras,
-    s.sequence_type, position('iis' IN lower(s.cmd_str)) > 0 AS iis, st.status_flag, st.cmd_output
+    s.sequence_type, s.name AS sequence_name,
+    position('iis' IN lower(s.cmd_str)) > 0 AS iis, st.status_flag, st.cmd_output
 FROM pfs_visit v
 JOIN sps_visit sv ON sv.pfs_visit_id = v.pfs_visit_id
 LEFT JOIN visit_set vs ON vs.pfs_visit_id = v.pfs_visit_id
@@ -347,7 +358,8 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
         One row per visit: ``visit``; ``time`` (``pfs_visit.issued_at``, HST);
         ``exptime`` (the longest SpS exposure, seconds); ``expType`` (the SpS
         exposure type); ``cameras`` (those that exposed, ``b1 n1 r1``);
-        ``sequenceType`` (missing outside any IIC sequence); ``iis`` (whether
+        ``sequenceType`` and ``sequenceName`` (the IIC sequence's type and name,
+        e.g. ``Arc: Neon``, both missing outside any sequence); ``iis`` (whether
         the sequence's command lit the engineering fibers); and
         ``sequenceEnd``, how the sequence ended (``completed``, or what it
         reported when it did not).
@@ -360,6 +372,7 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
         "exptime",
         "cameras",
         "sequence_type",
+        "sequence_name",
         "iis",
         "status_flag",
         "cmd_output",
@@ -373,7 +386,9 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
             ended.append("completed")
         else:
             ended.append(str(output) if isinstance(output, str) and output else "did not complete")
-    info = read.rename(columns={"sequence_type": "sequenceType", "exp_type": "expType"})
+    info = read.rename(
+        columns={"sequence_type": "sequenceType", "sequence_name": "sequenceName", "exp_type": "expType"}
+    )
     info["sequenceEnd"] = pd.Series(ended, index=info.index, dtype=object)
     info = info.reindex(columns=_INFO).drop_duplicates("visit")
     info["visit"] = info["visit"].astype("int64")
@@ -442,10 +457,14 @@ def _takenRow(row: Any, status: str, letter: str, why: str) -> dict:
     arms = "".join(
         sorted({camera[0] for camera in cameras}, key=lambda arm: ARMS.find(arm) % (len(ARMS) + 1))
     )
+    kind = SEQUENCE_KINDS.get(row.sequenceType, "other")
+    # The arc lamp (and quartz) from the opdb's sequence name, so an arc shows its lamp before QA runs.
+    sequenceName = getattr(row, "sequenceName", None)
+    lamp = sequenceName if kind in ("arc", "quartz") and isinstance(sequenceName, str) else ""
     return {
         "visit": int(row.visit),
-        "kind": SEQUENCE_KINDS.get(row.sequenceType, "other"),
-        "lamp": "",
+        "kind": kind,
+        "lamp": lamp,
         "illumination": {True: "iis", False: "full"}.get(row.iis, ""),
         "arms": arms,
         "detectors": len(cameras),
@@ -552,7 +571,7 @@ def visitTable(
     labels = []
     for kind, lamp, sequence in zip(visits["kind"], visits["lamp"], visits["sequenceType"], strict=True):
         if kind == "arc" and lamp:
-            labels.append("arc, " + lamp.replace("Arc: ", ""))
+            labels.append("arc, " + lamp.replace("Arc: ", "").strip())
         elif kind != "other":
             labels.append(kind)
         elif not hasSequences:
