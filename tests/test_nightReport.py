@@ -98,6 +98,58 @@ def testVisitsWithNoResultWithinTheNightAreShown():
     assert "sequence ended: abortRequested" in made.html
 
 
+def _taken_info(rows):
+    """Return a visit-information table (as `runReport.readVisitInfo`) with explicit times and types."""
+    return pd.DataFrame(
+        {
+            "visit": [r[0] for r in rows],
+            "time": pd.to_datetime([r[1] for r in rows]),
+            "exptime": 600.0,
+            "sequenceType": "scienceObject",
+            "expType": "object",
+            "cameras": "b1 r1",
+            "iis": False,
+            "sequenceEnd": [r[2] for r in rows],
+        }
+    )
+
+
+def testTheNightFlipsToTheLatestExposureAwaitingQa():
+    tables = _tables((1, "r1", "science", _science(), {"gate": ("PASS", "")}))
+    # Visit 1 is judged on 2026-11-04; visit 2 was taken on the next night and has no verdict yet.
+    info = _taken_info([(1, "2026-11-04 23:00", "completed"), (2, "2026-11-05 20:00", None)])
+    made = buildNightReport(tables, info=info)
+    # The page flips to the newer night and shows the exposure awaiting QA.
+    assert made.visits["night"].unique().tolist() == ["2026-11-05"]
+    assert made.visits.set_index("visit").loc[2, "status"] == "AWAITING"
+    assert "Awaiting QA (1)" in made.html and "awaiting QA" in made.html
+    # The latest tile is that exposure.
+    assert "<span class='big'>2</span>" in made.html[: made.html.index("The night on the clock")]
+    # Negative control: the run report never shows a visit newer than the latest judged.
+    runVisits = runReport.visitTable(runReport.measure(tables), info)
+    assert 2 not in runVisits["visit"].tolist()
+    # Negative control: without awaiting, the night would stay on the judged visit's night.
+    plain = runReport.visitTable(runReport.measure(tables), info)
+    assert activeNight(plain) == "2026-11-04"
+
+
+def testAwaitingAndNoResultAreToldApart():
+    tables = _tables((2, "r1", "science", _science()), (5, "r1", "science", _science()))
+    # Visit 3 was taken before the latest judged (5) and passed over; visit 7 after it, still awaiting.
+    info = _taken_info(
+        [
+            (2, "2026-11-04 20:00", "completed"),
+            (3, "2026-11-04 20:10", "abortRequested"),
+            (5, "2026-11-04 20:20", "completed"),
+            (7, "2026-11-04 20:40", None),
+        ]
+    )
+    made = buildNightReport(tables, info=info)
+    status = made.visits.set_index("visit")["status"]
+    assert status.loc[3] == "NO RESULT" and status.loc[7] == "AWAITING"
+    assert "Awaiting QA (1)" in made.html and "Visits with no QA result tonight (1)" in made.html
+
+
 def testTheVisitStubStandsAlone():
     page = visitStub(12345)
     assert page.startswith("<!doctype html>") and "<title>Visit 12345</title>" in page

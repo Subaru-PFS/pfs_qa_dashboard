@@ -44,7 +44,7 @@ import numpy as np
 import pandas as pd
 
 from pfs.drp.qa.metrics.registry import CHECKS, FIXED, specFor
-from pfs.qa.dashboard.live import GATE, HST
+from pfs.qa.dashboard.live import GATE, HST, LAST_VISIT
 
 __all__ = [
     "BEST_SPECIES",
@@ -118,6 +118,9 @@ SEQUENCE_LABELS = {
 
 #: A visit's status when the opdb says it was taken and qadb holds no QA result for it.
 NO_RESULT = "NO RESULT"
+
+#: A visit taken after the latest one judged, with no QA result yet: its result may still be on its way.
+AWAITING = "AWAITING"
 
 #: The SpS exposure types the QA tasks judge: a visit of one of these should have a result.
 JUDGED_EXP_TYPES = ("object", "arc", "flat")
@@ -433,51 +436,61 @@ def _first(values: pd.Series) -> str:
     return str(known.iloc[0]) if len(known) else ""
 
 
-def _noResultRows(info: pd.DataFrame, judgedVisits: set[int]) -> list[dict]:
+def _takenRow(row: Any, status: str, letter: str, why: str) -> dict:
+    """Return a visit row for a visit the opdb says was taken but qadb holds no verdict for."""
+    cameras = row.cameras.split() if isinstance(row.cameras, str) else []
+    arms = "".join(
+        sorted({camera[0] for camera in cameras}, key=lambda arm: ARMS.find(arm) % (len(ARMS) + 1))
+    )
+    return {
+        "visit": int(row.visit),
+        "kind": SEQUENCE_KINDS.get(row.sequenceType, "other"),
+        "lamp": "",
+        "illumination": {True: "iis", False: "full"}.get(row.iis, ""),
+        "arms": arms,
+        "detectors": len(cameras),
+        "status": status,
+        "flagged": "",
+        "detectorsStatus": " ".join(f"{camera}{letter}" for camera in cameras),
+        "why": why,
+    }
+
+
+def _noResultRows(info: pd.DataFrame, judgedVisits: set[int], awaiting: bool = False) -> list[dict]:
     """Return a row for each visit the opdb says was taken, and should have been judged, that was not.
 
-    Live results arrive in visit order, so a visit older than the latest one
-    judged was passed over; a newer one may still be on its way and is left out.
+    Live results arrive in visit order, so a visit older than the latest one judged was passed over
+    (`NO_RESULT`); a newer one may still be on its way. With ``awaiting``, each newer one gets a row too
+    (`AWAITING`), for the night page's "what is being observed now"; without it they are left out, as on
+    the run report.
     """
     if not judgedVisits or "expType" not in info.columns:
         return []
-    missing = info[
-        info["expType"].isin(JUDGED_EXP_TYPES)
-        & ~info["visit"].isin(judgedVisits)
-        & (info["visit"] < max(judgedVisits))
-    ]
+    latest = max(judgedVisits)
+    taken = info[info["expType"].isin(JUDGED_EXP_TYPES) & ~info["visit"].isin(judgedVisits)]
     rows = []
-    for row in missing.itertuples():
-        cameras = row.cameras.split() if isinstance(row.cameras, str) else []
-        arms = "".join(
-            sorted({camera[0] for camera in cameras}, key=lambda arm: ARMS.find(arm) % (len(ARMS) + 1))
-        )
-        ended = row.sequenceEnd if isinstance(row.sequenceEnd, str) and row.sequenceEnd else None
-        rows.append(
-            {
-                "visit": int(row.visit),
-                "kind": SEQUENCE_KINDS.get(row.sequenceType, "other"),
-                "lamp": "",
-                "illumination": {True: "iis", False: "full"}.get(row.iis, ""),
-                "arms": arms,
-                "detectors": len(cameras),
-                "status": NO_RESULT,
-                "flagged": "",
-                "detectorsStatus": " ".join(f"{camera}N" for camera in cameras),
-                "why": {None: "not in a sequence", "completed": "sequence completed"}.get(
-                    ended, f"sequence ended: {ended}"
-                ),
-            }
-        )
+    for row in taken.itertuples():
+        if row.visit < latest:
+            ended = row.sequenceEnd if isinstance(row.sequenceEnd, str) and row.sequenceEnd else None
+            why = {None: "not in a sequence", "completed": "sequence completed"}.get(
+                ended, f"sequence ended: {ended}"
+            )
+            rows.append(_takenRow(row, NO_RESULT, "N", why))
+        elif awaiting and row.visit > latest:
+            rows.append(_takenRow(row, AWAITING, "A", "taken; QA not in yet"))
     return rows
 
 
-def visitTable(images: pd.DataFrame, info: pd.DataFrame | None = None) -> pd.DataFrame:
+def visitTable(
+    images: pd.DataFrame, info: pd.DataFrame | None = None, awaiting: bool = False
+) -> pd.DataFrame:
     """Return one row per visit: its worst verdict, the detectors behind it, and when it was taken.
 
     With the opdb's listing of the visits taken (``info`` from
     `readVisitInfo`), a visit that should have been judged and has no result
-    gets a row too, with the status `NO_RESULT`.
+    gets a row too, with the status `NO_RESULT`. With ``awaiting``, a visit
+    taken after the latest one judged, and not judged, gets an `AWAITING` row
+    (the night page shows these; the run report does not).
 
     Parameters
     ----------
@@ -528,7 +541,7 @@ def visitTable(images: pd.DataFrame, info: pd.DataFrame | None = None) -> pd.Dat
     ]
     hasSequences = info is not None and "sequenceType" in info.columns
     info = pd.DataFrame(columns=["visit"]) if info is None else info
-    rows += _noResultRows(info, {row["visit"] for row in rows})
+    rows += _noResultRows(info, {row["visit"] for row in rows}, awaiting=awaiting)
     visits = pd.DataFrame(rows, columns=columns).astype({"visit": "int64"})
     info = info.reindex(columns=_INFO).drop_duplicates("visit").astype({"visit": "int64"})
     visits = visits.merge(info.drop(columns=["expType", "cameras", "iis"]), on="visit", how="left")
@@ -1055,7 +1068,9 @@ class ReportCache:
                 info = self._info
                 visits = sorted({int(visit) for name in tables for visit in tables[name]["visit"]})
                 if info is None and self._readInfo is not None and visits:
-                    info = self._readInfo(self._firstVisit or visits[0], visits[-1])
+                    # To the latest visit taken, not just the latest judged, so the night page can
+                    # show tonight's exposures as awaiting QA (the run report ignores those rows).
+                    info = self._readInfo(self._firstVisit or visits[0], LAST_VISIT)
                 elif info is None:
                     info = self.store.times
                 # Together, so a page is never served under another's count.

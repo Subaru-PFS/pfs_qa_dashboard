@@ -19,6 +19,9 @@
   tr.now th, tr.now td { background: var(--band); }
   .awaiting { color: var(--fg-3); font-style: italic; }
   .cal .cells.time .sq.newest { outline: 2px solid var(--fg); outline-offset: 1px; z-index: 2; }
+  .sq.awaiting, .cal .cells.time .sq.awaiting { background: var(--series-1-soft); box-shadow: inset 0 0 0 1px var(--series-1); }
+  .chip.awaiting { color: var(--series-1); background: var(--series-1-soft); }
+  .tile.awaiting { border-color: var(--series-1); }
 </style>
 </head>
 <body>
@@ -36,12 +39,14 @@
     <h2>The night on the clock</h2>
     <p>Every visit of {{NIGHT}} (HST), drawn from its start for as long as it exposed, over the night (18:00 to 07:00). A visit takes the worst verdict among its detectors; the most recent is outlined. Hover or tap a visit for its number, time, kind and verdict.</p>
     <div class="legend">
-      <span><span class="sq pass"></span>PASS</span><span><span class="sq warn"></span>WARN</span><span><span class="sq fail"></span>FAIL</span><span><span class="sq unknown"></span>UNKNOWN</span><span><span class="sq none"></span>NO RESULT</span>
+      <span><span class="sq pass"></span>PASS</span><span><span class="sq warn"></span>WARN</span><span><span class="sq fail"></span>FAIL</span><span><span class="sq unknown"></span>UNKNOWN</span><span><span class="sq awaiting"></span>AWAITING</span><span><span class="sq none"></span>NO RESULT</span>
     </div>
     <div class="cal" id="cal" data-night="{{NIGHT}}"></div>
     <div class="tip" id="tip" hidden></div>
     <ul class="lead">{{LEAD}}</ul>
   </section>
+
+{{AWAITING_SECTION}}
 
   <section class="block">
     <h2>Latest visits</h2>
@@ -118,7 +123,7 @@
 
 <script>
   const DATA = {{DATA}};
-  const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", UNKNOWN: "unknown", "NO RESULT": "none" };
+  const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", UNKNOWN: "unknown", AWAITING: "awaiting", "NO RESULT": "none" };
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   // One night on a clock from 18:00 to 07:00 (HST). Rows: [visit, hst, label, slit, exptime, arms, status, flagged, why, night, detectorsStatus].
   const NIGHT = [18, 31]; // hours from midnight of the evening date; 07:00 next day is 31.

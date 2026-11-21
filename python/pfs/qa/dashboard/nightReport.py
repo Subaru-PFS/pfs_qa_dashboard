@@ -20,6 +20,7 @@ import pandas as pd
 
 from pfs.qa.dashboard.live import HST
 from pfs.qa.dashboard.runReport import (
+    AWAITING,
     NO_RESULT,
     Report,
     _fontFaces,
@@ -34,6 +35,19 @@ from pfs.qa.dashboard.runReport import (
 __all__ = ["DATA_COLUMNS", "activeNight", "buildNightReport", "renderNight", "visitStub"]
 
 _DATA = Path(__file__).parent / "data"
+
+#: Statuses of a visit the night page shows but qadb holds no verdict for: taken, not (yet) judged.
+_PENDING = (NO_RESULT, AWAITING)
+
+#: Each status's CSS class (chip, clock square, tile border).
+_CLASS = {
+    "PASS": "pass",
+    "WARN": "warn",
+    "FAIL": "fail",
+    "UNKNOWN": "unknown",
+    NO_RESULT: "none",
+    AWAITING: "awaiting",
+}
 
 #: The per-visit row the night clock reads, in this order (as `runReport`'s page uses).
 DATA_COLUMNS = [
@@ -75,8 +89,7 @@ def _dataRows(visits: pd.DataFrame) -> list[list]:
 
 
 def _chip(status: str) -> str:
-    cls = {"PASS": "pass", "WARN": "warn", "FAIL": "fail", "UNKNOWN": "unknown", NO_RESULT: "none"}
-    return f"<span class='chip {cls.get(status, 'unknown')}'>{status}</span>"
+    return f"<span class='chip {_CLASS.get(status, 'unknown')}'>{status}</span>"
 
 
 def _latestTile(visits: pd.DataFrame, images: pd.DataFrame) -> str:
@@ -88,18 +101,22 @@ def _latestTile(visits: pd.DataFrame, images: pd.DataFrame) -> str:
     ofVisit = images[images["visit"] == row["visit"]]
     detectors = len(ofVisit)
     judged = int((ofVisit["status"] != "UNKNOWN").sum()) if detectors else 0
-    if row["status"] == NO_RESULT:
-        standing = "<span class='awaiting'>awaiting QA</span>"
+    if row["status"] == AWAITING:
+        standing = "awaiting QA"
+    elif row["status"] == NO_RESULT:
+        standing = "no QA result"
     elif detectors:
         standing = f"{judged} of {detectors} detectors judged"
     else:
         standing = ""
-    cls = {"PASS": "pass", "WARN": "warn", "FAIL": "fail"}.get(row["status"], "")
+    cls = _CLASS.get(row["status"], "unknown")
+    # A coloured border for a verdict or an exposure in progress, not for a passed-over visit.
+    border = cls if row["status"] not in (NO_RESULT,) else ""
     detail = html.escape(row["why"]) if row["why"] else ""
     return (
-        f"<div class='tile lead {cls}'><span class='lab'>Latest visit</span>"
+        f"<div class='tile lead {border}'><span class='lab'>Latest visit</span>"
         f"<span class='big'>{row['visit']}</span>"
-        f"<span class='row'><span class='chip verdict {cls or 'unknown'}'>{row['status']}</span> "
+        f"<span class='row'><span class='chip verdict {cls}'>{row['status']}</span> "
         f"{html.escape(row['label'])}</span>"
         f"<span class='sub'>{html.escape(row['hst'])} HST · {_fmtExp(row['exptime'])} s · {html.escape(standing)}</span>"
         + (f"<span class='sub'>{detail}</span>" if detail else "")
@@ -114,10 +131,11 @@ def _summaryTile(label: str, visits: pd.DataFrame) -> str:
         for k in ("PASS", "WARN", "FAIL")
         if counts.get(k, 0)
     )
-    noResult = int((visits["status"] == NO_RESULT).sum())
-    if noResult:
-        chips += f"<span class='chip none'>{noResult} {NO_RESULT}</span>"
-    judged = visits[visits["status"] != NO_RESULT]
+    for status in _PENDING:
+        count = int((visits["status"] == status).sum())
+        if count:
+            chips += f"<span class='chip {_CLASS[status]}'>{count} {status}</span>"
+    judged = visits[~visits["status"].isin(_PENDING)]
     return (
         f"<div class='tile'><span class='lab'>{html.escape(label)}</span>"
         f"<span class='big'>{len(judged)}</span>"
@@ -131,11 +149,10 @@ def _feedRows(visits: pd.DataFrame) -> str:
     out = []
     for row in order.itertuples():
         when = html.escape(row.hst) if row.hst else "<span class='awaiting'>—</span>"
-        detectors = (
-            "<span class='awaiting'>awaiting QA</span>"
-            if row.status == NO_RESULT
-            else html.escape(_flaggedText(row.flagged)) or "–"
-        )
+        if row.status in _PENDING:
+            detectors = "<span class='awaiting'>awaiting QA</span>"
+        else:
+            detectors = html.escape(_flaggedText(row.flagged)) or "–"
         out.append(
             f"<tr><th scope='row'><a href='visit/{row.visit}'>{row.visit}</a></th>"
             f"<td class='l'>{when}</td><td class='l'>{html.escape(row.label)}</td>"
@@ -189,6 +206,28 @@ def _noResultSection(visits: pd.DataFrame) -> str:
     )
 
 
+def _awaitingSection(visits: pd.DataFrame) -> str:
+    awaiting = visits[visits["status"] == AWAITING]
+    if awaiting.empty:
+        return ""
+    order = awaiting.sort_values(["time", "visit"], ascending=[False, False], na_position="last")
+    rows = "\n".join(
+        f"<tr><th scope='row'><a href='visit/{row.visit}'>{row.visit}</a></th>"
+        f"<td class='l'>{html.escape(row.hst)}</td><td class='l'>{html.escape(row.label)}</td>"
+        f"<td class='l'>{row.slit}</td><td>{_fmtExp(row.exptime)}</td><td class='l'>{row.arms}</td></tr>"
+        for row in order.itertuples()
+    )
+    return (
+        f"<section class='block' id='awaiting'><h2>Awaiting QA ({len(awaiting)})</h2>"
+        "<p>Taken after the latest visit judged, with no QA result yet — most recent first. Their verdicts "
+        "appear here as the pipeline catches up.</p>"
+        "<div class='tablewrap'><table><thead><tr><th scope='col' class='l'>Visit</th>"
+        "<th scope='col' class='l'>HST</th><th scope='col' class='l'>Kind</th><th scope='col' class='l'>Lit through</th>"
+        "<th scope='col'>Exp (s)</th><th scope='col' class='l'>Arms</th></tr></thead>"
+        f"<tbody>\n{rows}\n</tbody></table></div></section>"
+    )
+
+
 def renderNight(
     visits: pd.DataFrame,
     images: pd.DataFrame,
@@ -210,7 +249,7 @@ def renderNight(
         The page title; the source note (HTML); the link to the whole-run report; the time made (HST).
     """
     now = datetime.now(HST) if now is None else now
-    judged = visits[visits["status"] != NO_RESULT]
+    judged = visits[~visits["status"].isin(_PENDING)]
     notPass, nNotPass = _notPassRows(judged)
     lead = (
         _tally("Science", judged[judged["kind"] == "science"], int((visits["status"] == NO_RESULT).sum()))
@@ -235,6 +274,7 @@ def renderNight(
         "{{NIGHT}}": nightText,
         "{{TILES}}": tiles,
         "{{LEAD}}": lead,
+        "{{AWAITING_SECTION}}": _awaitingSection(visits),
         "{{FEED}}": _feedRows(visits),
         "{{OFFSETS}}": offsetsHtml,
         "{{OAXIS}}": offsetAxis,
@@ -294,7 +334,7 @@ def buildNightReport(
         The night (HST evening date) to show; the most recent with a visit when None.
     """
     allImages = measure(tables)
-    allVisits = visitTable(allImages, infoFromTables(tables) if info is None else info)
+    allVisits = visitTable(allImages, infoFromTables(tables) if info is None else info, awaiting=True)
     night = activeNight(allVisits) if night is None else night
     visits = allVisits[allVisits["night"] == night] if night else allVisits
     images = allImages[allImages["visit"].isin(set(visits["visit"]))]
