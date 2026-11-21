@@ -1,120 +1,37 @@
-"""Tests for the qadb store (`pfs.qa.dashboard.live.QadbMetricsStore`), with a stand-in for qadb."""
+"""Tests for the qadb store (`pfs.qa.dashboard.live.QadbStore`), with a stand-in for qadb."""
 
 import pandas as pd
-import pytest
 
-from pfs.qa.dashboard.live import QadbMetricsStore, qadbProvenance
-from pfs.qa.dashboard.qadbSource import writeSnapshot
-
-#: The thresholds file every image cites unless said otherwise: medFwhm WARN at 3, FAIL at 4.
-FILE = 1
+from pfs.drp.qa.qadb.reader import GATE_COLUMNS
+from pfs.qa.dashboard import live
+from pfs.qa.dashboard.live import GATE, OVERLAP, QadbStore, qadbProvenance, readCollection
+from pfs.qa.dashboard.qadbSource import readSnapshot, writeSnapshot
 
 
-def image(visit, arm, status, medFwhm, decidedAt, seqName="Arc: Neon", thresholdsId=FILE):
-    """Return an ``iqQaMetrics`` row as the reader gives it; ``thresholdsId`` None cites no layer."""
+def image(visit, arm, status, medFwhm, decidedAt):
+    """Return an ``iqQaMetrics`` row as the reader gives it."""
     return {
         "visit": visit,
         "arm": arm,
         "spectrograph": 1,
         "obsType": "arc",
-        "seqName": seqName,
+        "seqName": "Arc: Neon",
         "illumination": "full",
-        "traceOnly": False,
         "medFwhm": medFwhm,
-        # The other metrics the thresholds name: not measured here.
-        **dict.fromkeys(
-            ("medDxCenter", "dxCenterRms", "pctFlagged", "linesPerFiber", "nLines"), float("nan")
-        ),
         "qaStatus": status,
         "qaReason": "" if status == "PASS" else "medFwhm",
-        "calexpRun": "",
         "decidedAt": decidedAt,
-        "thresholdsIds": "" if thresholdsId is None or pd.isna(thresholdsId) else str(thresholdsId),
     }
-
-
-#: The thresholds files the fakes know: ``thresholdsId -> (name, warn, fail)`` for medFwhm.
-FILES = {FILE: ("iqQaThresholds-test.yaml", 3.0, 4.0), 2: ("iqQaThresholds-later.yaml", 4.6, 5.0)}
-
-
-def thresholdsTables(ids):
-    """Return the reader's ``thresholds`` and ``thresholdsFiles`` for the files ``ids`` cite."""
-    cited = sorted(i for i in set(ids) if pd.notna(i))
-    entries = pd.DataFrame(
-        [
-            {
-                "thresholdsId": i,
-                "metric": "medFwhm",
-                "population": "",
-                "higherIsWorse": True,
-                "absolute": False,
-                "method": "percentile",
-                "warn": FILES[i][1],
-                "fail": FILES[i][2],
-                "provenance": "test",
-            }
-            for i in cited
-        ],
-        columns=[
-            "thresholdsId",
-            "metric",
-            "population",
-            "higherIsWorse",
-            "absolute",
-            "method",
-            "warn",
-            "fail",
-            "provenance",
-        ],
-    )
-    files = pd.DataFrame(
-        [
-            {
-                "thresholdsId": i,
-                "sha256": f"{i:064x}",
-                "name": FILES[i][0],
-                "derivedOn": pd.Timestamp("2026-10-19"),
-                "collection": "u/test/thresholds",
-                "referenceRuns": "25,29",
-                "drpQaVersion": "w.2026.35",
-                "datamodelVersion": "w.2026.40",
-                "obsPfsVersion": "w.2026.40",
-                "drpStellaVersion": "w.2026.41",
-                "nEntries": 1,
-                "registeredAt": pd.Timestamp("2026-10-26 12:00"),
-            }
-            for i in cited
-        ],
-        columns=[
-            "thresholdsId",
-            "sha256",
-            "name",
-            "derivedOn",
-            "collection",
-            "referenceRuns",
-            "drpQaVersion",
-            "datamodelVersion",
-            "obsPfsVersion",
-            "drpStellaVersion",
-            "nEntries",
-            "registeredAt",
-        ],
-    )
-    return entries.astype({"thresholdsId": "int64"}), files.astype({"thresholdsId": "int64"})
 
 
 def tables(images):
     """Return what `pfs.drp.qa.qadb.reader.readQadb` returns for some images: no line residuals."""
     iq = pd.DataFrame(images)
     visits = sorted(set(iq["visit"])) if len(iq) else []
-    cited = [int(i) for key in iq.get("thresholdsIds", []) for i in key.split(",") if i]
-    thresholds, files = thresholdsTables(cited)
     return {
         "iqQaMetrics": iq,
         "dmLineResidualSummary": pd.DataFrame(columns=["visit", "arm", "spectrograph", "decidedAt"]),
         "dmLineResidualMetrics": pd.DataFrame(columns=["visit", "arm", "spectrograph", "decidedAt"]),
-        "thresholds": thresholds,
-        "thresholdsFiles": files,
         "visitTimes": pd.DataFrame(
             {
                 "pfs_visit_id": visits,
@@ -141,294 +58,96 @@ class FakeQadb:
         return tables([row for row in latest.values() if since is None or row["decidedAt"] >= since])
 
 
-@pytest.fixture
-def clock():
-    now = [0.0]
-    tick = lambda: now[0]  # noqa: E731
-    tick.advance = lambda seconds: now.__setitem__(0, now[0] + seconds)
-    return tick
+def _statuses(store):
+    iq = store.raw["iqQaMetrics"]
+    return dict(zip(zip(iq["visit"], iq["arm"], strict=True), iq["qaStatus"], strict=True))
 
 
-def testRefreshReplacesRejudgedImagesAndAddsNewOnes(clock):
+def testRefreshReplacesRejudgedImagesAndAddsNewOnes():
     qadb = FakeQadb()
     qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1"), image(1001, "r", "PASS", 2.7, "t1")])
-    store = QadbMetricsStore(qadb.read, {"collection": "c"}, minInterval=10, clock=clock)
+    store = QadbStore(qadb.read)
     assert store.version == 1 and store.since == "t1"
-    assert store.images()["status"].tolist() == ["PASS", "PASS"]
+    assert _statuses(store) == {(1001, "b"): "PASS", (1001, "r"): "PASS"}
 
-    # Within minInterval nothing is read.
     qadb.loads.append([image(1002, "b", "PASS", 2.5, "t2")])
-    assert not store.refresh() and len(qadb.calls) == 1
-
-    clock.advance(10)
     qadb.loads.append([image(1001, "b", "FAIL", 9.0, "t3")])
     assert store.refresh()
     assert qadb.calls[-1] == "t1"
-    images = store.images().set_index(["visit", "arm"])
-    assert len(images) == 3
-    assert images.loc[(1001, "b"), "status"] == "FAIL"  # replaced, not duplicated
-    assert images.loc[(1001, "r"), "status"] == "PASS"  # kept
-    assert store.since == "t3"
-    fwhm = store.trend("iqQaMetrics", "medFwhm")
-    assert len(fwhm) == 3 and fwhm.set_index(["visit", "arm"]).loc[(1001, "b"), "value"] == 9.0
+    # (1001, b) is replaced, not duplicated; (1001, r) is kept.
+    assert _statuses(store) == {(1001, "b"): "FAIL", (1001, "r"): "PASS", (1002, "b"): "PASS"}
+    assert len(store.raw["iqQaMetrics"]) == 3
+    assert store.since == "t3" and store.version == 2
 
 
-def testSequencesAreNumberedOverTheWholeTable(clock):
-    """Visits read apart but of one sequence share its key; another seqName starts a new one."""
+def testTimesAreQadbsForEveryVisitRead():
     qadb = FakeQadb()
     qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1")])
-    store = QadbMetricsStore(qadb.read, {}, minInterval=0, clock=clock)
-    qadb.loads.append(
-        [image(1002, "b", "PASS", 2.5, "t2"), image(1003, "b", "PASS", 3.0, "t2", seqName="Trace")]
-    )
+    store = QadbStore(qadb.read)
+    qadb.loads.append([image(1002, "b", "PASS", 2.5, "t2"), image(1002, "r", "PASS", 2.5, "t2")])
     store.refresh()
-    visits = store.visits().set_index("visit")
-    assert visits.loc[1001, "sequenceKey"] == visits.loc[1002, "sequenceKey"]
-    # Negative control: a new seqName is a new sequence.
-    assert visits.loc[1003, "sequenceKey"] != visits.loc[1002, "sequenceKey"]
-    assert visits["timeExpStart"].notna().all()
+    times = store.times
+    assert list(times.columns) == ["visit", "time"] and times["visit"].tolist() == [1001, 1002]
+    assert times["time"].tolist() == [pd.Timestamp("2026-11-01 19:01"), pd.Timestamp("2026-11-01 19:02")]
 
 
-def testEmptyUntilTheFirstLoad(clock):
+def testEmptyUntilTheFirstLoad():
     qadb = FakeQadb()
-    store = QadbMetricsStore(qadb.read, {}, minInterval=0, clock=clock)
-    assert store.version == 0 and store.visits().empty and store.since is None
+    store = QadbStore(qadb.read)
+    assert store.version == 0 and store.raw == {} and store.times.empty and store.since is None
     assert not store.refresh()
     qadb.loads.append([image(1001, "b", "WARN", 2.9, "t1")])
-    assert store.refresh() and store.images()["status"].tolist() == ["WARN"]
+    assert store.refresh() and _statuses(store) == {(1001, "b"): "WARN"}
 
 
-def testLimitsAreTheThresholdsEachImageCites(clock):
-    """An image's limits are its cited file's, read with it; the files cited so far are the store's."""
-    qadb = FakeQadb()
-    qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1")])
-    store = QadbMetricsStore(qadb.read, {}, minInterval=0, clock=clock)
-    assert store.thresholdsFiles["name"].tolist() == ["iqQaThresholds-test.yaml"]
-    qadb.loads.append([image(1002, "b", "PASS", 4.7, "t2", thresholdsId=2)])
-    assert store.refresh()
-    fwhm = store.trend("iqQaMetrics", "medFwhm").set_index("visit")
-    assert fwhm.loc[1001, ["warn", "fail", "status"]].tolist() == [3.0, 4.0, "PASS"]
-    assert fwhm.loc[1002, ["warn", "fail", "status"]].tolist() == [4.6, 5.0, "WARN"]
-    assert store.thresholdsFiles["name"].tolist() == ["iqQaThresholds-test.yaml", "iqQaThresholds-later.yaml"]
-    # Negative control: judged with the first file, 1002 would FAIL.
-    assert fwhm.loc[1002, "value"] > fwhm.loc[1001, "fail"]
-
-
-def testAnImageCitingNoThresholdsHasValuesAndNoLimits(clock):
-    qadb = FakeQadb()
-    qadb.loads.append([image(1001, "b", "WARN", 3.5, "t1", thresholdsId=pd.NA)])
-    store = QadbMetricsStore(qadb.read, {}, minInterval=0, clock=clock)
-    fwhm = store.trend("iqQaMetrics", "medFwhm")
-    assert fwhm["value"].tolist() == [3.5] and fwhm["warn"].isna().all() and fwhm["status"].tolist() == [""]
-    assert store.images()["status"].tolist() == ["WARN"]
-    assert store.thresholdsFiles.empty
-
-
-def testUnchangedRefreshIsNotNew(clock):
+def testUnchangedRefreshIsNotNew():
     """``since`` is inclusive, so the last load comes back on every read: that is not new data."""
     qadb = FakeQadb()
     qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1")])
-    store = QadbMetricsStore(qadb.read, {}, minInterval=0, clock=clock)
+    store = QadbStore(qadb.read)
     assert not store.refresh() and not store.refresh()
     assert store.version == 1 and qadb.calls[-1] == "t1"
 
     # Negative control: an image loaded in the same instant, read only now, is new.
     qadb.loads.append([image(1001, "r", "WARN", 2.9, "t1")])
     assert store.refresh() and store.version == 2
-    assert sorted(store.images()["arm"]) == ["b", "r"]
+    assert sorted(store.raw["iqQaMetrics"]["arm"]) == ["b", "r"]
     assert not store.refresh()
 
 
-def testSnapshotServesWhatQadbHeld(tmp_path, clock):
-    """A snapshot of a read gives the live store's table and the provenance written, and never refreshes."""
+def testASnapshotHoldsWhatQadbHeldAndNeverChanges(tmp_path):
     qadb = FakeQadb()
     qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1"), image(1002, "r", "FAIL", 9.0, "t1")])
-    liveStore = QadbMetricsStore(qadb.read, {}, minInterval=0, clock=clock)
+    liveStore = QadbStore(qadb.read)
     provenance = qadbProvenance("c (qadb snapshot)", builtAt="2026-10-28T10:00:00-10:00")
-    store = QadbMetricsStore.fromSnapshot(writeSnapshot(qadb.read(None), tmp_path / "snap", provenance))
+    read, readProvenance = readSnapshot(writeSnapshot(qadb.read(None), tmp_path / "snap", provenance))
+    store = QadbStore.fromTables(read)
 
-    pd.testing.assert_frame_equal(store.images(), liveStore.images())
-    pd.testing.assert_frame_equal(
-        store.trend("iqQaMetrics", "medFwhm"), liveStore.trend("iqQaMetrics", "medFwhm")
-    )
-    assert store.thresholdsFiles["name"].tolist() == liveStore.thresholdsFiles["name"].tolist()
-    assert store.provenance == provenance
-    assert "thresholds" not in provenance
-    assert not store.live and not store.refresh()
-    # Negative control: the store reading qadb itself is live.
-    assert liveStore.live
+    assert readProvenance == provenance
+    assert _statuses(store) == _statuses(liveStore) and len(store.times) == 2
+    assert store.version == 1 and not store.refresh() and store.version == 1
+    # Negative control: the store reading qadb takes a later load.
+    qadb.loads.append([image(1003, "b", "PASS", 2.5, "t2")])
+    assert liveStore.refresh() and liveStore.version == 2
 
 
-class FakeOpdb:
-    """Answers ``readOpdb(visits)``: their times and sequences, and the notes on them and their sequences."""
-
-    def __init__(self, sequences):
-        self.sequences = sequences  # visit -> IIC sequence
-        self.visitNotes = []  # (visit, camera, note, source)
-        self.sequenceNotes = []  # (sequence, note)
-        self.calls = []
-        self.down = False
-
-    def read(self, visits):
-        self.calls.append(list(visits))
-        if self.down:
-            raise ConnectionError("opdb tunnel closed")
-        times = pd.DataFrame(
-            {
-                "pfs_visit_id": visits,
-                "time_exp_start": [
-                    pd.Timestamp("2026-11-01 20:00") + pd.Timedelta(minutes=v % 100) for v in visits
-                ],
-                "iic_sequence_id": pd.array([self.sequences.get(v) for v in visits], dtype="Int64"),
-            }
-        )
-        onVisits = [
-            (v, pd.NA, camera, note, source) for v, camera, note, source in self.visitNotes if v in visits
-        ]
-        sequences = set(times["iic_sequence_id"].dropna())
-        onSequences = [
-            (pd.NA, s, None, note, "obslog_sequence") for s, note in self.sequenceNotes if s in sequences
-        ]
-        notes = pd.DataFrame(
-            onVisits + onSequences, columns=["pfs_visit_id", "iic_sequence_id", "camera", "note", "source"]
-        )
-        notes = notes.astype({"pfs_visit_id": "Int64", "iic_sequence_id": "Int64"}).assign(
-            data_flag=pd.array([pd.NA] * len(notes), dtype="Int64")
-        )
-        return times, notes
-
-
-def testOpdbGivesSequencesTimesAndLateNotes(clock):
-    """The opdb's sequences and times replace qadb's, and a note written after the visit's load appears."""
-    qadb = FakeQadb()
-    qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1"), image(1002, "b", "PASS", 2.5, "t1")])
-    opdb = FakeOpdb({1001: 77, 1002: 78})
-    store = QadbMetricsStore(qadb.read, {}, minInterval=0, clock=clock, readOpdb=opdb.read)
-    visits = store.visits().set_index("visit")
-    assert (visits["sequenceSource"] == "opdb").all()
-    assert visits.loc[1001, "sequenceKey"] == 77 and visits.loc[1002, "sequenceKey"] == 78
-    assert visits.loc[1001, "timeExpStart"] == pd.Timestamp("2026-11-01 20:01")
-    assert store.notes().empty and store.version == 1 and store.hasOpdb
-
-    opdb.visitNotes.append((1001, "r1", "ghost", "sps_annotation"))
-    opdb.sequenceNotes.append((78, "Dome light on"))
-    assert store.refresh() and store.version == 2
-    notes = store.notes()
-    assert notes[["visit", "arm", "spectrograph", "note"]].values.tolist() == [
-        [1001, "r", 1, "ghost"],
-        [1002, "", 0, "Dome light on"],
-    ]
-    assert not store.refresh()
-
-    # Negative control: without the opdb, one seqName is one inferred sequence, and there are no notes.
-    bare = QadbMetricsStore(qadb.read, {}, minInterval=0, clock=clock)
-    visits = bare.visits().set_index("visit")
-    assert (visits["sequenceSource"] == "inferred").all()
-    assert visits.loc[1001, "sequenceKey"] == visits.loc[1002, "sequenceKey"]
-    assert bare.notes().empty and not bare.hasOpdb
-
-
-def testOpdbIsReadForRecentVisitsAfterTheFirst(clock):
-    qadb = FakeQadb()
-    qadb.loads.append([image(v, "b", "PASS", 2.5, "t1") for v in (1001, 1002, 1003)])
-    opdb = FakeOpdb({})
-    store = QadbMetricsStore(qadb.read, {}, minInterval=0, clock=clock, readOpdb=opdb.read, recentVisits=2)
-    store.refresh()
-    assert opdb.calls == [[1001, 1002, 1003], [1002, 1003]]
-
-
-def testSnapshotKeepsTheOpdbNotes(tmp_path, clock):
-    qadb = FakeQadb()
-    qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1")])
-    opdb = FakeOpdb({1001: 77})
-    opdb.visitNotes.append((1001, None, "Cloudy", "obslog"))
-    tables = dict(qadb.read(None))
-    tables["opdbVisitTimes"], tables["notes"] = opdb.read([1001])
-    store = QadbMetricsStore.fromSnapshot(writeSnapshot(tables, tmp_path / "snap", {"collection": "c"}))
-    assert store.notes()["note"].tolist() == ["Cloudy"]
-    assert store.visits()["sequenceSource"].tolist() == ["opdb"]
-
-
-def testOpdbFailureKeepsTheNewImages(clock):
-    """A failed opdb read still shows the images qadb just gave; the opdb's answer comes on the next refresh."""
-    qadb = FakeQadb()
-    qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1")])
-    opdb = FakeOpdb({1001: 77, 1002: 78})
-    store = QadbMetricsStore(qadb.read, {}, minInterval=0, clock=clock, readOpdb=opdb.read)
-
-    opdb.down = True
-    qadb.loads.append([image(1002, "b", "FAIL", 9.0, "t2")])
-    assert store.refresh()
-    visits = store.visits().set_index("visit")
-    assert visits.loc[1002, "sequenceSource"] == "inferred"
-    assert store.images().set_index("visit").loc[1002, "status"] == "FAIL"
-
-    opdb.down = False
-    assert store.refresh()
-    assert store.visits().set_index("visit").loc[1002, "sequenceKey"] == 78
-
-
-def testLineVerdictsWithoutLineMetricsAreKept(clock):
-    """A read can hold line verdicts and no line metrics (no species with enough lines): the verdicts count."""
-    qadb = FakeQadb()
-    qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1")])
-    withSummary = dict(qadb.read(None))
-    withSummary["dmLineResidualSummary"] = pd.DataFrame(
-        {
-            "visit": [1001],
-            "arm": ["b"],
-            "spectrograph": [1],
-            "qaStatus": ["WARN"],
-            "qaReason": ["calib NeI: too few lines"],
-            "recommendedAction": ["INSUFFICIENT_DATA"],
-            "decidedAt": ["t1"],
-        }
-    )
-    store = QadbMetricsStore(lambda since: withSummary, {}, minInterval=0, clock=clock)
-    images = store.images().set_index("visit")
-    assert images.loc[1001, "status"] == "WARN" and images.loc[1001, "lineStatus"] == "WARN"
-    # Negative control: without the summary the image is the IQ verdict alone.
-    bare = QadbMetricsStore(qadb.read, {}, minInterval=0, clock=clock)
-    assert bare.images().set_index("visit").loc[1001, "status"] == "PASS"
-
-
-def testSnapshotHoldsOnlyItsOwnRead(tmp_path, clock):
+def testSnapshotHoldsOnlyItsOwnRead(tmp_path):
     """Writing a snapshot over an older one leaves none of the older one's tables behind."""
     qadb = FakeQadb()
     qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1")])
-    opdb = FakeOpdb({1001: 77})
-    tables = dict(qadb.read(None))
-    tables["opdbVisitTimes"], tables["notes"] = opdb.read([1001])
-    directory = writeSnapshot(tables, tmp_path / "snap", {})
-    assert (directory / "opdbVisitTimes.parquet").exists()
+    older = dict(qadb.read(None))
+    older["visitInfo"] = pd.DataFrame({"visit": [1001]})
+    directory = writeSnapshot(older, tmp_path / "snap", {})
+    assert (directory / "visitInfo.parquet").exists()
 
     writeSnapshot(qadb.read(None), directory, {})
-    store = QadbMetricsStore.fromSnapshot(directory)
-    assert not store.hasOpdb
+    read, _ = readSnapshot(directory)
+    assert "visitInfo" not in read
     # Negative control: the qadb tables of the new read are there.
-    assert (directory / "iqQaMetrics.parquet").exists() and len(store.images()) == 1
+    assert len(read["iqQaMetrics"]) == 1
 
 
-def testASnapshotOlderThanTheThresholdsServes(tmp_path, clock):
-    """A snapshot written before the reader returned thresholds has no limits, and serves."""
-    qadb = FakeQadb()
-    qadb.loads.append([image(1001, "b", "PASS", 2.5, "t1")])
-    old = {
-        name: frame
-        for name, frame in qadb.read(None).items()
-        if name not in ("thresholds", "thresholdsFiles")
-    }
-    old["iqQaMetrics"] = old["iqQaMetrics"].drop(columns="thresholdsIds")
-    store = QadbMetricsStore.fromSnapshot(writeSnapshot(old, tmp_path / "old", {"collection": "c"}))
-    assert store.images()["status"].tolist() == ["PASS"]
-    assert store.trend("iqQaMetrics", "medFwhm")["warn"].isna().all()
-    assert store.thresholdsFiles.empty
-    # Negative control: the same read with its thresholds has them.
-    new = QadbMetricsStore.fromSnapshot(writeSnapshot(qadb.read(None), tmp_path / "new", {}))
-    assert new.trend("iqQaMetrics", "medFwhm")["warn"].tolist() == [3.0]
-
-
-def testAnImageWithOnlyLineResidualsIsReplacedOnReload(clock):
+def testAnImageWithOnlyLineResidualsIsReplacedOnReload():
     """A reload of an image that has line residuals and no image-quality row replaces its rows."""
 
     def lines(visit, decidedAt, status):
@@ -451,11 +170,175 @@ def testAnImageWithOnlyLineResidualsIsReplacedOnReload(clock):
         held["dmLineResidualSummary"] = lines(1002, "t1", "WARN") if first else lines(1002, "t2", "PASS")
         return held
 
-    store = QadbMetricsStore(read, {}, minInterval=0, clock=clock)
+    store = QadbStore(read)
     assert store.raw["dmLineResidualSummary"]["qaStatus"].tolist() == ["WARN"]
-    clock.advance(1)
     assert store.refresh()
     summary = store.raw["dmLineResidualSummary"]
     assert summary["visit"].tolist() == [1002] and summary["qaStatus"].tolist() == ["PASS"]
     # Negative control: the images of the first read that the second does not hold stay.
     assert store.raw["iqQaMetrics"]["visit"].tolist() == [1001, 1003]
+
+
+def testAReadOfOnlyLineResidualsIsNew():
+    """An image with line residuals and no image-quality row is taken when it is all a read brings."""
+
+    def lines(visit, decidedAt):
+        return pd.DataFrame(
+            {
+                "visit": [visit],
+                "arm": ["b"],
+                "spectrograph": [1],
+                "obsType": ["allsky"],
+                "qaStatus": ["WARN"],
+                "qaReason": [""],
+                "decidedAt": [decidedAt],
+            }
+        )
+
+    def read(since):
+        if since is None:
+            return tables([image(1001, "b", "PASS", 2.5, "t1")])
+        held = tables([])
+        held["iqQaMetrics"] = pd.DataFrame(columns=["visit", "arm", "spectrograph", "decidedAt"])
+        held["dmLineResidualSummary"] = lines(1002, "t2")
+        return held
+
+    store = QadbStore(read)
+    assert store.version == 1 and store.since == "t1"
+    assert store.refresh() and store.version == 2 and store.since == "t2"
+    assert store.raw["dmLineResidualSummary"]["visit"].tolist() == [1002]
+    assert store.raw["iqQaMetrics"]["visit"].tolist() == [1001]
+    # Negative control: the same load read again is not new.
+    assert not store.refresh() and store.version == 2
+
+
+def verdict(visit, arm, status, decidedAt):
+    """Return a gate row as `pfs.drp.qa.qadb.reader.readGate` gives it."""
+    return {"visit": visit, "arm": arm, "spectrograph": 1, "qaStatus": status, "decidedAt": decidedAt}
+
+
+def testTheGateIsReadOverTheVisitsTheNumbersRead(monkeypatch):
+    """A refresh reads the gate rows of the new images' visits only; the first read, the whole range."""
+    asked = []
+
+    def readGate(qadb, collection, first, last):
+        asked.append((first, last))
+        return pd.DataFrame([verdict(1001, "b", "PASS", "t1")])
+
+    numbers = {"t1": tables([image(1002, "b", "PASS", 2.5, "t1"), image(1005, "r", "PASS", 2.5, "t1")])}
+    numbers["t2"] = tables([])
+    numbers["t2"]["iqQaMetrics"] = pd.DataFrame(columns=["visit", "arm", "spectrograph", "decidedAt"])
+    monkeypatch.setattr(live, "readGate", readGate)
+    monkeypatch.setattr(live, "readQadb", lambda qadb, collection, first, last, since: numbers[since or "t1"])
+
+    assert readCollection(None, "c", 1000, 2000)[GATE]["visit"].tolist() == [1001]
+    readCollection(None, "c", 1000, 2000, since="t1")
+    assert asked == [(1000, 2000), (1002, 1005)]
+    # A read that brings no image asks the gate nothing.
+    empty = readCollection(None, "c", 1000, 2000, since="t2")[GATE]
+    assert len(asked) == 2 and empty.empty and list(empty.columns) == list(GATE_COLUMNS)
+    # Negative control: without ``since`` the gate is read over the whole range, not the numbers' visits.
+    readCollection(None, "c", 1000, 2000)
+    assert asked[-1] == (1000, 2000) != (1002, 1005)
+
+
+def testGateRowsReplaceTheirOwnImages():
+    """A gate row read again replaces the image's earlier one, and leaves the other tables' rows alone."""
+
+    def read(since):
+        if since is None:
+            held = tables([image(1001, "b", "PASS", 2.5, "t1"), image(1002, "b", "PASS", 2.5, "t1")])
+            held[GATE] = pd.DataFrame([verdict(1001, "b", "PASS", "t1"), verdict(1002, "b", "PASS", "t1")])
+            return held
+        # Visit 1002 judged again; the gate read covers 1001 to 1002, and so brings 1001's row too.
+        held = tables([image(1002, "b", "FAIL", 2.5, "t2")])
+        held[GATE] = pd.DataFrame([verdict(1001, "b", "PASS", "t1"), verdict(1002, "b", "FAIL", "t2")])
+        return held
+
+    store = QadbStore(read)
+    assert store.refresh()
+    gate = store.raw[GATE].sort_values("visit")
+    assert gate["visit"].tolist() == [1001, 1002] and gate["qaStatus"].tolist() == ["PASS", "FAIL"]
+    # Negative control: 1001's numbers, which the second read did not hold, are kept.
+    assert sorted(store.raw["iqQaMetrics"]["visit"]) == [1001, 1002]
+
+
+def testAReadThatStraddlesALoadLosesNoRow():
+    """A read whose queries straddle a load brings the line residuals at the new time and no image-quality row."""
+    held = {"since": None}
+
+    def read(since):
+        held["since"] = since
+        return reads.pop(0)
+
+    first = tables([image(1001, "b", "PASS", 2.5, "t1")])
+    first["dmLineResidualSummary"] = pd.DataFrame(
+        [{"visit": 1001, "arm": "b", "spectrograph": 1, "decidedAt": "t1"}]
+    )
+    straddled = tables([])
+    straddled["iqQaMetrics"] = pd.DataFrame(columns=["visit", "arm", "spectrograph", "decidedAt"])
+    straddled["dmLineResidualSummary"] = pd.DataFrame(
+        [{"visit": 1001, "arm": "b", "spectrograph": 1, "decidedAt": "t2"}]
+    )
+    whole = tables([image(1001, "b", "FAIL", 9.0, "t2")])
+    whole["dmLineResidualSummary"] = straddled["dmLineResidualSummary"]
+    reads = [first, straddled, whole]
+
+    store = QadbStore(read)
+    assert store.refresh()
+    # The image-quality row of the first load stays: the straddled read brought none to replace it.
+    assert store.raw["iqQaMetrics"]["visit"].tolist() == [1001]
+    assert _statuses(store) == {(1001, "b"): "PASS"}
+    # Negative control: the next read, with the image-quality row at the new time, is new, though the
+    # line residuals at that time were seen already.
+    assert store.refresh() and _statuses(store) == {(1001, "b"): "FAIL"}
+
+
+def testALoadCommittedAfterALaterStampedOneIsRead():
+    """Two loaders at once: the one stamped first commits last. Each refresh reads from OVERLAP before since."""
+    t = pd.Timestamp("2026-11-20 18:00")
+    qadb = FakeQadb()
+    qadb.loads.append([image(1001, "b", "PASS", 2.5, t)])
+    store = QadbStore(qadb.read)
+    qadb.loads.append([image(1003, "b", "PASS", 2.5, t + pd.Timedelta(minutes=2))])
+    assert store.refresh() and store.since == t + pd.Timedelta(minutes=2)
+    # Stamped a minute before the load already read, committed after it.
+    qadb.loads.append([image(1002, "b", "WARN", 2.9, t + pd.Timedelta(minutes=1))])
+    assert store.refresh()
+    assert qadb.calls[-1] == store.since - OVERLAP
+    assert _statuses(store) == {(1001, "b"): "PASS", (1002, "b"): "WARN", (1003, "b"): "PASS"}
+    # Loads read again inside the overlap are not new.
+    assert not store.refresh() and store.version == 3
+    # Negative control: a load stamped further back than the overlap is not read.
+    qadb.loads.append([image(1004, "b", "PASS", 2.5, store.since - OVERLAP - pd.Timedelta(seconds=1))])
+    assert not store.refresh() and (1004, "b") not in _statuses(store)
+
+
+def testATableWithSeveralRowsPerImageIsReplacedByImage():
+    """The line-residual metrics hold many rows per image: a reload replaces the image's rows, and no other's."""
+
+    def metrics(rows, decidedAt):
+        return pd.DataFrame(
+            [
+                {"visit": v, "arm": "b", "spectrograph": 1, "metric": m, "value": x, "decidedAt": decidedAt}
+                for v, m, x in rows
+            ]
+        )
+
+    def read(since):
+        held = tables([image(1001, "b", "PASS", 2.5, "t1"), image(1002, "b", "PASS", 2.5, "t1")])
+        held["dmLineResidualMetrics"] = metrics(
+            [(1001, "dx", 0.1), (1001, "dy", 0.2), (1001, "rms", 0.3), (1002, "dx", 0.4), (1002, "dy", 0.5)],
+            "t1",
+        )
+        if since is not None:
+            held = tables([image(1002, "b", "FAIL", 2.5, "t2")])
+            held["dmLineResidualMetrics"] = metrics([(1002, "dx", 1.4), (1002, "dy", 1.5)], "t2")
+        return held
+
+    store = QadbStore(read)
+    assert store.refresh()
+    held = store.raw["dmLineResidualMetrics"].sort_values(["visit", "metric"])
+    assert held["value"].tolist() == [0.1, 0.2, 0.3, 1.4, 1.5]
+    # Negative control: the other image's three rows are all kept, not cut to one per image.
+    assert int((held["visit"] == 1001).sum()) == 3

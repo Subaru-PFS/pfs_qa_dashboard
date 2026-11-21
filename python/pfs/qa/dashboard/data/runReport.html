@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+{{FONT_FACES}}
+  /* Layout: a short reading column of counts and rules, then one full-width list that filters in place. */
+  :root {
+    --bg: #fafbfc; --surface: #ffffff; --fg: #14181d; --fg-2: #4a535e; --fg-3: #6d7682; --rule: #dde2e8; --band: #f0f3f6;
+    --pass: #1a7f37; --pass-bg: #dff3e4; --warn: #8a5a00; --warn-bg: #fbecc4; --fail: #b3261e; --fail-bg: #fbdcd9; --unk: #57606a; --unk-bg: #e7eaee;
+    --pass-fill: #2da44e; --warn-fill: #d9a514; --fail-fill: #cf222e; --unk-fill: #afb8c1;
+    --series-1: #2a78d6; --series-1-soft: #2a78d655; --series-2: #eb6834; --series-2-soft: #eb683455;
+    --focus: #2a78d6;
+    --display: "Space Grotesk", "Inter", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --body: "Inter", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171a; --surface: #1b1f23; --fg: #eef0f2; --fg-2: #bcc3cb; --fg-3: #939ba5; --rule: #2f353c; --band: #22272c;
+      --pass: #6fd08a; --pass-bg: #173322; --warn: #e6b450; --warn-bg: #3a2e12; --fail: #ff8f86; --fail-bg: #40201d; --unk: #b1bac4; --unk-bg: #2a3037;
+      --pass-fill: #3fb950; --warn-fill: #d29922; --fail-fill: #f85149; --unk-fill: #6e7681;
+      --series-1: #3987e5; --series-1-soft: #3987e566; --series-2: #d95926; --series-2-soft: #d9592666;
+      --focus: #3987e5; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171a; --surface: #1b1f23; --fg: #eef0f2; --fg-2: #bcc3cb; --fg-3: #939ba5; --rule: #2f353c; --band: #22272c;
+    --pass: #6fd08a; --pass-bg: #173322; --warn: #e6b450; --warn-bg: #3a2e12; --fail: #ff8f86; --fail-bg: #40201d; --unk: #b1bac4; --unk-bg: #2a3037;
+      --pass-fill: #3fb950; --warn-fill: #d29922; --fail-fill: #f85149; --unk-fill: #6e7681;
+      --series-1: #3987e5; --series-1-soft: #3987e566; --series-2: #d95926; --series-2-soft: #d9592666;
+    --focus: #3987e5; color-scheme: dark;
+  }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.55; padding-block: 32px 56px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+  main { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+  header, section.text { max-width: 68ch; display: flex; flex-direction: column; gap: 10px; }
+  section.block { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  section.block > p { max-width: 68ch; color: var(--fg-2); margin: 0; }
+  h1 { font-family: var(--display); font-weight: 600; font-size: 2.6rem; line-height: 1.15; margin: 0; text-wrap: balance; }
+  h2 { font-family: var(--display); font-weight: 600; font-size: 1.8rem; line-height: 1.2; margin: 0; }
+  p { margin: 0; }
+  .meta { color: var(--fg-3); font-size: 0.87rem; }
+  ul.lead { list-style: none; padding: 0; margin: 4px 0 0; display: grid; grid-template-columns: repeat(7, max-content); gap: 8px 10px; align-items: center; max-width: none; }
+  ul.lead li { display: contents; }
+  ul.lead .k { grid-column: 1; font-family: var(--display); font-weight: 600; font-size: 1.05rem; padding-right: 6px; }
+  ul.lead .n { color: var(--fg-3); font-size: 0.85rem; padding-right: 6px; font-variant-numeric: tabular-nums; }
+  ul.lead .chip { font-size: 0.8rem; padding: 3px 10px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  ul.lead .chip b { font-size: 0.95rem; font-weight: 700; }
+  ul.lead .chip.zero { opacity: 0.45; }
+  ul.lead .chip.unknown { grid-column: 6; }
+  ul.lead .chip.none { grid-column: 7; }
+  @media (max-width: 560px) { ul.lead { grid-template-columns: repeat(3, max-content); } ul.lead .k { grid-column: 1; } ul.lead .n { grid-column: 2 / span 2; } ul.lead .chip.unknown, ul.lead .chip.none { grid-column: auto; } }
+  ul { margin: 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 6px; }
+  .tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; min-width: 0; }
+  .tablewrap.tall { max-height: 640px; overflow-y: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 0.87rem; }
+  th, td { padding: 6px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--rule); }
+  thead th { font-weight: 500; color: var(--fg-2); vertical-align: bottom; white-space: normal; line-height: 1.3; font-size: 0.8rem; background: var(--surface); position: sticky; top: 0; }
+  tbody th[scope="row"] { text-align: left; font-weight: 600; }
+  td.l, th.l { text-align: left; }
+  td.why { white-space: normal; min-width: 22em; color: var(--fg-2); }
+  thead th.viz { text-align: left; }
+  td.viz { padding-block: 2px; }
+  svg.bar { display: block; }
+  svg.bar .rng { fill: var(--series-1-soft); stroke: var(--series-1); stroke-width: 1; }
+  svg.bar .rng2 { fill: var(--series-2-soft); stroke: var(--series-2); stroke-width: 1; }
+  svg.bar .med { fill: var(--fg); }
+  svg.bar .zero { stroke: var(--rule); stroke-width: 1; }
+  svg.bar .ref { stroke: var(--fg-3); stroke-width: 1; stroke-dasharray: 2 3; fill: none; }
+  svg.bar .lim { stroke: var(--fg-2); stroke-width: 1.5; }
+  svg.bar .whisker { stroke: var(--series-1); stroke-width: 1; fill: none; }
+  svg.bar .whisker.rng2 { stroke: var(--series-2); }
+  svg.bar .dot { fill: var(--fg-3); opacity: 0.6; }
+  svg.bar .dot.warn { fill: var(--warn-fill); stroke: var(--surface); stroke-width: 1; opacity: 1; }
+  svg.bar .dot.fail { fill: var(--fail-fill); stroke: var(--surface); stroke-width: 1; opacity: 1; }
+  svg.axis text { fill: var(--fg-3); font-size: 10px; font-family: var(--body); }
+  tr.arm th { text-align: left; background: var(--band); color: var(--fg-2); font-weight: 500; font-size: 0.78rem; }
+  td.key { font-weight: 600; }
+  tr.own th, tr.own td { background: var(--band); font-weight: 600; }
+  tr.total th, tr.total td { border-top: 2px solid var(--rule); font-weight: 600; }
+  tbody tr:last-child td, tbody tr:last-child th { border-bottom: 0; }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.03em; }
+  .chip.pass { color: var(--pass); background: var(--pass-bg); }
+  .chip.warn { color: var(--warn); background: var(--warn-bg); }
+  .chip.fail { color: var(--fail); background: var(--fail-bg); }
+  .chip.unknown { color: var(--unk); background: var(--unk-bg); }
+  .chip.none { color: var(--fg-2); background: transparent; box-shadow: inset 0 0 0 1px var(--fg-3); }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; }
+  .controls label { display: flex; flex-direction: column; gap: 3px; font-size: 0.78rem; color: var(--fg-2); }
+  .controls select, .controls input { font: inherit; font-size: 0.9rem; padding: 5px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--fg); }
+  .controls select:focus-visible, .controls input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .count { color: var(--fg-3); font-size: 0.85rem; }
+  .cal { display: grid; grid-template-columns: max-content 1fr; gap: 5px 12px; align-items: start; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; }
+  .cal .night { font-size: 0.78rem; color: var(--fg-2); font-variant-numeric: tabular-nums; line-height: 12px; padding-top: 1px; white-space: nowrap; }
+  .cal .cells { display: flex; flex-wrap: wrap; gap: 2px; min-width: 0; }
+  .sq { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+  /* By time: each row is one night on a shared clock, a visit drawn from its start for as long as it exposed. */
+  .cal .cells.time { display: block; position: relative; height: 14px; background-image: linear-gradient(to right, var(--rule) 1px, transparent 1px); background-size: calc(100% / var(--hours, 12)) 100%; border-right: 1px solid var(--rule); }
+  .cal .cells.time .sq { position: absolute; top: 1px; height: 12px; min-width: 3px; border-radius: 1px; box-shadow: 0 0 0 0.5px var(--surface); }
+  .cal .axis { position: relative; height: 14px; font-size: 0.72rem; color: var(--fg-3); font-variant-numeric: tabular-nums; }
+  .cal .axis span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+  .controls .checks { display: inline-flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+  .controls .checks label { flex-direction: row; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--fg); cursor: pointer; }
+  .controls .checks input { width: 15px; height: 15px; margin: 0; padding: 0; accent-color: var(--focus); }
+  .controls .checks input:disabled + span { color: var(--fg-3); }
+  .sq.pass { background: var(--pass-fill); } .sq.warn { background: var(--warn-fill); } .sq.fail { background: var(--fail-fill); } .sq.unknown { background: var(--unk-fill); }
+  /* No QA result: an outline, nothing inside. */
+  .sq.none, .cal .cells.time .sq.none { background: transparent; box-shadow: inset 0 0 0 1px var(--fg-2); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--fg-2); font-size: 0.85rem; align-items: center; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .tip { position: fixed; z-index: 20; pointer-events: none; background: var(--surface); color: var(--fg); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; font-size: 0.82rem; line-height: 1.45; box-shadow: 0 4px 14px rgb(0 0 0 / 0.18); max-width: 300px; }
+  .ctl { font-size: 0.78rem; color: var(--fg-2); align-self: center; }
+  .sq { cursor: default; }
+  .sq:hover { outline: 2px solid var(--fg); outline-offset: 0; }
+  .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+  .seg button { font: inherit; font-size: 0.85rem; padding: 5px 11px; border: 0; border-right: 1px solid var(--rule); background: var(--surface); color: var(--fg-2); cursor: pointer; }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: var(--band); color: var(--fg); font-weight: 600; }
+  .seg button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .sub { color: var(--fg-3); }
+  .notes { color: var(--fg-2); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>{{TITLE}}</h1>
+    <p class="meta">Visits {{FIRST}} to {{LAST}}{{DATES}} · {{NVISITS}} visits judged, {{NIMAGES}} detector images{{NO_RESULT_META}} · made {{TODAY}}</p>
+    <ul class="lead">{{LEAD}}</ul>
+  </header>
+
+  <section class="block">
+    <h2>Every visit at a glance</h2>
+    <p>One row per night (HST date of the evening). By time, each visit is drawn from its start for as long as it exposed, over the night (18:00 to 07:00) or the whole day from noon; in the order taken, each visit is one square. A visit takes the worst verdict among the detectors selected, and one that did not read any of them is left out. Hover or tap a visit for its number, time, kind and the detectors behind its verdict.</p>
+    <div class="controls">
+      <div class="checks" role="group" aria-label="Frames shown">
+        <label for="f-show-science"><input type="checkbox" id="f-show-science" data-show="science" checked><span>Science</span></label>
+        <label for="f-show-cal"><input type="checkbox" id="f-show-cal" data-show="cal" checked><span>Arcs, quartz and sky, full slit</span></label>
+        <label for="f-show-eng"><input type="checkbox" id="f-show-eng" data-show="eng"><span>Engineering fibers</span></label>
+      </div>
+      <div class="legend">
+        <span><span class="sq pass"></span>PASS</span><span><span class="sq warn"></span>WARN</span><span><span class="sq fail"></span>FAIL</span><span><span class="sq unknown"></span>UNKNOWN</span><span><span class="sq none"></span>NO RESULT</span>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Layout" data-group="layout">
+        <button type="button" data-value="time" aria-pressed="true">By time (HST)</button>
+        <button type="button" data-value="order" aria-pressed="false">In order taken</button>
+      </div>
+      <div class="checks">
+        <label for="f-night"><input type="checkbox" id="f-night" checked><span>Night only, 18:00 to 07:00</span></label>
+      </div>
+      <span class="ctl">Arm</span>
+      <div class="seg" role="group" aria-label="Arm" data-group="arm">
+        <button type="button" data-value="" aria-pressed="true">All</button>
+        <button type="button" data-value="b" aria-pressed="false">b</button>
+        <button type="button" data-value="r" aria-pressed="false">r</button>
+        <button type="button" data-value="n" aria-pressed="false">n</button>
+        <button type="button" data-value="m" aria-pressed="false">m</button>
+      </div>
+      <span class="ctl">Spectrograph</span>
+      <div class="seg" role="group" aria-label="Spectrograph" data-group="spec">
+        <button type="button" data-value="" aria-pressed="true">All</button>
+        <button type="button" data-value="1" aria-pressed="false">1</button>
+        <button type="button" data-value="2" aria-pressed="false">2</button>
+        <button type="button" data-value="3" aria-pressed="false">3</button>
+        <button type="button" data-value="4" aria-pressed="false">4</button>
+      </div>
+    </div>
+    <div class="cal" id="cal"></div>
+    <div class="tip" id="tip" hidden></div>
+
+  </section>
+
+  <section class="block">
+    <h2>Visits by kind</h2>
+    <p>A visit takes the worst verdict among its detectors; the last column counts visits that were taken and have no QA result. Unclassified frames are those the QA did not recognise as an arc, quartz, science or twilight frame: darks, dot-roach, fiber-profile and flat sequences.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th scope="col" class="l">Kind</th><th scope="col">Visits</th><th scope="col">PASS</th><th scope="col">WARN</th><th scope="col">FAIL</th><th scope="col">UNKNOWN</th><th scope="col">No result</th></tr></thead>
+        <tbody>
+{{SUMMARY}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Science frames: offsets from the calibration</h2>
+    <p>The x offset is the median offset of every fiber's trace from the calibration. The y offset is that of the sky lines, taking the species furthest off on each image. The km/s value converts each species' offset with the dispersion at its own lines. Values are as measured: on visits read with the m arm the gate first subtracts a standing offset (the b arm's in x, the n arm's in y) where qadb holds one, so a value drawn here may sit beyond a limit it passed.</p>
+    <div class="legend">
+      <span><svg width="34" height="14" aria-hidden="true"><rect x="1" y="4" width="32" height="6" rx="3" fill="var(--series-1-soft)" stroke="var(--series-1)"/><rect x="15" y="1" width="2" height="12" fill="var(--fg)"/></svg>x offset, every fiber's trace: 5th to 95th percentile with the median, and the full range as a line</span>
+      <span><svg width="34" height="14" aria-hidden="true"><rect x="1" y="4" width="32" height="6" rx="3" fill="var(--series-2-soft)" stroke="var(--series-2)"/><rect x="15" y="1" width="2" height="12" fill="var(--fg)"/></svg>y offset, sky lines</span>
+      <span><svg width="12" height="14" aria-hidden="true"><line x1="6" x2="6" y1="0" y2="14" stroke="var(--fg-3)" stroke-dasharray="2 3"/></svg>The gate's WARN limit, either side</span>
+      <span><svg width="40" height="14" aria-hidden="true"><circle cx="6" cy="7" r="1.5" fill="var(--fg-3)"/><circle cx="20" cy="7" r="3.2" fill="var(--warn-fill)" stroke="var(--surface)"/><circle cx="33" cy="7" r="3.2" fill="var(--fail-fill)" stroke="var(--surface)"/></svg>One dot per image outside that range, and per image the gate gave WARN or FAIL, larger and coloured, whichever check gave it</span>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th scope="col" class="l">Detector</th><th scope="col">Images</th>
+          <th scope="col">x offset, 5th to 95th percentile (px)</th><th scope="col">Largest x (px)</th>
+          <th scope="col">y offset, 5th to 95th percentile (px)</th><th scope="col">Largest y (px)</th><th scope="col">Largest y (km/s)</th>
+          <th scope="col" class="viz">Offset (px){{OAXIS}}</th><th scope="col">Images WARN or FAIL</th></tr>
+        </thead>
+        <tbody>
+{{OFFSETS}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Science frames: sky-line residual after the visit's adjustment</h2>
+    <p>The residual is the median offset of the held-back sky lines from the visit's own detectorMap, converted to km/s with the dispersion at those lines. Each bar is drawn on its arm's own scale, so the gate's limits sit in the same place in every row.</p>
+    <div class="legend">
+      <span><svg width="34" height="14" aria-hidden="true"><line x1="0" x2="34" y1="7" y2="7" stroke="var(--series-1)"/><rect x="6" y="3" width="22" height="8" rx="4" fill="var(--series-1-soft)" stroke="var(--series-1)"/><rect x="15" y="0" width="2" height="14" fill="var(--fg)"/></svg>5th to 95th percentile with the median; the line runs from the smallest to the largest</span>
+      <span><svg width="12" height="14" aria-hidden="true"><line x1="6" x2="6" y1="0" y2="14" stroke="var(--fg-3)" stroke-dasharray="2 3"/></svg>The gate's WARN limit</span>
+      <span><svg width="12" height="14" aria-hidden="true"><line x1="6" x2="6" y1="0" y2="14" stroke="var(--fg-2)" stroke-width="1.5"/></svg>FAIL limit</span>
+      <span><svg width="40" height="14" aria-hidden="true"><circle cx="6" cy="7" r="1.5" fill="var(--fg-3)"/><circle cx="20" cy="7" r="3.2" fill="var(--warn-fill)" stroke="var(--surface)"/><circle cx="33" cy="7" r="3.2" fill="var(--fail-fill)" stroke="var(--surface)"/></svg>One dot per image outside that range, and per image the gate gave WARN or FAIL, larger and coloured, whichever check gave it</span>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th scope="col" class="l">Detector</th><th scope="col">Images with a residual</th><th scope="col">Median (km/s)</th><th scope="col">5th to 95th percentile (km/s)</th><th scope="col">Largest (km/s)</th>
+          <th scope="col" class="viz">Residual against its limits</th></tr>
+        </thead>
+        <tbody>
+{{RESIDUALS}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>By night</h2>
+    <p>Counts are visits judged; the brackets give how many of them are WARN or FAIL. The last column counts visits with no QA result.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th scope="col" class="l">Night (HST, evening date)</th><th scope="col">Visits</th><th scope="col">Science</th><th scope="col">Twilight and all-sky</th><th scope="col">Arcs and quartz, full slit</th><th scope="col">Engineering-fiber frames</th><th scope="col">No result</th></tr></thead>
+        <tbody>
+{{NIGHTS}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Visits that do not pass, engineering-fiber frames aside ({{NFLAGGED}})</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th scope="col" class="l">Visit</th><th scope="col" class="l">HST</th><th scope="col" class="l">Kind</th><th scope="col" class="l">Verdict</th><th scope="col" class="l">Detectors</th><th scope="col" class="l">Why</th></tr></thead>
+        <tbody>
+{{FLAGGED}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+{{NO_RESULT_SECTION}}
+
+  <section class="block">
+    <h2>Every visit</h2>
+    <div class="controls">
+      <label for="f-kind">Kind<select id="f-kind"><option value="">All kinds</option><option>science</option><option>all-sky</option><option>twilight</option><option>arc</option><option>quartz</option><option>unclassified</option></select></label>
+      <label for="f-slit">Lit through<select id="f-slit"><option value="">Either</option><option>full slit</option><option>engineering fibers</option></select></label>
+      <label for="f-status">Verdict<select id="f-status"><option value="">All verdicts</option><option value="notpass">Not PASS</option><option>PASS</option><option>WARN</option><option>FAIL</option><option>UNKNOWN</option><option>NO RESULT</option></select></label>
+      <label for="f-visit">Visit<input id="f-visit" type="search" inputmode="numeric" placeholder="first digits" size="10"></label>
+      <span class="count" id="count" aria-live="polite"></span>
+    </div>
+    <div class="tablewrap tall">
+      <table>
+        <thead><tr><th scope="col" class="l">Visit</th><th scope="col" class="l">HST</th><th scope="col" class="l">Kind</th><th scope="col" class="l">Lit through</th><th scope="col">Exposure (s)</th><th scope="col" class="l">Arms</th><th scope="col" class="l">Verdict</th><th scope="col" class="l">Detectors flagged</th><th scope="col" class="l">Why</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="text notes">
+    <h2>How each kind is judged</h2>
+    <p>Every verdict on this page is the one drp_qa's gate stored in qadb for the image; the page judges nothing itself. The gate's checks today, each WARN then FAIL (a value at a limit has crossed it):</p>
+    <ul>
+      {{CHECKS}}
+      <li><strong>A visit</strong> takes the worst verdict among its detectors. UNKNOWN means the QA ran and nothing could be judged, or qadb holds no verdict for the image. A verdict stored before a check was changed is as it was judged then.</li>
+      {{NO_RESULT_NOTE}}
+      <li><strong>Not covered:</strong> visits after the latest one judged, whose results may be on their way; and darks, biases and master frames, which have no QA method. Whether a flagged frame is truly faulty has not been checked.</li>
+      <li><strong>Source:</strong> {{SOURCE}}</li>
+    </ul>
+  </section>
+
+</main>
+
+<script>
+  const DATA = {{DATA}};
+  const rows = document.getElementById("rows"), count = document.getElementById("count");
+  const fKind = document.getElementById("f-kind"), fSlit = document.getElementById("f-slit"), fStatus = document.getElementById("f-status"), fVisit = document.getElementById("f-visit");
+  const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", UNKNOWN: "unknown", "NO RESULT": "none" };
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  function render() {
+    const kind = fKind.value, slit = fSlit.value, status = fStatus.value, visit = fVisit.value.trim();
+    const shown = DATA.filter((r) =>
+      (!kind || r[2].startsWith(kind)) && (!slit || r[3] === slit) &&
+      (!status || (status === "notpass" ? r[6] !== "PASS" : r[6] === status)) && (!visit || String(r[0]).startsWith(visit)));
+    rows.innerHTML = shown.map((r) =>
+      `<tr><th scope="row">${r[0]}</th><td class="l">${r[1]}</td><td class="l">${esc(r[2])}</td><td class="l">${r[3]}</td><td>${r[4]}</td><td class="l">${r[5]}</td>` +
+      `<td class="l"><span class="chip ${CLS[r[6]]}">${r[6]}</span></td><td class="l">${esc(r[7])}</td><td class="l why">${esc(r[8])}</td></tr>`).join("");
+    count.textContent = `${shown.length.toLocaleString()} of ${DATA.length.toLocaleString()} visits`;
+  }
+  [fKind, fSlit, fStatus].forEach((el) => el.addEventListener("change", render));
+  fVisit.addEventListener("input", render);
+  const cal = document.getElementById("cal"), tip = document.getElementById("tip");
+  const sel = { show: new Set(["science", "cal"]), arm: "", spec: "", layout: "time", night: true };
+  // N: the visit was taken and has no QA result; every detector of such a visit carries it.
+  const WORD = { P: "PASS", W: "WARN", F: "FAIL", U: "UNKNOWN", N: "NO RESULT" }, RANK = { N: -1, U: 0, P: 1, W: 2, F: 3 };
+  const groupOf = (r) => r[2] === "science" ? "science" : r[3] === "engineering fibers" ? "eng" : "cal";
+  // the detectors of a visit that the arm and spectrograph selection keeps, as [name, letter]
+  const chosen = (r) => r[10].split(" ").filter(Boolean).map((d) => [d.slice(0, 2), d[2]])
+    .filter(([cam]) => (!sel.arm || cam[0] === sel.arm) && (!sel.spec || cam[1] === sel.spec));
+  const worstOf = (list) => list.reduce((w, [, s]) => RANK[s] > RANK[w] ? s : w, "N");
+  // Minutes from noon (HST) of the night's date to the visit's start: every night shares that clock.
+  const minutesOf = (r) => {
+    if (!r[1] || !r[9]) return null;
+    const [date, clock] = r[1].split(" "), [hour, minute] = clock.split(":").map(Number);
+    return (date === r[9] ? hour - 12 : hour + 12) * 60 + minute;
+  };
+  const STARTS = DATA.map(minutesOf);
+  const lasts = (i) => (+DATA[i][4] || 0) / 60;
+  // The clock's span in hours from noon (HST): the night, 18:00 to 07:00, or the whole day.
+  const NIGHT = [6, 19], DAY = [0, 24];
+  function renderCal() {
+    const byTime = sel.layout === "time";
+    const nights = new Map();
+    const [firstHour, lastHour] = sel.night ? NIGHT : DAY;
+    const hours = lastHour - firstHour, from = firstHour * 60, to = lastHour * 60;
+    let untimed = 0, outside = 0;
+    DATA.forEach((r, i) => {
+      if (!sel.show.has(groupOf(r))) return;
+      const list = chosen(r);
+      if (!list.length) return;
+      if (byTime && STARTS[i] === null) { untimed += 1; return; }
+      if (byTime && (STARTS[i] + lasts(i) < from || STARTS[i] > to)) { outside += 1; return; }
+      if (!nights.has(r[9])) nights.set(r[9], []);
+      nights.get(r[9]).push([i, WORD[worstOf(list)]]);
+    });
+    const along = (minutes) => ((minutes - from) / (hours * 60) * 100).toFixed(3);
+    // A visit running over an end of the clock is drawn up to that end.
+    const square = ([i, status]) => {
+      const start = Math.max(STARTS[i], from), end = Math.min(STARTS[i] + lasts(i), to);
+      const place = byTime ? ` style="left:${along(start)}%;width:${((end - start) / (hours * 60) * 100).toFixed(3)}%"` : "";
+      return `<span class="sq ${CLS[status]}" data-i="${i}"${place} role="img" aria-label="Visit ${DATA[i][0]}, ${status}"></span>`;
+    };
+    const notes = [];
+    if (outside) notes.push(`${outside} ${outside === 1 ? "visit" : "visits"} outside 18:00 to 07:00 ${outside === 1 ? "is" : "are"} not drawn.`);
+    if (untimed) notes.push(`${untimed} ${untimed === 1 ? "visit" : "visits"} without a time ${untimed === 1 ? "is" : "are"} not drawn.`);
+    let axis = "";
+    if (byTime && nights.size) {
+      // As many hour labels as fit the width.
+      const step = Math.max(1, Math.ceil(hours * 52 / Math.max(cal.clientWidth - 120, 200)));
+      const ticks = [];
+      for (let hour = firstHour; hour <= lastHour; hour += step) ticks.push(`<span style="left:${along(hour * 60)}%">${String((hour + 12) % 24).padStart(2, "0")}:00</span>`);
+      axis = `<div class="night"></div><div class="axis">${ticks.join("")}</div>`;
+    }
+    cal.style.setProperty("--hours", hours);
+    cal.innerHTML = (axis + [...nights.entries()].sort().map(([night, list]) =>
+      `<div class="night">${night}</div><div class="cells${byTime ? " time" : ""}">` + list.map(square).join("") + "</div>").join("")
+      + notes.map((note) => `<div class="night"></div><div class="night">${note}</div>`).join(""))
+      || `<div class="night">${sel.show.size ? "No visit has the selected detectors." : "No kind of frame is selected."}</div>`;
+    tip.hidden = true;
+  }
+  function showTip(sq, x, y) {
+    const r = DATA[+sq.dataset.i], list = chosen(r), status = WORD[worstOf(list)];
+    const bad = list.filter(([, s]) => s === "W" || s === "F").map(([cam, s]) => `${cam} ${WORD[s]}`);
+    const which = sel.arm || sel.spec ? `detectors ${list.map(([cam]) => cam).join(" ")}` : `${list.length} detectors`;
+    tip.innerHTML = `<b>Visit ${r[0]}</b><br>${esc(r[1])} HST · ${r[4]} s<br>${esc(r[2])}${r[3] ? ", " + r[3] : ""}<br>` +
+      `<span class="chip ${CLS[status]}">${status}</span> ${status === "NO RESULT" ? esc(r[8]) : bad.length ? esc(bad.join(", ")) : "on " + which}`;
+    tip.hidden = false;
+    tip.style.left = Math.max(8, Math.min(x + 12, window.innerWidth - tip.offsetWidth - 8)) + "px";
+    tip.style.top = (y + 16 + tip.offsetHeight > window.innerHeight ? y - tip.offsetHeight - 10 : y + 16) + "px";
+  }
+  cal.addEventListener("mousemove", (e) => { const sq = e.target.closest(".sq"); if (sq) showTip(sq, e.clientX, e.clientY); else tip.hidden = true; });
+  cal.addEventListener("mouseleave", () => { tip.hidden = true; });
+  cal.addEventListener("click", (e) => { const sq = e.target.closest(".sq"); if (sq) { const b = sq.getBoundingClientRect(); showTip(sq, b.left, b.bottom - 12); } });
+  document.querySelectorAll(".seg").forEach((group) => group.addEventListener("click", (e) => {
+    const button = e.target.closest("button");
+    if (!button) return;
+    group.querySelectorAll("button").forEach((o) => o.setAttribute("aria-pressed", String(o === button)));
+    sel[group.dataset.group] = button.dataset.value;
+    renderCal();
+  }));
+  const fNight = document.getElementById("f-night");
+  document.querySelectorAll("input[data-show]").forEach((box) => box.addEventListener("change", () => {
+    if (box.checked) sel.show.add(box.dataset.show); else sel.show.delete(box.dataset.show);
+    renderCal();
+  }));
+  fNight.addEventListener("change", () => { sel.night = fNight.checked; renderCal(); });
+  document.querySelector('.seg[data-group="layout"]').addEventListener("click", () => { fNight.disabled = sel.layout !== "time"; });
+  // A reload can keep the boxes as they were left: start from what they show.
+  sel.show = new Set([...document.querySelectorAll("input[data-show]")].filter((box) => box.checked).map((box) => box.dataset.show));
+  sel.night = fNight.checked;
+  renderCal();
+  render();
+</script>
+</body>
+</html>

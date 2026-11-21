@@ -7,6 +7,67 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-20
+
+### Added
+
+- **The run report** — one stand-alone page giving every visit of a collection a verdict, the worst among its
+  detectors: every visit by night, on a clock (HST; the night, 18:00 to 07:00, or the whole day) or in the order
+  taken, for the kinds of frame, arm and spectrograph ticked; counts by kind; the
+  science frames' measurements per detector, each night, the visits that do not pass and a filterable list of
+  every visit. It judges nothing: each image's verdict, reason and kind of frame are its `qa_gate` row, read with
+  drp_qa's `readGate`, for any collection in qadb (a redone run's too). The page lists the gate's checks and
+  limits, from drp_qa's `CHECKS`, and draws the science checks' limits beside the offsets and sky-line residuals
+  as measured. Needs drp_qa 0.5.0 or later and a qadb at spt_qa_database 0.6.0, which dropped the tasks' own
+  verdict columns.
+- **Visits with no QA result** — with the opdb, a visit that exposed the spectrograph as an object, arc or flat
+  frame before the latest visit judged, and has no result in qadb, is shown as `NO RESULT`: an outline on the
+  calendar, a count beside each tally, kind and night, and a section listing each with how its sequence ended.
+  Visits after the latest one judged are left out, as their results may be on their way.
+- The page embeds its two typefaces (Inter and Space Grotesk, SIL Open Font License), about 95 kB, so it looks
+  the same wherever it is opened and fetches nothing.
+- `report --collection <collection> | --snapshot <dir> --out <dir>` writes the page as `index.html`, with
+  `visits.csv` and `images.csv`.
+- `snapshot` keeps the gate's verdicts (`qaGate.parquet`); `serve` and `report` refuse a snapshot without them.
+- `snapshot`, given the opdb, keeps every visit taken in its range, with its time, exposure, cameras, sequence
+  and how that ended (`visitInfo`), for the report.
+
+### Changed
+
+- **`serve` serves the run report**, at `/`, from a plain Tornado server. It reads qadb every `--refresh`
+  seconds (30 by default) on a thread of its own and makes the page again when there are new results, so a
+  browser is answered at once with the last page made: a database that fails or hangs no longer holds the
+  page up, or the server.
+- **The page served follows the server.** Every few seconds it asks for `/status`, reloads itself when a newer
+  page has been made, keeping the filters, buttons and place as they were left, and says when the results were
+  last read: in red, with the error, when a read fails; in amber, "Still reading", when none has worked for three
+  intervals (90 s at least) and one is under way; in red when none is. `serve` logs a failed read, the wait, and a
+  slow read's duration.
+  A page written by `report`, or served from a snapshot, is as before and fetches nothing.
+- A database connection that is not answered is given up on after 10 s (`PGCONNECT_TIMEOUT`, when not set).
+
+### Fixed
+
+- A read taken while a load was being written could bring an image's line residuals and not its image-quality
+  row; the image then lost that row (its lamp and illumination) until the server restarted. And a load stamped
+  before one already read, but written after it (two loaders at once), was never read. Each table now replaces
+  only the images it brought, a load is new by table, image and time, and each refresh reads from five minutes
+  before the latest load read.
+- A read from qadb that brought only images with line residuals and no image-quality row was not taken as new,
+  so those images showed only once a later image was loaded. `snapshot` and `report` likewise left such
+  visits out of the range they read from the opdb.
+
+### Removed
+
+- **The metric views** (the provenance strip, the verdicts so far and the comparison of a night against
+  reference visits), with `/dashboard`, `--reference` and `--allow-origin`, and the modules only they used:
+  `app`, `figures`, `comparison`, `store`, `serving` and `schema`. Panel, Bokeh and DuckDB are no longer
+  needed; Tornado is. `live.QadbMetricsStore` is now `live.QadbStore`, holding the tables qadb returned and
+  each visit's time; it reads no opdb and has no `minInterval`. `QadbStore.fromTables` replaces
+  `fromSnapshot`.
+- `snapshot` no longer writes the opdb's sequences and notes (`opdbVisitTimes`, `notes`) or the reference
+  visits' metrics. A snapshot that has them is still read.
+
 ## [0.5.0] - 2026-11-10
 
 ### Added

@@ -14,10 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The drp_qa the dashboard reads qadb with (pfs.drp.qa.qadb.reader, with its thresholds
-  # layers) and matches images to entries with (pfs.drp.qa.metrics.gate): a release tag, the
-  # first that has both.
-  DRP_QA_REF: 0.3.0
+  # The drp_qa the dashboard reads qadb with (pfs.drp.qa.qadb.reader): a release tag.
+  DRP_QA_REF: 0.6.1
 
 jobs:
   tests:
@@ -50,7 +48,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --no-deps "pfs-utils @ git+https://github.com/Subaru-PFS/pfs_utils.git"
-          python -m pip install numpy pandas pyarrow pyyaml scipy sqlalchemy duckdb panel pytest
+          python -m pip install numpy pandas pyarrow pyyaml scipy sqlalchemy tornado pytest
 
       - name: Run tests
         env:

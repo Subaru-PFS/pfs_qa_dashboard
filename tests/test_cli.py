@@ -8,8 +8,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-import pfs.drp.qa.qadb.reader
-from pfs.qa.dashboard.live import QadbMetricsStore
+from pfs.qa.dashboard import live
+from pfs.qa.dashboard.live import QadbStore
+from pfs.qa.dashboard.qadbSource import readSnapshot
 
 
 def _cli():
@@ -21,7 +22,7 @@ def _cli():
 
 
 def _read(qadb, collection, first, last, since=None):
-    """Return what `readQadb` returns for one image."""
+    """Return what `pfs.drp.qa.qadb.reader.readQadb` returns for one image."""
     nan = float("nan")
     iq = pd.DataFrame(
         {
@@ -36,28 +37,11 @@ def _read(qadb, collection, first, last, since=None):
                 name: [nan]
                 for name in ("medFwhm", "medDxCenter", "dxCenterRms", "pctFlagged", "linesPerFiber", "nLines")
             },
-            "qaStatus": ["PASS"],
-            "qaReason": [""],
             "calexpRun": [""],
             "decidedAt": [pd.Timestamp("2026-11-01 19:00")],
-            "thresholdsIds": ["1"],
         }
     )
     empty = pd.DataFrame(columns=["visit", "arm", "spectrograph", "decidedAt"])
-    thresholds = pd.DataFrame(
-        {
-            "thresholdsId": [1],
-            "metric": ["medFwhm"],
-            "population": [""],
-            "higherIsWorse": [True],
-            "absolute": [False],
-            "method": ["percentile"],
-            "warn": [3.0],
-            "fail": [4.0],
-            "provenance": ["test"],
-        }
-    )
-    files = pd.DataFrame({"thresholdsId": [1], "name": ["iqQaThresholds-test.yaml"], "nEntries": [1]})
     times = pd.DataFrame(
         {
             "pfs_visit_id": [1001],
@@ -69,10 +53,38 @@ def _read(qadb, collection, first, last, since=None):
         "iqQaMetrics": iq,
         "dmLineResidualSummary": empty,
         "dmLineResidualMetrics": empty,
-        "thresholds": thresholds,
-        "thresholdsFiles": files,
         "visitTimes": times,
     }
+
+
+def _gate(qadb, collection, first, last):
+    """Return what `pfs.drp.qa.qadb.reader.readGate` returns for `_read`'s image."""
+    return pd.DataFrame(
+        {
+            "visit": [1001],
+            "arm": ["b"],
+            "spectrograph": [1],
+            "frameType": ["arc"],
+            "qaStatus": ["WARN"],
+            "qaDecidedBy": ["width"],
+            "qaReason": ["line and trace width 4% above normal"],
+            "mode": ["live"],
+            "decidedAt": [pd.Timestamp("2026-11-01 19:00")],
+            "run": ["r"],
+            "processingId": [1],
+        }
+    )
+
+
+def _qadb(monkeypatch):
+    """Answer the CLI's qadb reads with `_read` and `_gate`, and return what each was asked."""
+    asked = {"numbers": [], "gate": []}
+    monkeypatch.setitem(
+        sys.modules, "pfs.utils.database.qadb", types.SimpleNamespace(QaDB=lambda **kwargs: object())
+    )
+    monkeypatch.setattr(live, "readQadb", lambda *args: asked["numbers"].append(args[1:]) or _read(*args))
+    monkeypatch.setattr(live, "readGate", lambda *args: asked["gate"].append(args[1:]) or _gate(*args))
+    return asked
 
 
 def testServeTakesOneSource():
@@ -86,19 +98,20 @@ def testServeTakesOneSource():
 
 def testSnapshotWritesWhatServeReads(tmp_path, monkeypatch):
     """``snapshot`` reads qadb once into a directory that ``serve --snapshot`` serves."""
+    asked = _qadb(monkeypatch)
     connected = []
     fakeQadb = types.SimpleNamespace(QaDB=lambda **kwargs: connected.append(kwargs) or object())
     monkeypatch.setitem(sys.modules, "pfs.utils.database.qadb", fakeQadb)
-    monkeypatch.setattr(pfs.drp.qa.qadb.reader, "readQadb", _read)
 
     _cli().main(["snapshot", "--collection", "c", "--out", str(tmp_path / "snap")])
     assert connected[0]["user"] == "pfs"
-    store = QadbMetricsStore.fromSnapshot(tmp_path / "snap")
-    assert store.provenance["collection"] == "c (qadb snapshot)"
-    assert store.images()["visit"].tolist() == [1001]
-    # The thresholds cited travel with the snapshot.
-    assert store.thresholdsFiles["name"].tolist() == ["iqQaThresholds-test.yaml"]
-    assert store.trend("iqQaMetrics", "medFwhm").empty  # not measured: NaN values are left out
+    tables, provenance = readSnapshot(tmp_path / "snap")
+    assert provenance["collection"] == "c (qadb snapshot)" and "references" not in provenance
+    store = QadbStore.fromTables(tables)
+    assert store.raw["iqQaMetrics"]["visit"].tolist() == [1001] and store.times["visit"].tolist() == [1001]
+    # The gate's verdicts travel with the snapshot, read over the same visits as the numbers.
+    assert store.raw["qaGate"]["qaStatus"].tolist() == ["WARN"]
+    assert asked["gate"] == [("c", 0, 2**31 - 1)] and asked["numbers"] == [("c", 0, 2**31 - 1, None)]
     # Negative control: a snapshot needs somewhere to go.
     with pytest.raises(SystemExit):
         _cli().makeParser().parse_args(["snapshot", "--collection", "c"])
@@ -115,25 +128,32 @@ def testServeRefusesADirectoryThatIsNotASnapshot(tmp_path, monkeypatch, capsys):
     assert "is not a snapshot" in error and "qaDashboard.py snapshot" in error
     assert not served
 
-    # Negative control: a directory the snapshot command wrote is served.
-    monkeypatch.setitem(
-        sys.modules, "pfs.utils.database.qadb", types.SimpleNamespace(QaDB=lambda **kwargs: object())
-    )
-    monkeypatch.setattr(pfs.drp.qa.qadb.reader, "readQadb", _read)
+    # A snapshot from before the gate's verdicts were read holds none: it is written again, not served.
+    _qadb(monkeypatch)
     cli.main(["snapshot", "--collection", "c", "--out", str(tmp_path / "snap")])
+    (tmp_path / "snap" / "qaGate.parquet").rename(tmp_path / "qaGate.parquet")
+    with pytest.raises(SystemExit):
+        cli.main(["serve", "--snapshot", str(tmp_path / "snap")])
+    assert "no qaGate.parquet" in capsys.readouterr().err and not served
+
+    # Negative control: a directory the snapshot command wrote is served.
+    (tmp_path / "qaGate.parquet").rename(tmp_path / "snap" / "qaGate.parquet")
     cli.main(["serve", "--snapshot", str(tmp_path / "snap")])
     assert served and served[0].snapshot == tmp_path / "snap"
 
 
-def testReferencesNeedTheirOwnNames(capsys):
-    """Two references of one name would show as one, the second's visits under both descriptions."""
-    cli = _cli()
-    with pytest.raises(SystemExit):
-        cli.main(["serve", "--collection", "c", "--reference", "a=1-2", "--reference", "a=5-6"])
-    assert "each needs its own name" in capsys.readouterr().err
-    with pytest.raises(ValueError, match="a given more than once"):
-        QadbMetricsStore.fromQadb(None, "c", references=[cli._reference("a=1-2"), cli._reference("a=5-6")])
-    # Negative control: the same visits under two names are two references.
-    argv = ["serve", "--collection", "c", "--reference", "a=1-2", "--reference", "b=1-2"]
-    args = cli.makeParser().parse_args(argv)
-    assert [reference.name for reference in args.reference] == ["a", "b"]
+def testOptionsOfTheMetricViewsAndTheReportsOwnLimitsAreGone(capsys):
+    """The reference visits and websocket origins were the metric views', the limits the report's own judging."""
+    parser = _cli().makeParser()
+    for option in (
+        ["--reference", "a=1-2"],
+        ["--allow-origin", "host"],
+        ["--kms-r", "1", "2"],
+        ["--offset-x", "0.5", "1"],
+        ["--no-mode-correction"],
+    ):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["serve", "--collection", "c", *option])
+        assert "unrecognized arguments" in capsys.readouterr().err
+    # Negative control: the address to listen on is still an option.
+    assert parser.parse_args(["serve", "--collection", "c", "--address", "0.0.0.0"]).address == "0.0.0.0"

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pfs-qa-dashboard"
-version = "0.5.0"
-description = "Browser dashboard of the PFS image QA gate, live from qadb"
+version = "0.6.0"
+description = "The PFS QA run report, live from qadb"
 authors = [{ name = "Subaru PFS DRP Team" }]
 readme = "README.md"
 requires-python = ">=3.12"
@@ -17,7 +17,8 @@ classifiers = [
 ]
 
 # drp_qa (pfs.drp.qa) and pfs_utils are needed too. Neither is installable from
-# PyPI: they come from the LSST/PFS stack or from checkouts on PYTHONPATH.
+# PyPI: they come from the LSST/PFS stack or from checkouts on PYTHONPATH. pyyaml
+# and scipy are for drp_qa, whose qadb reader imports them.
 dependencies = [
     "numpy >= 2.0",
     "pandas",
@@ -25,8 +26,7 @@ dependencies = [
     "pyyaml",
     "scipy",
     "sqlalchemy",
-    "duckdb",
-    "panel",
+    "tornado",
     "psycopg[binary]",
 ]
 
@@ -36,6 +36,10 @@ dev = ["ruff==0.14.13", "pytest>=8.0.0"]
 [tool.setuptools.packages.find]
 where = ["python"]
 include = ["pfs.qa*"]
+
+[tool.setuptools.package-data]
+# The run report's page template, its km/s per pixel table and the fonts it embeds.
+"pfs.qa.dashboard" = ["data/*", "data/fonts/*"]
 
 [tool.ruff]
 target-version = "py312"
