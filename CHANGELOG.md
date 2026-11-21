@@ -7,6 +7,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **The night page** (PIPE2D-2022), now the index (`/`): the current night at a glance — the latest visit, the
+  night on a clock, counts for the night, the science offset and residual bars, the visits that do not pass, and
+  the night's visits most-recent-first. The most recent night with a visit is shown.
+- **Awaiting QA**: with the opdb, a visit taken after the latest one judged, with no result yet, is `AWAITING` (the
+  night page lists it, on the clock, in the latest-visit tile and a panel); the active night follows the latest
+  exposure, so the page moves to tonight on the first observation, before any reduction. An arc shows its lamp
+  before QA runs, from the opdb's sequence name.
+- **The per-visit page** (`/visit/<n>`, PIPE2D-2023): one visit over all its detectors — the header, each
+  detector's verdict and the gate's reason, a metric × camera grid coloured by verdict, and the sky-line residual
+  by species. A not-yet-reduced visit reads "No QA result". Built from the server's cached read, so it needs no
+  database of its own. The run report and both clocks link each visit to its page.
+
+### Changed
+
+- **`serve` serves three pages** from one read: `/` (night), `/run` (run report) and `/visit/<n>`, sharing one
+  `/status`. It now also reads the opdb for the visits taken each refresh, not only when qadb changes, so a new
+  exposure makes the pages again and the browser reloads during a run that is not being reduced.
+- The page's stylesheet (`data/theme.css`) and the science offset/residual bars (`scienceSections`) are shared by
+  the run report and the night page; the run report's output is unchanged.
+
 ## [0.6.0] - 2026-11-20
 
 ### Added
