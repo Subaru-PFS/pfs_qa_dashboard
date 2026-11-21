@@ -992,6 +992,14 @@ def _defaultBuilder(tables: Mapping[str, pd.DataFrame], info: pd.DataFrame | Non
     return buildReport(tables, info=info, **options)
 
 
+def _sameInfo(a: pd.DataFrame, b: pd.DataFrame) -> bool:
+    """Whether two visit-information frames hold the same rows (by the columns the pages read)."""
+    cols = [name for name in _INFO if name in a.columns and name in b.columns]
+    left = a[cols].sort_values("visit").astype(str).reset_index(drop=True)
+    right = b[cols].sort_values("visit").astype(str).reset_index(drop=True)
+    return left.equals(right)
+
+
 class ReportCache:
     """The pages of a store's collection, made again when the store's tables change.
 
@@ -1089,8 +1097,8 @@ class ReportCache:
             self.store.refresh()
             version = self.store.version
             qadbChanged = not self.reports or self._version != version
-            info, newExposures = self._refreshInfo(qadbChanged)
-            changed = qadbChanged or newExposures
+            info, infoChanged = self._refreshInfo()
+            changed = qadbChanged or infoChanged
             if changed:
                 # A store that has read no image yet holds no table: the page then says so, with no visit.
                 tables = {name: self.store.raw.get(name, pd.DataFrame(columns=_IMAGE)) for name in _TABLES}
@@ -1106,13 +1114,14 @@ class ReportCache:
             self.error = None
             return changed
 
-    def _refreshInfo(self, qadbChanged: bool) -> tuple[pd.DataFrame | None, bool]:
-        """Return the visit information to build with, and whether the opdb brought new visits.
+    def _refreshInfo(self) -> tuple[pd.DataFrame | None, bool]:
+        """Return the visit information to build with, and whether it changed since the last read.
 
-        A fixed ``info`` is returned unchanged. Without the opdb, qadb's own visit times are used.
-        Otherwise the opdb is read to the latest visit taken: the whole range on a qadb change (and the
-        first time), so judged visits are current, and only the visits newer than the last read between
-        qadb changes, so a new exposure shows without waiting for its reduction.
+        A fixed ``info`` never changes. Without the opdb, qadb's own visit times are used. Otherwise the
+        first read covers the whole range; later reads re-read only from the earliest visit whose info can
+        still change — a new exposure, or a visit in a sequence that has not ended — to the latest visit
+        taken, so settled visits are never read again. (A sequence that never records an end keeps its
+        visits in the re-read window; the window is at worst that one sequence, not the whole run.)
         """
         if self._info is not None:
             return self._info, False
@@ -1123,14 +1132,23 @@ class ReportCache:
         if self._readInfo is None or not visits:
             return self.store.times, False
         first = self._firstVisit or visits[0]
-        if qadbChanged or self.info is None:
+        if self.info is None:
             return self._readInfo(first, LAST_VISIT), False
         lastMax = int(self.info["visit"].max()) if len(self.info) else first - 1
-        extra = self._readInfo(lastMax + 1, LAST_VISIT)
-        if extra is None or not len(extra):
+        inFlight = (
+            self.info.loc[self.info["sequenceType"].notna() & self.info["sequenceEnd"].isna(), "visit"]
+            if {"sequenceType", "sequenceEnd"} <= set(self.info.columns)
+            else []
+        )
+        start = min([lastMax + 1, *(int(v) for v in inFlight)])
+        fresh = self._readInfo(start, LAST_VISIT)
+        old = self.info[self.info["visit"] >= start]
+        if (fresh is None or not len(fresh)) and not len(old):
             return self.info, False
-        merged = pd.concat([self.info, extra], ignore_index=True).drop_duplicates("visit", keep="last")
-        return merged.sort_values("visit", ignore_index=True), True
+        fresh = self.info.iloc[:0] if fresh is None else fresh
+        kept = self.info[self.info["visit"] < start]
+        merged = pd.concat([kept, fresh], ignore_index=True).sort_values("visit", ignore_index=True)
+        return merged, not _sameInfo(fresh, old)
 
     def poll(self) -> None:
         """`update`, keeping the last page and noting the ``error`` when it fails.

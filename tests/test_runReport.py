@@ -271,7 +271,7 @@ def testTheCachedPageIsMadeAgainOnlyWhenTheStoreChanges(monkeypatch):
     assert "[300," not in first
 
 
-def _infoRow(visit, minute):
+def _infoRow(visit, minute, ended="completed"):
     return pd.DataFrame(
         {
             "visit": [visit],
@@ -282,7 +282,7 @@ def _infoRow(visit, minute):
             "expType": ["object"],
             "cameras": ["b1 r1"],
             "iis": [False],
-            "sequenceEnd": ["completed"],
+            "sequenceEnd": [ended],
         }
     )
 
@@ -305,6 +305,32 @@ def testANewExposureRebuildsEvenWhenQadbIsUnchanged():
     assert cache.update() and cache.built == 2 and cache.info["visit"].tolist() == [1, 2]
     # Negative control: with no newer visit, the incremental read brings nothing and nothing is rebuilt.
     assert not cache.update() and cache.built == 2
+
+
+def testAnInFlightVisitIsRefreshedUntilItsSequenceEnds():
+    """A visit in a sequence that has not ended is re-read each cycle; a settled one is not."""
+    store = _Store(_tables((1, "r1", "science", _science())))
+    store.version = 0
+    ends = {2: None}  # visit 2 is in a sequence that has not recorded its end yet
+    asked = []
+
+    def readInfo(first, last):
+        asked.append(first)
+        rows = pd.concat([_infoRow(1, 1), _infoRow(2, 2, ends[2])], ignore_index=True)
+        return rows[(rows["visit"] >= first) & (rows["visit"] <= last)]
+
+    cache = ReportCache(store, readInfo=readInfo)
+    cache.update()  # first read is the whole range
+    assert asked == [1] and pd.isna(cache.info.set_index("visit").loc[2, "sequenceEnd"])
+    built = cache.built
+    # No qadb change and no new visit, but visit 2's sequence completes; the re-read catches it.
+    ends[2] = "completed"
+    assert cache.update() and cache.built == built + 1
+    assert cache.info.set_index("visit").loc[2, "sequenceEnd"] == "completed"
+    # The re-read started at the in-flight visit (2), not the whole range (1).
+    assert asked[-1] == 2
+    # Negative control: once visit 2 has ended, nothing is in flight, so nothing is re-read or rebuilt.
+    assert not cache.update() and cache.built == built + 1 and asked[-1] == 3
 
 
 def testAStoreWithNoImageYetStillHasAPage():
