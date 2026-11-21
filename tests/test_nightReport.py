@@ -9,7 +9,7 @@ import pandas as pd
 from test_runReport import _science, _tables, _taken
 
 from pfs.qa.dashboard import runReport
-from pfs.qa.dashboard.nightReport import activeNight, buildNightReport, visitStub
+from pfs.qa.dashboard.nightReport import activeNight, buildNightReport
 
 
 def _info(visits, times, sequences=None):
@@ -170,10 +170,3 @@ def testAwaitingAndNoResultAreToldApart():
     status = made.visits.set_index("visit")["status"]
     assert status.loc[3] == "NO RESULT" and status.loc[7] == "AWAITING"
     assert "Awaiting QA (1)" in made.html and "Visits with no QA result tonight (1)" in made.html
-
-
-def testTheVisitStubStandsAlone():
-    page = visitStub(12345)
-    assert page.startswith("<!doctype html>") and "<title>Visit 12345</title>" in page
-    assert "<h1>Visit 12345</h1>" in page and 'href="/"' in page
-    assert "@font-face" in page and not re.findall(r"""(?:src|href)=["']https?://""", page)

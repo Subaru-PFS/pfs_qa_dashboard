@@ -1059,6 +1059,8 @@ class ReportCache:
         self._lock = threading.Lock()
         self._version: int | None = None
         self.reports: dict[str, Report] = {}
+        #: The visit information last used to build the pages (for the per-visit page); None before the first read.
+        self.info: pd.DataFrame | None = info
         self.built = 0
         self.readAt: datetime | None = None
         self.error: str | None = None
@@ -1097,6 +1099,7 @@ class ReportCache:
                     name: builder(tables, info=info, **options)
                     for name, (builder, options) in self._pages.items()
                 }
+                self.info = info
                 self.built += 1
                 self._version = version
             self.readAt = datetime.now(HST)

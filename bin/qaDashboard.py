@@ -175,9 +175,9 @@ def serve(args: argparse.Namespace) -> None:
     from tornado.web import Application
 
     from pfs.qa.dashboard.live import QadbStore
-    from pfs.qa.dashboard.nightReport import visitStub
     from pfs.qa.dashboard.qadbSource import readSnapshot
     from pfs.qa.dashboard.runReport import ReportCache, infoFromTables, readVisitInfo, routes, sourceText
+    from pfs.qa.dashboard.visitPage import buildVisitPage
 
     if args.collection:
         qadb, opdb = connect(args)
@@ -203,11 +203,21 @@ def serve(args: argparse.Namespace) -> None:
         )
         cache.update()
 
+    def visitPage(number: int) -> str:
+        """Build the per-visit page from the cached store (no database read)."""
+        raw = cache.store.raw
+        sliced = {
+            name: frame[frame["visit"] == number]
+            for name, frame in raw.items()
+            if "visit" in getattr(frame, "columns", [])
+        }
+        return buildVisitPage(sliced, cache.info, number)
+
     mounts = {"/": "night", "/run": "report"}
     print(
         f"Serving the night page at http://{args.address}:{args.port}/ and the run report at /run", flush=True
     )
-    listen(Application(routes(cache, mounts, visit=visitStub)), args.address, args.port, args.show)
+    listen(Application(routes(cache, mounts, visit=visitPage)), args.address, args.port, args.show)
 
 
 def listen(application, address: str, port: int, show: bool = False) -> None:

@@ -467,9 +467,9 @@ def testServeMountsTheNightPageAndTheRunReport(tmp_path, monkeypatch):
     assert "Every visit at a glance" not in night and "The night on the clock" not in run
     # A snapshot never changes: both pages are alone, with nothing to follow.
     assert "fetch(" not in night and "fetch(" not in run
-    # The reserved per-visit route answers with a placeholder, not a 404.
-    stub = _fetch(served["application"], "/visit/1").body.decode()
-    assert "<h1>Visit 1</h1>" in stub and "per-visit view" in stub
+    # The per-visit route builds a page from the cached store, with that visit's verdicts.
+    one = _fetch(served["application"], "/visit/1").body.decode()
+    assert "<h1>Visit 1" in one and "Detectors" in one and "OH residual +0.60 km/s" in one
     status = json.loads(_fetch(served["application"], "/status").body)
     assert status["built"] == 1 and status["error"] is None and not status["stale"]
     # Negative control: the metric views' address is gone.

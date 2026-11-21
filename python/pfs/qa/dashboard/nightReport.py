@@ -32,7 +32,7 @@ from pfs.qa.dashboard.runReport import (
     visitTable,
 )
 
-__all__ = ["DATA_COLUMNS", "activeNight", "buildNightReport", "renderNight", "visitStub"]
+__all__ = ["DATA_COLUMNS", "activeNight", "buildNightReport", "renderNight"]
 
 _DATA = Path(__file__).parent / "data"
 
@@ -291,24 +291,6 @@ def renderNight(
     for key, value in fields.items():
         page = page.replace(key, value)
     return page
-
-
-def visitStub(visit: int, homeUrl: str = "/") -> str:
-    """Return a placeholder page for ``/visit/<visit>``: the per-visit view is a later ticket.
-
-    The night page's visit links point here now, so they do not 404 before the deep-dive page exists.
-    """
-    theme = _theme().replace("{{FONT_FACES}}", _fontFaces())
-    return (
-        '<!doctype html>\n<html lang="en" data-theme="light">\n<head>\n<meta charset="utf-8">\n'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        f"<title>Visit {int(visit)}</title>\n<style>\n{theme}</style>\n</head>\n"
-        "<body>\n<main>\n<header>\n"
-        f"<h1>Visit {int(visit)}</h1>\n"
-        '<p class="meta">A per-visit view — every detector\'s verdict, offsets and line residuals — is '
-        f'coming. For now, see the <a href="{html.escape(homeUrl)}">night page</a>.</p>\n'
-        "</header>\n</main>\n</body>\n</html>\n"
-    )
 
 
 def buildNightReport(
