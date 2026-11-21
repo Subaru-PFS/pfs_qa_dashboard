@@ -60,6 +60,7 @@ __all__ = [
     "readVisitInfo",
     "renderPage",
     "routes",
+    "scienceSections",
     "sourceText",
     "visitTable",
     "worst",
@@ -641,71 +642,24 @@ def _nightCell(visits: pd.DataFrame) -> str:
     return f"{len(visits)} <span class='sub'>({warn} WARN, {fail} FAIL)</span>"
 
 
-def renderPage(
-    images: pd.DataFrame,
-    visits: pd.DataFrame,
-    title: str = "Visit verdicts",
-    source: str = "",
-    now: datetime | None = None,
-) -> str:
-    """Return the report as one HTML document, with its styles, charts and script inline.
+def scienceSections(science: pd.DataFrame) -> tuple[str, str, str]:
+    """Return the science-frame tables' bodies and the offset axis, drawn against the gate's limits.
 
-    Parameters
-    ----------
-    images : `pandas.DataFrame`
-        From `measure`.
-    visits : `pandas.DataFrame`
-        `visitTable` of ``images``.
-    title : `str`
-        The page's title and heading.
-    source : `str`
-        Where the results were read from, as HTML, for the page's last note
-        (`sourceText`); ``{date}`` in it becomes the date of ``now``.
-    now : `datetime.datetime`, optional
-        When the page was made; the current time (HST) by default.
+    Shared by the run report and the night page. ``science`` is the science images
+    of `measure` (``xOffset``, ``yOffset``, ``yOffsetKms``, ``kms`` and ``status``).
+
+    Returns
+    -------
+    `tuple` [`str`, `str`, `str`]
+        The offsets table's rows (one row group per arm, a row per detector with
+        `offsetBar`), the offset axis SVG, and the residuals table's rows (with
+        `residualBar`), each as HTML; the gate's limits (`CHECKS`) set the scales.
     """
-    # The gate's limits on what the science sections draw: drp_qa's, as it judged with them.
     offsetWarn = CHECKS["skyOffset"].warn
     kms = {arm: _skyLimits(arm) for arm in ARMS}
     scales = kmsPerPixel()
     centre = scales[scales["species"] == "centre"]
     centre = centre.groupby(centre["camera"].str[0])["kmsPerPixel"].median()
-
-    # The visits judged, and those the opdb says were taken that have no QA result.
-    everyVisit = visits
-    noResult = everyVisit[everyVisit["status"] == NO_RESULT]
-    visits = everyVisit[everyVisit["status"] != NO_RESULT]
-
-    def unjudged(frame: pd.DataFrame, slit: str | None = None) -> str:
-        """Return how many of ``frame``'s kinds of visit have no result, lit through ``slit``; a dash for none."""
-        of = noResult[noResult["kind"].isin(frame)]
-        of = of if slit is None else of[of["illumination"] == slit]
-        return f"<td>{len(of) or '–'}</td>"
-
-    full, engineering = visits["illumination"] == "full", visits["illumination"] == "iis"
-    kind = visits["kind"]
-    kinds = [
-        ("Science", kind == "science", ["science"], None),
-        ("All-sky", kind == "all-sky", ["all-sky"], None),
-        ("Twilight", kind == "twilight", ["twilight"], None),
-        ("Arc, full slit", (kind == "arc") & full, ["arc"], "full"),
-        ("Quartz, full slit", (kind == "quartz") & full, ["quartz"], "full"),
-        ("Unclassified, full slit", (kind == "other") & full, ["other"], "full"),
-        ("Arc, engineering fibers", (kind == "arc") & engineering, ["arc"], "iis"),
-        ("Quartz, engineering fibers", (kind == "quartz") & engineering, ["quartz"], "iis"),
-        ("Unclassified, engineering fibers", (kind == "other") & engineering, ["other"], "iis"),
-    ]
-    summary = [
-        f"<tr><th scope='row'>{name}</th><td>{int(mask.sum())}</td>{_counts(visits[mask])}"
-        f"{unjudged(of, slit)}</tr>"
-        for name, mask, of, slit in kinds
-    ]
-    summary.append(
-        f"<tr class='total'><th scope='row'>All</th><td>{len(visits)}</td>{_counts(visits)}"
-        f"<td>{len(noResult) or '–'}</td></tr>"
-    )
-
-    science = images[images["kind"] == "science"]
     width, height = 260, 28
     span = 1.3 * offsetWarn
 
@@ -783,12 +737,72 @@ def renderPage(
                     f"<td>{_range(values)}</td><td>{values.abs().max():.2f}</td>"
                     f"<td class='viz'>{residualBar(camera, group, *kms[arm])}</td></tr>"
                 )
-    tickAt = offsetWarn
     ticks = "".join(
         f'<text x="{xo(v)}" y="12" text-anchor="middle">{f"{v:+g}" if v else "0"}</text>'
-        for v in (-tickAt, -tickAt / 2, 0, tickAt / 2, tickAt)
+        for v in (-offsetWarn, -offsetWarn / 2, 0, offsetWarn / 2, offsetWarn)
     )
     offsetAxis = f'<svg class="bar axis" viewBox="0 0 {width} 16" width="{width}" height="16" aria-hidden="true">{ticks}</svg>'
+    return "\n".join(offsetRows), offsetAxis, "\n".join(residualRows)
+
+
+def renderPage(
+    images: pd.DataFrame,
+    visits: pd.DataFrame,
+    title: str = "Visit verdicts",
+    source: str = "",
+    now: datetime | None = None,
+) -> str:
+    """Return the report as one HTML document, with its styles, charts and script inline.
+
+    Parameters
+    ----------
+    images : `pandas.DataFrame`
+        From `measure`.
+    visits : `pandas.DataFrame`
+        `visitTable` of ``images``.
+    title : `str`
+        The page's title and heading.
+    source : `str`
+        Where the results were read from, as HTML, for the page's last note
+        (`sourceText`); ``{date}`` in it becomes the date of ``now``.
+    now : `datetime.datetime`, optional
+        When the page was made; the current time (HST) by default.
+    """
+    # The visits judged, and those the opdb says were taken that have no QA result.
+    everyVisit = visits
+    noResult = everyVisit[everyVisit["status"] == NO_RESULT]
+    visits = everyVisit[everyVisit["status"] != NO_RESULT]
+
+    def unjudged(frame: pd.DataFrame, slit: str | None = None) -> str:
+        """Return how many of ``frame``'s kinds of visit have no result, lit through ``slit``; a dash for none."""
+        of = noResult[noResult["kind"].isin(frame)]
+        of = of if slit is None else of[of["illumination"] == slit]
+        return f"<td>{len(of) or '–'}</td>"
+
+    full, engineering = visits["illumination"] == "full", visits["illumination"] == "iis"
+    kind = visits["kind"]
+    kinds = [
+        ("Science", kind == "science", ["science"], None),
+        ("All-sky", kind == "all-sky", ["all-sky"], None),
+        ("Twilight", kind == "twilight", ["twilight"], None),
+        ("Arc, full slit", (kind == "arc") & full, ["arc"], "full"),
+        ("Quartz, full slit", (kind == "quartz") & full, ["quartz"], "full"),
+        ("Unclassified, full slit", (kind == "other") & full, ["other"], "full"),
+        ("Arc, engineering fibers", (kind == "arc") & engineering, ["arc"], "iis"),
+        ("Quartz, engineering fibers", (kind == "quartz") & engineering, ["quartz"], "iis"),
+        ("Unclassified, engineering fibers", (kind == "other") & engineering, ["other"], "iis"),
+    ]
+    summary = [
+        f"<tr><th scope='row'>{name}</th><td>{int(mask.sum())}</td>{_counts(visits[mask])}"
+        f"{unjudged(of, slit)}</tr>"
+        for name, mask, of, slit in kinds
+    ]
+    summary.append(
+        f"<tr class='total'><th scope='row'>All</th><td>{len(visits)}</td>{_counts(visits)}"
+        f"<td>{len(noResult) or '–'}</td></tr>"
+    )
+
+    offsetsHtml, offsetAxis, residualsHtml = scienceSections(images[images["kind"] == "science"])
 
     nights = [
         f"<tr><th scope='row'>{night}</th><td>{group['visit'].min()} to {group['visit'].max()}</td>"
@@ -876,8 +890,8 @@ def renderPage(
         "{{TITLE}}": html.escape(title),
         "{{FONT_FACES}}": _fontFaces(),
         "{{SUMMARY}}": "\n".join(summary),
-        "{{OFFSETS}}": "\n".join(offsetRows),
-        "{{RESIDUALS}}": "\n".join(residualRows),
+        "{{OFFSETS}}": offsetsHtml,
+        "{{RESIDUALS}}": residualsHtml,
         "{{OAXIS}}": offsetAxis,
         "{{NIGHTS}}": "\n".join(nights),
         "{{FLAGGED}}": flagged,
@@ -936,14 +950,24 @@ def buildReport(
     return Report(images, visits, renderPage(images, visits, title=title, source=source, now=now))
 
 
-class ReportCache:
-    """The report of a store's collection, made again when the store's tables change.
+def _defaultBuilder(tables: Mapping[str, pd.DataFrame], info: pd.DataFrame | None = None, **options: Any):
+    """Build the run report; a `ReportCache`'s default page. Calls `buildReport` by name, so tests may patch it."""
+    return buildReport(tables, info=info, **options)
 
-    `update` reads the store's source and makes the page again if anything
+
+class ReportCache:
+    """The pages of a store's collection, made again when the store's tables change.
+
+    `update` reads the store's source and makes the pages again if anything
     changed. `watch` has a thread of its own do that every so often, so `page`,
     what the server answers with, is the last page made and never waits on a
-    database: a read that fails or hangs leaves the page as it was, and
+    database: a read that fails or hangs leaves the pages as they were, and
     `status` says since when.
+
+    One cache can hold several pages built from the same read (the night page at
+    ``/`` and the run report at ``/run``, say): they share one qadb read, one
+    visit-information read, and one `built` count, so a browser following any of
+    them reloads when the next read brings something new.
 
     Parameters
     ----------
@@ -959,15 +983,22 @@ class ReportCache:
         The visits' information, fixed, in place of ``readInfo`` (a snapshot's).
     firstVisit : `int`, optional
         The first visit of the run; the earliest visit judged when None.
+    pages : mapping, optional
+        ``{name: (builder, options)}``, the pages to build; each ``builder(tables,
+        info=info, **options)`` returns a `Report`. The default is one page,
+        ``report``, the run report. The first page is `primary`, what `page` and
+        `html` serve.
     **options
-        ``title`` and ``source`` for `buildReport`.
+        The default page's ``title`` and ``source`` (ignored when ``pages`` is given).
 
     Attributes
     ----------
-    report : `Report`
-        The last report made; None before the first `update`.
+    reports : `dict` [`str`, `Report`]
+        The last pages made, by name; empty before the first `update`.
+    primary : `str`
+        The name of the default page (the first of ``pages``).
     built : `int`
-        Counts the pages made.
+        Counts the rounds of pages made.
     readAt : `datetime.datetime`
         When the last `update` finished (HST); None before the first.
     error : `str`
@@ -984,16 +1015,18 @@ class ReportCache:
         readInfo: Callable[[int, int], pd.DataFrame] | None = None,
         info: pd.DataFrame | None = None,
         firstVisit: int | None = None,
+        pages: Mapping[str, tuple[Callable, Mapping[str, Any]]] | None = None,
         **options: Any,
     ):
         self.store = store
         self._readInfo = readInfo
         self._info = info
         self._firstVisit = firstVisit
-        self._options = options
+        self._pages = dict(pages) if pages is not None else {"report": (_defaultBuilder, options)}
+        self.primary = next(iter(self._pages))
         self._lock = threading.Lock()
         self._version: int | None = None
-        self.report: Report | None = None
+        self.reports: dict[str, Report] = {}
         self.built = 0
         self.readAt: datetime | None = None
         self.error: str | None = None
@@ -1001,16 +1034,21 @@ class ReportCache:
         self.interval: float | None = None
         self._staleSaid = False
 
+    @property
+    def report(self) -> Report | None:
+        """The last `primary` page made (the run report, by default); None before the first `update`."""
+        return self.reports.get(self.primary)
+
     def update(self) -> bool:
-        """Read the store's source and make the report again if the store changed; return whether it did.
+        """Read the store's source and make the pages again if the store changed; return whether it did.
 
         This reads qadb, and the opdb when the store changed: call it where waiting is no harm
-        (before serving, and then on `watch`'s thread).
+        (before serving, and then on `watch`'s thread). All pages are made from one read.
         """
         with self._lock:
             self.store.refresh()
             version = self.store.version
-            changed = self.report is None or self._version != version
+            changed = not self.reports or self._version != version
             if changed:
                 # A store that has read no image yet holds no table: the page then says so, with no visit.
                 tables = {name: self.store.raw.get(name, pd.DataFrame(columns=_IMAGE)) for name in _TABLES}
@@ -1021,7 +1059,11 @@ class ReportCache:
                 elif info is None:
                     info = self.store.times
                 # Together, so a page is never served under another's count.
-                self.report, self.built = buildReport(tables, info=info, **self._options), self.built + 1
+                self.reports = {
+                    name: builder(tables, info=info, **options)
+                    for name, (builder, options) in self._pages.items()
+                }
+                self.built += 1
                 self._version = version
             self.readAt = datetime.now(HST)
             self.error = None
@@ -1064,22 +1106,27 @@ class ReportCache:
         thread.start()
         return thread
 
-    def html(self) -> str:
-        """Return the report's page for the store as it is now, reading the store's source first."""
+    def html(self, name: str | None = None) -> str:
+        """Return a page for the store as it is now, reading the store's source first (``primary`` by default)."""
         self.update()
-        return self.report.html
+        return self.reports[name or self.primary].html
 
     @property
     def page(self) -> str:
-        """The last page made, which reads nothing; when watched, with the script that follows `status`.
+        """The last `primary` page made, served (see `pageFor`)."""
+        return self.pageFor(self.primary)
+
+    def pageFor(self, name: str) -> str:
+        """Return the named page made last, which reads nothing; when watched, with the `status` script.
 
         That script reloads the page when a newer one has been made, and says when the results
-        were last read. A report written to a file has none of it.
+        were last read. A report written to a file has none of it. All the cache's pages share one
+        `status` and one `built`, so a browser on any of them reloads together.
         """
-        if self.report is None:
+        if name not in self.reports:
             self.update()
         # One read of both: the watching thread may make the next page meanwhile.
-        report, built = self.report, self.built
+        report, built = self.reports[name], self.built
         if self.interval is None:
             return report.html
         pollMs = int(1000 * min(15.0, max(2.0, self.interval / 2)))
@@ -1128,22 +1175,52 @@ class ReportCache:
         }
 
 
-def routes(cache: ReportCache) -> list[tuple[str, type]]:
-    """Return the Tornado routes serving a `ReportCache`: its page at ``/`` and its `status` at ``/status``.
+def routes(
+    cache: ReportCache,
+    mounts: Mapping[str, str] | None = None,
+    visit: Callable[[int], str] | None = None,
+) -> list[tuple[str, type]]:
+    """Return the Tornado routes serving a `ReportCache`: its pages, and `status` at ``/status``.
 
-    Neither reads a database: both answer from what the cache last made.
+    None of them reads a database: each answers from what the cache last made.
+
+    Parameters
+    ----------
+    cache : `ReportCache`
+        The cache whose pages are served.
+    mounts : mapping, optional
+        ``{path: pageName}``, where to serve each page; ``{"/": cache.primary}`` by default.
+        The pages share ``/status`` (the injected script fetches it relative to the page).
+    visit : callable, optional
+        ``visit(n)`` returns a per-visit page's HTML; when given, it is served at
+        ``/visit/<n>`` (a reserved route the night page links to).
     """
     from tornado.web import RequestHandler
 
-    class RunReportHandler(RequestHandler):
-        def get(self) -> None:
-            self.set_header("Content-Type", "text/html; charset=utf-8")
-            self.set_header("Cache-Control", "no-cache")
-            self.write(cache.page)
+    mounts = mounts or {"/": cache.primary}
+
+    def pageHandler(name: str) -> type:
+        class PageHandler(RequestHandler):
+            def get(self) -> None:
+                self.set_header("Content-Type", "text/html; charset=utf-8")
+                self.set_header("Cache-Control", "no-cache")
+                self.write(cache.pageFor(name))
+
+        return PageHandler
 
     class StatusHandler(RequestHandler):
         def get(self) -> None:
             self.set_header("Cache-Control", "no-store")
             self.write(cache.status())
 
-    return [(r"/", RunReportHandler), (r"/status", StatusHandler)]
+    handlers = [(path, pageHandler(name)) for path, name in mounts.items()]
+    handlers.append((r"/status", StatusHandler))
+    if visit is not None:
+
+        class VisitHandler(RequestHandler):
+            def get(self, number: str) -> None:
+                self.set_header("Content-Type", "text/html; charset=utf-8")
+                self.write(visit(int(number)))
+
+        handlers.append((r"/visit/([0-9]+)", VisitHandler))
+    return handlers

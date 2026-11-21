@@ -445,8 +445,8 @@ def _fetch(application, path):
     return asyncio.run(fetch())
 
 
-def testServeAnswersTheIndexWithTheReport(tmp_path, monkeypatch):
-    """``serve`` gives the run report the server's root and its status ``/status``, and serves nothing else."""
+def testServeMountsTheNightPageAndTheRunReport(tmp_path, monkeypatch):
+    """``serve`` gives the night page ``/``, the run report ``/run``, a ``/visit`` stub and ``/status``."""
     from tornado.httpclient import HTTPClientError
 
     cli = _cli()
@@ -457,12 +457,19 @@ def testServeAnswersTheIndexWithTheReport(tmp_path, monkeypatch):
     cli.main(["serve", "--snapshot", str(_snapshot(tmp_path / "snap")), "--title", "Run99", "--port", "5123"])
     assert (served["address"], served["port"], served["show"]) == ("localhost", 5123, False)
 
-    response = _fetch(served["application"], "/")
-    body = response.body.decode()
-    assert response.headers["Content-Type"].startswith("text/html")
-    assert "<h1>Run99</h1>" in body and "OH residual +0.60 km/s" in body
-    # A snapshot never changes: its page is the report alone, with nothing to follow.
-    assert "fetch(" not in body
+    night = _fetch(served["application"], "/").body.decode()
+    assert "The night on the clock" in night and "Latest visits" in night and "<h1>Run99</h1>" in night
+    # The night page links to the run report and to the per-visit route.
+    assert 'href="/run"' in night and "visit/1" in night
+    run = _fetch(served["application"], "/run").body.decode()
+    assert "Every visit at a glance" in run and "OH residual +0.60 km/s" in run
+    # Negative control: the whole-run markers are the run report's, not the night page's.
+    assert "Every visit at a glance" not in night and "The night on the clock" not in run
+    # A snapshot never changes: both pages are alone, with nothing to follow.
+    assert "fetch(" not in night and "fetch(" not in run
+    # The reserved per-visit route answers with a placeholder, not a 404.
+    stub = _fetch(served["application"], "/visit/1").body.decode()
+    assert "<h1>Visit 1</h1>" in stub and "per-visit view" in stub
     status = json.loads(_fetch(served["application"], "/status").body)
     assert status["built"] == 1 and status["error"] is None and not status["stale"]
     # Negative control: the metric views' address is gone.

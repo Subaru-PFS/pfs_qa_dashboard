@@ -23,15 +23,15 @@ from pfs.qa.dashboard.runReport import (
     NO_RESULT,
     Report,
     _fontFaces,
-    _range,
     _tally,
     _theme,
     infoFromTables,
     measure,
+    scienceSections,
     visitTable,
 )
 
-__all__ = ["DATA_COLUMNS", "activeNight", "buildNightReport", "renderNight"]
+__all__ = ["DATA_COLUMNS", "activeNight", "buildNightReport", "renderNight", "visitStub"]
 
 _DATA = Path(__file__).parent / "data"
 
@@ -154,29 +154,6 @@ def _flaggedText(flagged: str) -> str:
     )
 
 
-def _scienceRows(images: pd.DataFrame) -> str:
-    """Return per-detector medians and spreads over the night's science frames."""
-    science = images[images["kind"] == "science"]
-    out = []
-    for camera, group in science.groupby("camera"):
-        x, y, kms = group["xOffset"].dropna(), group["yOffset"].dropna(), group["kms"].dropna()
-        flags = int(group["status"].isin(["WARN", "FAIL"]).sum())
-        if x.empty and y.empty and kms.empty:
-            continue
-        out.append(
-            f"<tr><th scope='row'>{camera}</th><td>{len(group):,}</td>"
-            f"<td><span class='key'>{x.median():+.2f}</span> <span class='sub'>({_range(x)})</span></td>"
-            f"<td><span class='key'>{y.median():+.2f}</span> <span class='sub'>({_range(y)})</span></td>"
-            + (
-                f"<td><span class='key'>{kms.median():+.2f}</span> <span class='sub'>({_range(kms)})</span></td>"
-                if len(kms)
-                else "<td>–</td>"
-            )
-            + f"<td>{flags or '–'}</td></tr>"
-        )
-    return "\n".join(out)
-
-
 def _notPassRows(visits: pd.DataFrame) -> str:
     notPass = visits[(visits["status"] != "PASS") & (visits["illumination"] != "iis")]
     out = []
@@ -247,6 +224,7 @@ def renderNight(
         + _summaryTile("Tonight", visits)
         + _summaryTile("Science", visits[visits["kind"] == "science"])
     )
+    offsetsHtml, offsetAxis, residualsHtml = scienceSections(images[images["kind"] == "science"])
     nightText = html.escape(night) if night else "the latest night"
     fields = {
         "{{THEME}}": _theme(),
@@ -258,7 +236,9 @@ def renderNight(
         "{{TILES}}": tiles,
         "{{LEAD}}": lead,
         "{{FEED}}": _feedRows(visits),
-        "{{SCIENCE}}": _scienceRows(images),
+        "{{OFFSETS}}": offsetsHtml,
+        "{{OAXIS}}": offsetAxis,
+        "{{RESIDUALS}}": residualsHtml,
         "{{NOTPASS}}": notPass,
         "{{NNOTPASS}}": str(nNotPass),
         "{{NO_RESULT_SECTION}}": _noResultSection(visits),
@@ -271,6 +251,24 @@ def renderNight(
     for key, value in fields.items():
         page = page.replace(key, value)
     return page
+
+
+def visitStub(visit: int, homeUrl: str = "/") -> str:
+    """Return a placeholder page for ``/visit/<visit>``: the per-visit view is a later ticket.
+
+    The night page's visit links point here now, so they do not 404 before the deep-dive page exists.
+    """
+    theme = _theme().replace("{{FONT_FACES}}", _fontFaces())
+    return (
+        '<!doctype html>\n<html lang="en" data-theme="light">\n<head>\n<meta charset="utf-8">\n'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+        f"<title>Visit {int(visit)}</title>\n<style>\n{theme}</style>\n</head>\n"
+        "<body>\n<main>\n<header>\n"
+        f"<h1>Visit {int(visit)}</h1>\n"
+        '<p class="meta">A per-visit view — every detector\'s verdict, offsets and line residuals — is '
+        f'coming. For now, see the <a href="{html.escape(homeUrl)}">night page</a>.</p>\n'
+        "</header>\n</main>\n</body>\n</html>\n"
+    )
 
 
 def buildNightReport(

@@ -57,13 +57,39 @@
   </section>
 
   <section class="block">
-    <h2>Science frames tonight: offsets and sky-line residual</h2>
-    <p>Per detector, the median and 5th-to-95th-percentile spread over the night's science frames, as measured: the trace offset in x and the sky-line offset in y from the calibration (pixels), and the held-back sky-line residual after the visit's own adjustment (km/s). The full run report draws these against the gate's limits.</p>
+    <h2>Science frames tonight: offsets from the calibration</h2>
+    <p>Per detector, over the night's science frames. The x offset is the median offset of every fiber's trace from the calibration; the y offset is that of the sky lines, taking the species furthest off on each image. Values are as measured; the dashed lines are the gate's WARN limit either side.</p>
+    <div class="legend">
+      <span><svg width="34" height="14" aria-hidden="true"><rect x="1" y="4" width="32" height="6" rx="3" fill="var(--series-1-soft)" stroke="var(--series-1)"/><rect x="15" y="1" width="2" height="12" fill="var(--fg)"/></svg>x offset, every fiber's trace: 5th to 95th percentile with the median, and the full range as a line</span>
+      <span><svg width="34" height="14" aria-hidden="true"><rect x="1" y="4" width="32" height="6" rx="3" fill="var(--series-2-soft)" stroke="var(--series-2)"/><rect x="15" y="1" width="2" height="12" fill="var(--fg)"/></svg>y offset, sky lines</span>
+      <span><svg width="40" height="14" aria-hidden="true"><circle cx="6" cy="7" r="1.5" fill="var(--fg-3)"/><circle cx="20" cy="7" r="3.2" fill="var(--warn-fill)" stroke="var(--surface)"/><circle cx="33" cy="7" r="3.2" fill="var(--fail-fill)" stroke="var(--surface)"/></svg>One dot per image outside that range, and per image the gate gave WARN or FAIL, larger and coloured</span>
+    </div>
     <div class="tablewrap">
       <table>
-        <thead><tr><th scope="col" class="l">Detector</th><th scope="col">Images</th><th scope="col">x offset (px)</th><th scope="col">y offset (px)</th><th scope="col">Residual (km/s)</th><th scope="col">WARN/FAIL</th></tr></thead>
+        <thead>
+          <tr><th scope="col" class="l">Detector</th><th scope="col">Images</th>
+          <th scope="col">x offset, 5th to 95th percentile (px)</th><th scope="col">Largest x (px)</th>
+          <th scope="col">y offset, 5th to 95th percentile (px)</th><th scope="col">Largest y (px)</th><th scope="col">Largest y (km/s)</th>
+          <th scope="col" class="viz">Offset (px){{OAXIS}}</th><th scope="col">Images WARN or FAIL</th></tr>
+        </thead>
         <tbody>
-{{SCIENCE}}
+{{OFFSETS}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Science frames tonight: sky-line residual after the visit's adjustment</h2>
+    <p>The residual is the median offset of the held-back sky lines from the visit's own detectorMap, in km/s. Each bar is on its arm's own scale, so the gate's WARN (dashed) and FAIL (solid) limits sit in the same place in every row.</p>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th scope="col" class="l">Detector</th><th scope="col">Images with a residual</th><th scope="col">Median (km/s)</th><th scope="col">5th to 95th percentile (km/s)</th><th scope="col">Largest (km/s)</th>
+          <th scope="col" class="viz">Residual against its limits</th></tr>
+        </thead>
+        <tbody>
+{{RESIDUALS}}
         </tbody>
       </table>
     </div>

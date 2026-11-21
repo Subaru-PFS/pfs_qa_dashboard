@@ -155,8 +155,19 @@ def snapshotSource(tables: dict, provenance: dict) -> str:
     return sourceText(collection, "visitInfo" in tables, readOn)
 
 
+def pages(args: argparse.Namespace, source: str) -> dict:
+    """Return the pages a `ReportCache` builds: the night page (``/``) and the run report (``/run``)."""
+    from pfs.qa.dashboard.nightReport import buildNightReport
+    from pfs.qa.dashboard.runReport import buildReport
+
+    return {
+        "night": (buildNightReport, {"title": args.title, "source": source, "runUrl": "/run"}),
+        "report": (buildReport, {"title": args.title, "source": source}),
+    }
+
+
 def serve(args: argparse.Namespace) -> None:
-    """Serve the run report of a collection in qadb (``--collection``) or of a snapshot (``--snapshot``)."""
+    """Serve the night page (``/``) and the run report (``/run``) of a collection or a snapshot."""
     # One line per request, with the client's address: shows whether a browser reached the server.
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(message)s")
     logging.getLogger("tornado.access").setLevel(logging.INFO)
@@ -164,14 +175,9 @@ def serve(args: argparse.Namespace) -> None:
     from tornado.web import Application
 
     from pfs.qa.dashboard.live import QadbStore
+    from pfs.qa.dashboard.nightReport import visitStub
     from pfs.qa.dashboard.qadbSource import readSnapshot
-    from pfs.qa.dashboard.runReport import (
-        ReportCache,
-        infoFromTables,
-        readVisitInfo,
-        routes,
-        sourceText,
-    )
+    from pfs.qa.dashboard.runReport import ReportCache, infoFromTables, readVisitInfo, routes, sourceText
 
     if args.collection:
         qadb, opdb = connect(args)
@@ -182,7 +188,7 @@ def serve(args: argparse.Namespace) -> None:
             store,
             readInfo,
             firstVisit=args.first_visit or None,
-            **reportOptions(args, sourceText(args.collection, opdb is not None)),
+            pages=pages(args, sourceText(args.collection, opdb is not None)),
         )
         cache.update()
         # The databases are read on a thread of the cache's own from here on: a browser gets the last
@@ -193,12 +199,15 @@ def serve(args: argparse.Namespace) -> None:
         store = QadbStore.fromTables(tables)
         print(f"{len(store.times)} visits in {args.snapshot}", flush=True)
         cache = ReportCache(
-            store, info=infoFromTables(tables), **reportOptions(args, snapshotSource(tables, provenance))
+            store, info=infoFromTables(tables), pages=pages(args, snapshotSource(tables, provenance))
         )
         cache.update()
 
-    print(f"Serving on http://{args.address}:{args.port}", flush=True)
-    listen(Application(routes(cache)), args.address, args.port, args.show)
+    mounts = {"/": "night", "/run": "report"}
+    print(
+        f"Serving the night page at http://{args.address}:{args.port}/ and the run report at /run", flush=True
+    )
+    listen(Application(routes(cache, mounts, visit=visitStub)), args.address, args.port, args.show)
 
 
 def listen(application, address: str, port: int, show: bool = False) -> None:
