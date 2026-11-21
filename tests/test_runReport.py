@@ -445,7 +445,10 @@ def testASlowReadIsToldFromAStoppedReaderAndLogged(caplog):
         release.set()
         reader.join(10)
     assert cache.status()["reading"] == "" and not cache.status()["stale"]
-    assert any("Reading the results took" in r.getMessage() for r in caplog.records)
+    slow = [r.getMessage() for r in caplog.records if "Reading the results took" in r.getMessage()]
+    assert slow
+    # The per-step breakdown names where the time went, so a slow read points at its source.
+    assert "qadb" in slow[0] and "opdb" in slow[0] and "rebuild" in slow[0]
     # Negative control: stale with no read under way is a reader that stopped, not a slow read.
     cache.readAt -= timedelta(seconds=120)
     assert cache.status()["stale"] and cache.status()["reading"] == ""

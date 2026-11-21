@@ -1080,6 +1080,9 @@ class ReportCache:
         self.readingSince: datetime | None = None
         self.interval: float | None = None
         self._staleSaid = False
+        #: Seconds the last `update` spent in each step, in order; a step that raised is absent, so the
+        #: missing step is the one a failed read was in. Logged by `poll` when a read is slow.
+        self._timings: dict[str, float] = {}
 
     @property
     def report(self) -> Report | None:
@@ -1094,10 +1097,16 @@ class ReportCache:
         pages again, so the night page stays live during a run that is not being reduced.
         """
         with self._lock:
+            # Time each step so a slow read says which source it was (qadb, the opdb, or the rebuild);
+            # each is recorded as it ends, so a read that raised leaves the step it died in absent.
+            self._timings = {}
+            mark = time.monotonic()
             self.store.refresh()
+            mark, self._timings["qadb"] = time.monotonic(), time.monotonic() - mark
             version = self.store.version
             qadbChanged = not self.reports or self._version != version
             info, infoChanged = self._refreshInfo()
+            mark, self._timings["opdb"] = time.monotonic(), time.monotonic() - mark
             changed = qadbChanged or infoChanged
             if changed:
                 # A store that has read no image yet holds no table: the page then says so, with no visit.
@@ -1110,6 +1119,7 @@ class ReportCache:
                 self.info = info
                 self.built += 1
                 self._version = version
+            self._timings["rebuild"] = time.monotonic() - mark
             self.readAt = datetime.now(HST)
             self.error = None
             return changed
@@ -1167,7 +1177,13 @@ class ReportCache:
             start, self.readingSince = self.readingSince, None
             took = (datetime.now(HST) - start).total_seconds()
             if took > self._staleAfter():
-                _log.warning("Reading the results took %.0f s (from %s HST)", took, f"{start:%H:%M:%S}")
+                steps = ", ".join(f"{name} {secs:.0f} s" for name, secs in self._timings.items())
+                _log.warning(
+                    "Reading the results took %.0f s (from %s HST)%s",
+                    took,
+                    f"{start:%H:%M:%S}",
+                    f": {steps}" if steps else "",
+                )
             self._staleSaid = False
 
     def _staleAfter(self) -> float:
