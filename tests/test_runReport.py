@@ -271,6 +271,68 @@ def testTheCachedPageIsMadeAgainOnlyWhenTheStoreChanges(monkeypatch):
     assert "[300," not in first
 
 
+def _infoRow(visit, minute, ended="completed"):
+    return pd.DataFrame(
+        {
+            "visit": [visit],
+            "time": pd.to_datetime([f"2026-11-04 20:{minute:02d}"]),
+            "exptime": [300.0],
+            "sequenceType": ["scienceObject"],
+            "sequenceName": [None],
+            "expType": ["object"],
+            "cameras": ["b1 r1"],
+            "iis": [False],
+            "sequenceEnd": [ended],
+        }
+    )
+
+
+def testANewExposureRebuildsEvenWhenQadbIsUnchanged():
+    """The night page stays live: a visit the opdb newly reports rebuilds, though qadb has not changed."""
+    store = _Store(_tables((1, "r1", "science", _science())))
+    store.version = 0  # _Store.refresh never bumps it, so qadb looks unchanged after the first build
+    taken = [1]
+
+    def readInfo(first, last):
+        rows = pd.concat([_infoRow(v, v) for v in taken], ignore_index=True)
+        return rows[(rows["visit"] >= first) & (rows["visit"] <= last)]
+
+    cache = ReportCache(store, readInfo=readInfo)
+    cache.update()
+    assert cache.built == 1 and cache.info["visit"].tolist() == [1]
+    # A new exposure is taken; qadb still holds nothing new for it.
+    taken.append(2)
+    assert cache.update() and cache.built == 2 and cache.info["visit"].tolist() == [1, 2]
+    # Negative control: with no newer visit, the incremental read brings nothing and nothing is rebuilt.
+    assert not cache.update() and cache.built == 2
+
+
+def testAnInFlightVisitIsRefreshedUntilItsSequenceEnds():
+    """A visit in a sequence that has not ended is re-read each cycle; a settled one is not."""
+    store = _Store(_tables((1, "r1", "science", _science())))
+    store.version = 0
+    ends = {2: None}  # visit 2 is in a sequence that has not recorded its end yet
+    asked = []
+
+    def readInfo(first, last):
+        asked.append(first)
+        rows = pd.concat([_infoRow(1, 1), _infoRow(2, 2, ends[2])], ignore_index=True)
+        return rows[(rows["visit"] >= first) & (rows["visit"] <= last)]
+
+    cache = ReportCache(store, readInfo=readInfo)
+    cache.update()  # first read is the whole range
+    assert asked == [1] and pd.isna(cache.info.set_index("visit").loc[2, "sequenceEnd"])
+    built = cache.built
+    # No qadb change and no new visit, but visit 2's sequence completes; the re-read catches it.
+    ends[2] = "completed"
+    assert cache.update() and cache.built == built + 1
+    assert cache.info.set_index("visit").loc[2, "sequenceEnd"] == "completed"
+    # The re-read started at the in-flight visit (2), not the whole range (1).
+    assert asked[-1] == 2
+    # Negative control: once visit 2 has ended, nothing is in flight, so nothing is re-read or rebuilt.
+    assert not cache.update() and cache.built == built + 1 and asked[-1] == 3
+
+
 def testAStoreWithNoImageYetStillHasAPage():
     store = _Store({})
     store.times = store.times.iloc[:0]
@@ -445,8 +507,8 @@ def _fetch(application, path):
     return asyncio.run(fetch())
 
 
-def testServeAnswersTheIndexWithTheReport(tmp_path, monkeypatch):
-    """``serve`` gives the run report the server's root and its status ``/status``, and serves nothing else."""
+def testServeMountsTheNightPageAndTheRunReport(tmp_path, monkeypatch):
+    """``serve`` gives the night page ``/``, the run report ``/run``, a ``/visit`` stub and ``/status``."""
     from tornado.httpclient import HTTPClientError
 
     cli = _cli()
@@ -457,12 +519,19 @@ def testServeAnswersTheIndexWithTheReport(tmp_path, monkeypatch):
     cli.main(["serve", "--snapshot", str(_snapshot(tmp_path / "snap")), "--title", "Run99", "--port", "5123"])
     assert (served["address"], served["port"], served["show"]) == ("localhost", 5123, False)
 
-    response = _fetch(served["application"], "/")
-    body = response.body.decode()
-    assert response.headers["Content-Type"].startswith("text/html")
-    assert "<h1>Run99</h1>" in body and "OH residual +0.60 km/s" in body
-    # A snapshot never changes: its page is the report alone, with nothing to follow.
-    assert "fetch(" not in body
+    night = _fetch(served["application"], "/").body.decode()
+    assert "The night on the clock" in night and "Latest visits" in night and "<h1>Run99</h1>" in night
+    # The night page links to the run report and to the per-visit route.
+    assert 'href="/run"' in night and "visit/1" in night
+    run = _fetch(served["application"], "/run").body.decode()
+    assert "Every visit at a glance" in run and "OH residual +0.60 km/s" in run
+    # Negative control: the whole-run markers are the run report's, not the night page's.
+    assert "Every visit at a glance" not in night and "The night on the clock" not in run
+    # A snapshot never changes: both pages are alone, with nothing to follow.
+    assert "fetch(" not in night and "fetch(" not in run
+    # The per-visit route builds a page from the cached store, with that visit's verdicts.
+    one = _fetch(served["application"], "/visit/1").body.decode()
+    assert "<h1>Visit 1" in one and "Detectors" in one and "OH residual +0.60 km/s" in one
     status = json.loads(_fetch(served["application"], "/status").body)
     assert status["built"] == 1 and status["error"] is None and not status["stale"]
     # Negative control: the metric views' address is gone.

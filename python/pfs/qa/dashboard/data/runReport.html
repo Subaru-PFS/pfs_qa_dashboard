@@ -5,125 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{TITLE}}</title>
 <style>
-{{FONT_FACES}}
-  /* Layout: a short reading column of counts and rules, then one full-width list that filters in place. */
-  :root {
-    --bg: #fafbfc; --surface: #ffffff; --fg: #14181d; --fg-2: #4a535e; --fg-3: #6d7682; --rule: #dde2e8; --band: #f0f3f6;
-    --pass: #1a7f37; --pass-bg: #dff3e4; --warn: #8a5a00; --warn-bg: #fbecc4; --fail: #b3261e; --fail-bg: #fbdcd9; --unk: #57606a; --unk-bg: #e7eaee;
-    --pass-fill: #2da44e; --warn-fill: #d9a514; --fail-fill: #cf222e; --unk-fill: #afb8c1;
-    --series-1: #2a78d6; --series-1-soft: #2a78d655; --series-2: #eb6834; --series-2-soft: #eb683455;
-    --focus: #2a78d6;
-    --display: "Space Grotesk", "Inter", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-    --body: "Inter", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --bg: #14171a; --surface: #1b1f23; --fg: #eef0f2; --fg-2: #bcc3cb; --fg-3: #939ba5; --rule: #2f353c; --band: #22272c;
-      --pass: #6fd08a; --pass-bg: #173322; --warn: #e6b450; --warn-bg: #3a2e12; --fail: #ff8f86; --fail-bg: #40201d; --unk: #b1bac4; --unk-bg: #2a3037;
-      --pass-fill: #3fb950; --warn-fill: #d29922; --fail-fill: #f85149; --unk-fill: #6e7681;
-      --series-1: #3987e5; --series-1-soft: #3987e566; --series-2: #d95926; --series-2-soft: #d9592666;
-      --focus: #3987e5; color-scheme: dark;
-    }
-  }
-  :root[data-theme="dark"] {
-    --bg: #14171a; --surface: #1b1f23; --fg: #eef0f2; --fg-2: #bcc3cb; --fg-3: #939ba5; --rule: #2f353c; --band: #22272c;
-    --pass: #6fd08a; --pass-bg: #173322; --warn: #e6b450; --warn-bg: #3a2e12; --fail: #ff8f86; --fail-bg: #40201d; --unk: #b1bac4; --unk-bg: #2a3037;
-      --pass-fill: #3fb950; --warn-fill: #d29922; --fail-fill: #f85149; --unk-fill: #6e7681;
-      --series-1: #3987e5; --series-1-soft: #3987e566; --series-2: #d95926; --series-2-soft: #d9592666;
-    --focus: #3987e5; color-scheme: dark;
-  }
-  body {
-    margin: 0; background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.55; padding-block: 32px 56px;
-    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
-  }
-  main { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
-  header, section.text { max-width: 68ch; display: flex; flex-direction: column; gap: 10px; }
-  section.block { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-  section.block > p { max-width: 68ch; color: var(--fg-2); margin: 0; }
-  h1 { font-family: var(--display); font-weight: 600; font-size: 2.6rem; line-height: 1.15; margin: 0; text-wrap: balance; }
-  h2 { font-family: var(--display); font-weight: 600; font-size: 1.8rem; line-height: 1.2; margin: 0; }
-  p { margin: 0; }
-  .meta { color: var(--fg-3); font-size: 0.87rem; }
-  ul.lead { list-style: none; padding: 0; margin: 4px 0 0; display: grid; grid-template-columns: repeat(7, max-content); gap: 8px 10px; align-items: center; max-width: none; }
-  ul.lead li { display: contents; }
-  ul.lead .k { grid-column: 1; font-family: var(--display); font-weight: 600; font-size: 1.05rem; padding-right: 6px; }
-  ul.lead .n { color: var(--fg-3); font-size: 0.85rem; padding-right: 6px; font-variant-numeric: tabular-nums; }
-  ul.lead .chip { font-size: 0.8rem; padding: 3px 10px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  ul.lead .chip b { font-size: 0.95rem; font-weight: 700; }
-  ul.lead .chip.zero { opacity: 0.45; }
-  ul.lead .chip.unknown { grid-column: 6; }
-  ul.lead .chip.none { grid-column: 7; }
-  @media (max-width: 560px) { ul.lead { grid-template-columns: repeat(3, max-content); } ul.lead .k { grid-column: 1; } ul.lead .n { grid-column: 2 / span 2; } ul.lead .chip.unknown, ul.lead .chip.none { grid-column: auto; } }
-  ul { margin: 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 6px; }
-  .tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; min-width: 0; }
-  .tablewrap.tall { max-height: 640px; overflow-y: auto; }
-  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 0.87rem; }
-  th, td { padding: 6px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--rule); }
-  thead th { font-weight: 500; color: var(--fg-2); vertical-align: bottom; white-space: normal; line-height: 1.3; font-size: 0.8rem; background: var(--surface); position: sticky; top: 0; }
-  tbody th[scope="row"] { text-align: left; font-weight: 600; }
-  td.l, th.l { text-align: left; }
-  td.why { white-space: normal; min-width: 22em; color: var(--fg-2); }
-  thead th.viz { text-align: left; }
-  td.viz { padding-block: 2px; }
-  svg.bar { display: block; }
-  svg.bar .rng { fill: var(--series-1-soft); stroke: var(--series-1); stroke-width: 1; }
-  svg.bar .rng2 { fill: var(--series-2-soft); stroke: var(--series-2); stroke-width: 1; }
-  svg.bar .med { fill: var(--fg); }
-  svg.bar .zero { stroke: var(--rule); stroke-width: 1; }
-  svg.bar .ref { stroke: var(--fg-3); stroke-width: 1; stroke-dasharray: 2 3; fill: none; }
-  svg.bar .lim { stroke: var(--fg-2); stroke-width: 1.5; }
-  svg.bar .whisker { stroke: var(--series-1); stroke-width: 1; fill: none; }
-  svg.bar .whisker.rng2 { stroke: var(--series-2); }
-  svg.bar .dot { fill: var(--fg-3); opacity: 0.6; }
-  svg.bar .dot.warn { fill: var(--warn-fill); stroke: var(--surface); stroke-width: 1; opacity: 1; }
-  svg.bar .dot.fail { fill: var(--fail-fill); stroke: var(--surface); stroke-width: 1; opacity: 1; }
-  svg.axis text { fill: var(--fg-3); font-size: 10px; font-family: var(--body); }
-  tr.arm th { text-align: left; background: var(--band); color: var(--fg-2); font-weight: 500; font-size: 0.78rem; }
-  td.key { font-weight: 600; }
-  tr.own th, tr.own td { background: var(--band); font-weight: 600; }
-  tr.total th, tr.total td { border-top: 2px solid var(--rule); font-weight: 600; }
-  tbody tr:last-child td, tbody tr:last-child th { border-bottom: 0; }
-  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.03em; }
-  .chip.pass { color: var(--pass); background: var(--pass-bg); }
-  .chip.warn { color: var(--warn); background: var(--warn-bg); }
-  .chip.fail { color: var(--fail); background: var(--fail-bg); }
-  .chip.unknown { color: var(--unk); background: var(--unk-bg); }
-  .chip.none { color: var(--fg-2); background: transparent; box-shadow: inset 0 0 0 1px var(--fg-3); }
-  .controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; }
-  .controls label { display: flex; flex-direction: column; gap: 3px; font-size: 0.78rem; color: var(--fg-2); }
-  .controls select, .controls input { font: inherit; font-size: 0.9rem; padding: 5px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--fg); }
-  .controls select:focus-visible, .controls input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-  .count { color: var(--fg-3); font-size: 0.85rem; }
-  .cal { display: grid; grid-template-columns: max-content 1fr; gap: 5px 12px; align-items: start; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; }
-  .cal .night { font-size: 0.78rem; color: var(--fg-2); font-variant-numeric: tabular-nums; line-height: 12px; padding-top: 1px; white-space: nowrap; }
-  .cal .cells { display: flex; flex-wrap: wrap; gap: 2px; min-width: 0; }
-  .sq { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
-  /* By time: each row is one night on a shared clock, a visit drawn from its start for as long as it exposed. */
-  .cal .cells.time { display: block; position: relative; height: 14px; background-image: linear-gradient(to right, var(--rule) 1px, transparent 1px); background-size: calc(100% / var(--hours, 12)) 100%; border-right: 1px solid var(--rule); }
-  .cal .cells.time .sq { position: absolute; top: 1px; height: 12px; min-width: 3px; border-radius: 1px; box-shadow: 0 0 0 0.5px var(--surface); }
-  .cal .axis { position: relative; height: 14px; font-size: 0.72rem; color: var(--fg-3); font-variant-numeric: tabular-nums; }
-  .cal .axis span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
-  .controls .checks { display: inline-flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
-  .controls .checks label { flex-direction: row; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--fg); cursor: pointer; }
-  .controls .checks input { width: 15px; height: 15px; margin: 0; padding: 0; accent-color: var(--focus); }
-  .controls .checks input:disabled + span { color: var(--fg-3); }
-  .sq.pass { background: var(--pass-fill); } .sq.warn { background: var(--warn-fill); } .sq.fail { background: var(--fail-fill); } .sq.unknown { background: var(--unk-fill); }
-  /* No QA result: an outline, nothing inside. */
-  .sq.none, .cal .cells.time .sq.none { background: transparent; box-shadow: inset 0 0 0 1px var(--fg-2); }
-  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--fg-2); font-size: 0.85rem; align-items: center; }
-  .legend span { display: inline-flex; align-items: center; gap: 6px; }
-  .tip { position: fixed; z-index: 20; pointer-events: none; background: var(--surface); color: var(--fg); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; font-size: 0.82rem; line-height: 1.45; box-shadow: 0 4px 14px rgb(0 0 0 / 0.18); max-width: 300px; }
-  .ctl { font-size: 0.78rem; color: var(--fg-2); align-self: center; }
-  .sq { cursor: default; }
-  .sq:hover { outline: 2px solid var(--fg); outline-offset: 0; }
-  .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
-  .seg button { font: inherit; font-size: 0.85rem; padding: 5px 11px; border: 0; border-right: 1px solid var(--rule); background: var(--surface); color: var(--fg-2); cursor: pointer; }
-  .seg button:last-child { border-right: 0; }
-  .seg button[aria-pressed="true"] { background: var(--band); color: var(--fg); font-weight: 600; }
-  .seg button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-  .sub { color: var(--fg-3); }
-  .notes { color: var(--fg-2); font-size: 0.9rem; }
-</style>
+{{THEME}}</style>
 </head>
 <body>
 <main>
@@ -305,7 +187,7 @@
       (!kind || r[2].startsWith(kind)) && (!slit || r[3] === slit) &&
       (!status || (status === "notpass" ? r[6] !== "PASS" : r[6] === status)) && (!visit || String(r[0]).startsWith(visit)));
     rows.innerHTML = shown.map((r) =>
-      `<tr><th scope="row">${r[0]}</th><td class="l">${r[1]}</td><td class="l">${esc(r[2])}</td><td class="l">${r[3]}</td><td>${r[4]}</td><td class="l">${r[5]}</td>` +
+      `<tr><th scope="row"><a href="/visit/${r[0]}">${r[0]}</a></th><td class="l">${r[1]}</td><td class="l">${esc(r[2])}</td><td class="l">${r[3]}</td><td>${r[4]}</td><td class="l">${r[5]}</td>` +
       `<td class="l"><span class="chip ${CLS[r[6]]}">${r[6]}</span></td><td class="l">${esc(r[7])}</td><td class="l why">${esc(r[8])}</td></tr>`).join("");
     count.textContent = `${shown.length.toLocaleString()} of ${DATA.length.toLocaleString()} visits`;
   }
@@ -350,7 +232,7 @@
     const square = ([i, status]) => {
       const start = Math.max(STARTS[i], from), end = Math.min(STARTS[i] + lasts(i), to);
       const place = byTime ? ` style="left:${along(start)}%;width:${((end - start) / (hours * 60) * 100).toFixed(3)}%"` : "";
-      return `<span class="sq ${CLS[status]}" data-i="${i}"${place} role="img" aria-label="Visit ${DATA[i][0]}, ${status}"></span>`;
+      return `<a class="sq ${CLS[status]}" href="/visit/${DATA[i][0]}" data-i="${i}"${place} role="img" aria-label="Visit ${DATA[i][0]}, ${status}"></a>`;
     };
     const notes = [];
     if (outside) notes.push(`${outside} ${outside === 1 ? "visit" : "visits"} outside 18:00 to 07:00 ${outside === 1 ? "is" : "are"} not drawn.`);
