@@ -79,8 +79,11 @@ def testVisitPageWithNoQaResult():
     )
     # Visit 9 is not in the QA tables (not reduced): the page says so, from the opdb info.
     page = buildVisitPage(_tables((1, "r1", "science", _science())), info, 9)
-    assert "<h1>Visit 9</h1>" in page and "No QA result" in page
-    assert "2026-11-04 22:00 HST" in page
+    assert "No QA result" in page
+    # The identifying facts are the large title, not a byline under a bare "Visit N".
+    heading = re.search(r"<h1>(.*?)</h1>", page).group(1)
+    assert heading.startswith("Visit 9 · ")
+    assert "2026-11-04 22:00 HST" in heading and "b1 r1" in heading
     # No detector table without QA data.
     assert "Measurements by detector" not in page
 

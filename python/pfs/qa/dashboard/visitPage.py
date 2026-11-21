@@ -85,7 +85,11 @@ def _page(title: str, body: str) -> str:
 
 
 def _header(visit: int, vrow: pd.Series | None, info: pd.Series | None) -> str:
-    """Return the page header: the visit, when it was taken, what it is, and the overall verdict."""
+    """Return the page header: the visit and its identifying facts as the title, the sequence, and the verdict.
+
+    The title carries the visit number and what identifies it — when it was taken, the exposure,
+    the type and the arms — rather than relegating them to a byline under a bare "Visit N".
+    """
     bits = []
     if vrow is not None:
         if vrow.get("hst"):
@@ -114,10 +118,9 @@ def _header(visit: int, vrow: pd.Series | None, info: pd.Series | None) -> str:
         verdict = (
             f"<span class='chip verdict {_CLASS.get(vrow['status'], 'unknown')}'>{vrow['status']}</span>"
         )
-    meta = " · ".join(bits)
+    title = " · ".join([f"Visit {visit}", *bits])
     return (
-        f"<header>\n<h1>Visit {visit}</h1>\n"
-        + (f"<p class='meta'>{meta}</p>\n" if meta else "")
+        f"<header>\n<h1>{title}</h1>\n"
         + (f"<p class='meta'>{sequence}</p>\n" if sequence else "")
         + (f"<p>{verdict}</p>\n" if verdict else "")
         + "</header>"
