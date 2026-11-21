@@ -4,7 +4,7 @@ import pandas as pd
 
 from pfs.drp.qa.qadb.reader import GATE_COLUMNS
 from pfs.qa.dashboard import live
-from pfs.qa.dashboard.live import GATE, QadbStore, qadbProvenance, readCollection
+from pfs.qa.dashboard.live import GATE, OVERLAP, QadbStore, qadbProvenance, readCollection
 from pfs.qa.dashboard.qadbSource import readSnapshot, writeSnapshot
 
 
@@ -237,8 +237,9 @@ def testTheGateIsReadOverTheVisitsTheNumbersRead(monkeypatch):
     # A read that brings no image asks the gate nothing.
     empty = readCollection(None, "c", 1000, 2000, since="t2")[GATE]
     assert len(asked) == 2 and empty.empty and list(empty.columns) == list(GATE_COLUMNS)
-    # Negative control: the numbers' own tables come back as the reader gave them.
-    assert readCollection(None, "c", 1000, 2000)["iqQaMetrics"]["visit"].tolist() == [1002, 1005]
+    # Negative control: without ``since`` the gate is read over the whole range, not the numbers' visits.
+    readCollection(None, "c", 1000, 2000)
+    assert asked[-1] == (1000, 2000) != (1002, 1005)
 
 
 def testGateRowsReplaceTheirOwnImages():
@@ -260,3 +261,54 @@ def testGateRowsReplaceTheirOwnImages():
     assert gate["visit"].tolist() == [1001, 1002] and gate["qaStatus"].tolist() == ["PASS", "FAIL"]
     # Negative control: 1001's numbers, which the second read did not hold, are kept.
     assert sorted(store.raw["iqQaMetrics"]["visit"]) == [1001, 1002]
+
+
+def testAReadThatStraddlesALoadLosesNoRow():
+    """A read whose queries straddle a load brings the line residuals at the new time and no image-quality row."""
+    held = {"since": None}
+
+    def read(since):
+        held["since"] = since
+        return reads.pop(0)
+
+    first = tables([image(1001, "b", "PASS", 2.5, "t1")])
+    first["dmLineResidualSummary"] = pd.DataFrame(
+        [{"visit": 1001, "arm": "b", "spectrograph": 1, "decidedAt": "t1"}]
+    )
+    straddled = tables([])
+    straddled["iqQaMetrics"] = pd.DataFrame(columns=["visit", "arm", "spectrograph", "decidedAt"])
+    straddled["dmLineResidualSummary"] = pd.DataFrame(
+        [{"visit": 1001, "arm": "b", "spectrograph": 1, "decidedAt": "t2"}]
+    )
+    whole = tables([image(1001, "b", "FAIL", 9.0, "t2")])
+    whole["dmLineResidualSummary"] = straddled["dmLineResidualSummary"]
+    reads = [first, straddled, whole]
+
+    store = QadbStore(read)
+    assert store.refresh()
+    # The image-quality row of the first load stays: the straddled read brought none to replace it.
+    assert store.raw["iqQaMetrics"]["visit"].tolist() == [1001]
+    assert _statuses(store) == {(1001, "b"): "PASS"}
+    # Negative control: the next read, with the image-quality row at the new time, is new, though the
+    # line residuals at that time were seen already.
+    assert store.refresh() and _statuses(store) == {(1001, "b"): "FAIL"}
+
+
+def testALoadCommittedAfterALaterStampedOneIsRead():
+    """Two loaders at once: the one stamped first commits last. Each refresh reads from OVERLAP before since."""
+    t = pd.Timestamp("2026-11-20 18:00")
+    qadb = FakeQadb()
+    qadb.loads.append([image(1001, "b", "PASS", 2.5, t)])
+    store = QadbStore(qadb.read)
+    qadb.loads.append([image(1003, "b", "PASS", 2.5, t + pd.Timedelta(minutes=2))])
+    assert store.refresh() and store.since == t + pd.Timedelta(minutes=2)
+    # Stamped a minute before the load already read, committed after it.
+    qadb.loads.append([image(1002, "b", "WARN", 2.9, t + pd.Timedelta(minutes=1))])
+    assert store.refresh()
+    assert qadb.calls[-1] == store.since - OVERLAP
+    assert _statuses(store) == {(1001, "b"): "PASS", (1002, "b"): "WARN", (1003, "b"): "PASS"}
+    # Loads read again inside the overlap are not new.
+    assert not store.refresh() and store.version == 3
+    # Negative control: a load stamped further back than the overlap is not read.
+    qadb.loads.append([image(1004, "b", "PASS", 2.5, store.since - OVERLAP - pd.Timedelta(seconds=1))])
+    assert not store.refresh() and (1004, "b") not in _statuses(store)

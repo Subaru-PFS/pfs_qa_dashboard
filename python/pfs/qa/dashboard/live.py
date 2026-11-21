@@ -4,13 +4,14 @@
 `pfs.drp.qa.qadb.reader.readQadb` returns and each image's gate verdict
 (`pfs.drp.qa.qadb.reader.readGate`, as ``qaGate``). Its `refresh` reads from
 qadb only the images loaded or judged since the last read (the reader's
-``since``) and replaces their rows, so a refresh costs what the new visits
-cost. Offline, the same store holds a snapshot of a qadb read
+``since``, less `OVERLAP`) and replaces their rows, so a refresh costs what
+the new visits cost. Offline, the same store holds a snapshot of a qadb read
 (`qadbSource.readSnapshot`), and never changes.
 """
 
 import threading
 from collections.abc import Callable, Mapping
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -18,7 +19,7 @@ import pandas as pd
 
 from pfs.drp.qa.qadb.reader import FIRST_VISIT, GATE_COLUMNS, LAST_VISIT, readGate, readQadb
 
-__all__ = ["GATE", "HST", "QadbStore", "qadbProvenance", "readCollection"]
+__all__ = ["GATE", "HST", "OVERLAP", "QadbStore", "qadbProvenance", "readCollection"]
 
 HST = ZoneInfo("Pacific/Honolulu")
 
@@ -33,8 +34,14 @@ _NUMBERS = ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics")
 #: Every table of a read the store keeps.
 _RAW = (*_NUMBERS, GATE)
 
-#: Those with one row per image, which say what a read loaded.
+#: Those with one row per image: their visits are those a read brought.
 _PER_IMAGE = ("iqQaMetrics", "dmLineResidualSummary")
+
+#: How far before the latest load already read each refresh reads again. A load is stamped
+#: (``qa_gate.decided_at``) just before its rows are written, so two loaders at once can commit
+#: out of the order they stamped: a load stamped earlier than one already read, and committed
+#: after it, is read on the next refresh as long as its write took less than this.
+OVERLAP = timedelta(minutes=5)
 
 _TIMES = ["pfs_visit_id", "time_exp_start"]
 
@@ -92,13 +99,16 @@ class QadbStore:
         Counts the refreshes that brought a new load.
     since
         The latest load read (``qa_gate.decided_at``); None before the first.
+        A refresh reads from `OVERLAP` before it, and takes again only what
+        it has not seen.
     """
 
     def __init__(self, read: Callable[[Any], Mapping[str, pd.DataFrame]]):
         self._read = read
         self._lock = threading.Lock()
         self.since: Any = None
-        self._seenAtSince: set[tuple] = set()
+        # The loads read within OVERLAP of ``since``, by table, image and time: those a refresh reads again.
+        self._seen: set[tuple] = set()
         self.version = 0
         self.raw: dict[str, pd.DataFrame] = {}
         self._times = pd.DataFrame(columns=_TIMES)
@@ -131,33 +141,39 @@ class QadbStore:
             Whether any load was new.
         """
         with self._lock:
-            changed = self._takeLoads(self._read(self.since))
+            changed = self._takeLoads(self._read(_before(self.since)))
             if changed:
                 self.version += 1
             return changed
 
     def _takeLoads(self, tables: Mapping[str, pd.DataFrame]) -> bool:
-        """Replace the rows of the images in ``tables`` (a qadb read); return whether any load was new."""
-        # ``since`` is inclusive, so the last read's newest loads come back every time: only
-        # an image load not seen before (image and time) is new. From either task's table of
-        # images: one may have line residuals and no image-quality row.
+        """Replace the rows of the images in ``tables`` (a qadb read); return whether any load was new.
+
+        A load is new by table, image and time. A read whose queries straddle a load can bring an
+        image's line residuals at the new time and its image-quality row at the old one (or none):
+        each table replaces only the images it brought itself, and the next read, which brings the
+        image-quality row at the new time, has a load not yet seen.
+        """
         columns = [*_IMAGE, "decidedAt"]
-        loaded = pd.concat([tables[name].reindex(columns=columns) for name in _PER_IMAGE], ignore_index=True)
-        loads = set(loaded.itertuples(index=False, name=None))
-        if loads <= self._seenAtSince:
+        loads = {
+            (name, *load)
+            for name in _NUMBERS
+            for load in tables[name]
+            .reindex(columns=columns)
+            .drop_duplicates()
+            .itertuples(index=False, name=None)
+        }
+        if loads <= self._seen:
             return False
-        # Every image the read holds numbers of, in whichever table; the gate's rows replace their own images'.
-        loadedImages = _images(pd.concat([tables[name][_IMAGE] for name in _NUMBERS], ignore_index=True))
         for name in _RAW:
             read = tables.get(name)
             if read is None:
                 continue
-            replaced = _images(read[_IMAGE]) if name == GATE else loadedImages
             held = self.raw.get(name)
             if held is None or held.empty:
                 self.raw[name] = read
                 continue
-            others = held[~_images(held[_IMAGE]).isin(replaced)]
+            others = held[~_images(held[_IMAGE]).isin(_images(read[_IMAGE]))]
             parts = [part for part in (others, read) if len(part)]
             self.raw[name] = pd.concat(parts, ignore_index=True) if parts else held.iloc[:0]
         read = tables.get("visitTimes")
@@ -166,9 +182,16 @@ class QadbStore:
             self._times = times.drop_duplicates("pfs_visit_id", keep="last").sort_values(
                 "pfs_visit_id", ignore_index=True
             )
-        self.since = loaded["decidedAt"].max()
-        self._seenAtSince = {load for load in loads if load[-1] == self.since}
+        latest = max(load[-1] for load in loads)
+        self.since = latest if self.since is None else max(self.since, latest)
+        cutoff = _before(self.since)
+        self._seen = {load for load in self._seen | loads if load[-1] >= cutoff}
         return True
+
+
+def _before(since: Any) -> Any:
+    """Return where a refresh reads from: `OVERLAP` before ``since`` (a time), or ``since`` itself."""
+    return since - OVERLAP if isinstance(since, datetime) else since
 
 
 def _images(keys: pd.DataFrame) -> pd.MultiIndex:

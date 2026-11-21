@@ -62,8 +62,9 @@ with `python:` first on `PYTHONPATH`.
 
 **Live, from qadb.** qaActor loads every visit it judges into qadb. `serve` reads a collection back
 (`pfs.drp.qa.qadb.reader.readQadb`, and `readGate` for the verdicts) and every `--refresh` seconds reads only the
-images loaded or judged again since (`qa_gate.decided_at`), and their visits' gate rows, making the page again
-when there are any. An image judged in more than one RUN of the
+images loaded or judged again since (`qa_gate.decided_at`, less five minutes, so a load stamped before one
+already read and written after it is still taken), and their visits' gate rows, making the page again when there
+are any. An image judged in more than one RUN of the
 collection shows the latest.
 
 The databases are read on a thread of their own, and a browser is answered at once with the last page made, so

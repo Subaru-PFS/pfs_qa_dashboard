@@ -44,6 +44,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- A read taken while a load was being written could bring an image's line residuals and not its image-quality
+  row; the image then lost that row (its lamp and illumination) until the server restarted. And a load stamped
+  before one already read, but written after it (two loaders at once), was never read. Each table now replaces
+  only the images it brought, a load is new by table, image and time, and each refresh reads from five minutes
+  before the latest load read.
 - A read from qadb that brought only images with line residuals and no image-quality row was not taken as new,
   so those images showed only once a later image was loaded. `snapshot` and `report` likewise left such
   visits out of the range they read from the opdb.
