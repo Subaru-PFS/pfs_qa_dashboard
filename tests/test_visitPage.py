@@ -3,7 +3,7 @@
 import re
 
 import pandas as pd
-from test_runReport import _science, _tables
+from test_runReport import _OH_R1, _science, _tables
 
 from pfs.qa.dashboard.visitPage import buildVisitPage
 
@@ -31,6 +31,19 @@ def testVisitPageShowsDetectorsAndGrid():
     # Stands alone: fonts inline, nothing fetched; links back to the other pages.
     assert page.count("@font-face") == 2 and not re.findall(r"""(?:src|href)=["']https?://""", page)
     assert "href='/'" in page and "href='/run'" in page
+
+
+def testVisitPageShowsSkyResidualBySpecies():
+    tables = _tables(
+        (3, "r1", "science", _science(heldBack=0.6 / _OH_R1, species="OH"), {"gate": ("PASS", "")})
+    )
+    page = buildVisitPage(tables, None, 3)
+    assert "Sky-line residual by species (km/s)" in page
+    # The held-back OH residual, converted to km/s with the r1 OH dispersion.
+    assert "OH" in page and "+0.60" in page
+    # Negative control: an arc with no sky species has no such section.
+    arc = buildVisitPage(_tables((4, "r1", "arc", {}, {"gate": ("PASS", "")})), None, 4)
+    assert "Sky-line residual by species" not in arc
 
 
 def testVisitPageWithNoQaResult():

@@ -22,8 +22,11 @@ from pfs.qa.dashboard.live import HST
 from pfs.qa.dashboard.runReport import (
     ARMS,
     NO_RESULT,
+    SPECIES_LABEL,
+    _calibrationOffsets,
     _fontFaces,
     _theme,
+    kmsPerPixel,
     measure,
     visitTable,
     worst,
@@ -178,6 +181,46 @@ def _grid(perCam: pd.DataFrame) -> str:
     )
 
 
+#: How the per-visit page writes each species name.
+_SPECIES = {**SPECIES_LABEL, "O2": "O₂", "NaI": "Na I", "NeI": "Ne I", "ArI": "Ar I", "KrI": "Kr I"}
+
+
+def _speciesSection(tables: Any) -> str:
+    """Return the held-back sky-line residual after the visit's adjustment, per detector and species (km/s)."""
+    offsets = _calibrationOffsets(tables)
+    if offsets.empty:
+        return ""
+    held = offsets[
+        (offsets["reference"] == "visit")
+        & (offsets["statusType"] == "RESERVED")
+        & (offsets["metric"] == "medianDeltaY")
+    ]
+    scale = kmsPerPixel().rename(columns={"species": "description"})[["camera", "description", "kmsPerPixel"]]
+    km = held.merge(scale, on=["camera", "description"])
+    if km.empty:
+        return ""
+    km = km.assign(kms=km["value"] * km["kmsPerPixel"])
+    cameras = sorted(km["camera"].unique(), key=_cameraKey)
+    species = sorted(km["description"].unique())
+    pivot = km.pivot_table(index="camera", columns="description", values="kms", aggfunc="first")
+    head = "".join(f"<th scope='col' class='cam'>{_SPECIES.get(s, s)}</th>" for s in species)
+    rows = []
+    for camera in cameras:
+        cells = []
+        for name in species:
+            value = pivot.loc[camera, name] if (camera in pivot.index and name in pivot.columns) else None
+            cells.append(f"<td class='cam'>{f'{value:+.2f}' if pd.notna(value) else '–'}</td>")
+        rows.append(f"<tr><th scope='row'>{camera}</th>{''.join(cells)}</tr>")
+    return (
+        "<section class='block'><h2>Sky-line residual by species (km/s)</h2>"
+        "<p>The held-back sky lines' median residual after the visit's own detectorMap adjustment, per "
+        "species, in km/s. The gate judges the arm's best-measured species (OH on r, n and m; [O I] on b); "
+        "the others are shown for context.</p>"
+        f"<div class='tablewrap'><table><thead><tr><th scope='col' class='l'>Detector</th>{head}</tr></thead>"
+        "<tbody>\n" + "\n".join(rows) + "\n</tbody></table></div></section>"
+    )
+
+
 def buildVisitPage(tables: Any, info: pd.DataFrame | None, visit: int, now: datetime | None = None) -> str:
     """Return the per-visit page for ``visit`` as one stand-alone HTML document.
 
@@ -200,6 +243,11 @@ def buildVisitPage(tables: Any, info: pd.DataFrame | None, visit: int, now: date
     tables = {
         name: tables.get(name, pd.DataFrame())
         for name in ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics", "qaGate")
+    }
+    # Scope to the visit, so the whole-collection tables (an offline render) give one visit's page.
+    tables = {
+        name: (frame[frame["visit"] == int(visit)] if "visit" in frame.columns else frame)
+        for name, frame in tables.items()
     }
     images = measure(tables)
     images = images[images["visit"] == int(visit)]
@@ -240,6 +288,7 @@ def buildVisitPage(tables: Any, info: pd.DataFrame | None, visit: int, now: date
             _header(int(visit), vrow, infoRow),
             _detectorTable(perCam),
             _grid(perCam),
+            _speciesSection(tables),
             _links(),
         ]
     )
