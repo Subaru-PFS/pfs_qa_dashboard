@@ -70,9 +70,12 @@ collection shows the latest.
 The databases are read on a thread of their own, and a browser is answered at once with the last page made, so
 a database that fails or hangs does not hold the page up. The page served follows the server: every few seconds
 it asks for `/status`, reloads itself when a newer page has been made (keeping the filters, buttons and place
-as they were left), and says at the bottom right when the results were last read. That turns red, with the
-error, when a read fails, or when none has worked for three intervals (90 s at least), as when a connection
-hangs. A connection that is not answered is given up on after 10 s (`PGCONNECT_TIMEOUT`, when not already set);
+as they were left), and says at the bottom right when the results were last read. No new results is not a
+fault: the time moves on with every read that works. It turns red, with the error, when a read fails; amber
+("Still reading") when none has worked for three intervals (90 s at least) and one is under way, as when a read is
+slow or a connection hangs; and red when none is under way, or the server does not answer. The terminal running
+`serve` logs a failed read with its traceback, the first page poll that finds the results stale, and a read that
+took that long, when it ends. A connection that is not answered is given up on after 10 s (`PGCONNECT_TIMEOUT`, when not already set);
 a query that hangs on an open connection is not interrupted, and the server may then need restarting. A page
 written by `report`, or served from a snapshot, has none of this and fetches nothing.
 

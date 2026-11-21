@@ -6,6 +6,7 @@
   }
   #live:empty { display: none; }
   #live.bad { border-color: var(--fail); background: var(--fail-bg); color: var(--fail); font-weight: 600; }
+  #live.slow { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); font-weight: 600; }
   @media print { #live { display: none; } }
 </style>
 <div id="live" role="status"></div>
@@ -47,11 +48,20 @@
         const status = await response.json();
         lost = null;
         if (status.built !== built) { keepView(); location.reload(); return; }
-        const bad = Boolean(status.error) || status.stale;
-        live.className = bad ? "bad" : "";
-        live.textContent = bad
-          ? `Results not read since ${status.readAt} HST` + (status.error ? `: ${status.error}` : "")
-          : `Results read ${status.readAt} HST`;
+        // Red for a read that failed, or a reader that stopped; amber for a read that is taking long.
+        if (status.error) {
+          live.className = "bad";
+          live.textContent = `Results not read since ${status.readAt} HST: ${status.error}`;
+        } else if (status.stale && status.reading) {
+          live.className = "slow";
+          live.textContent = `Still reading, since ${status.reading} HST; results last read ${status.readAt} HST`;
+        } else if (status.stale) {
+          live.className = "bad";
+          live.textContent = `Results not read since ${status.readAt} HST: the server has stopped reading`;
+        } else {
+          live.className = "";
+          live.textContent = `Results read ${status.readAt} HST`;
+        }
       } catch (error) {
         lost = lost || new Date().toLocaleTimeString("en-GB", { timeZone: "Pacific/Honolulu" });
         live.className = "bad";

@@ -355,6 +355,44 @@ def testStatusSaysWhenNoReadHasWorkedForLong():
     assert not cache.status()["stale"]
 
 
+def testASlowReadIsToldFromAStoppedReaderAndLogged(caplog):
+    """Stale while a read is under way is a slow read (amber on the page); stale with none is a stopped reader."""
+    import threading
+    from datetime import timedelta
+
+    store = _Store(_tables((1, "r1", "science", _science())))
+    cache = ReportCache(store)
+    cache.update()
+    cache.interval = 30.0
+    release, started = threading.Event(), threading.Event()
+    working = store.refresh
+    store.refresh = lambda: started.set() or release.wait(10) or working()
+    reader = threading.Thread(target=cache.poll)
+    reader.start()
+    assert started.wait(10)
+    cache.readAt -= timedelta(seconds=120)
+    with caplog.at_level("WARNING", logger="pfs.qa.dashboard.runReport"):
+        status = cache.status()
+        cache.status()
+    assert status["stale"] and status["reading"] and status["error"] is None
+    said = [r.getMessage() for r in caplog.records if "No read of the results" in r.getMessage()]
+    assert len(said) == 1 and "under way since" in said[0]  # once per wait, not per page poll
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="pfs.qa.dashboard.runReport"):
+        cache.readingSince -= timedelta(seconds=120)  # the read began two minutes ago
+        release.set()
+        reader.join(10)
+    assert cache.status()["reading"] == "" and not cache.status()["stale"]
+    assert any("Reading the results took" in r.getMessage() for r in caplog.records)
+    # Negative control: stale with no read under way is a reader that stopped, not a slow read.
+    cache.readAt -= timedelta(seconds=120)
+    assert cache.status()["stale"] and cache.status()["reading"] == ""
+    page = cache.page
+    assert (
+        "the server has stopped reading" in page and "Still reading, since" in page and "#live.slow" in page
+    )
+
+
 def _snapshot(directory):
     tables = _tables(
         (1, "r1", "science", _science(heldBack=0.6 / _OH_R1), {"gate": ("WARN", "OH residual +0.60 km/s")}),

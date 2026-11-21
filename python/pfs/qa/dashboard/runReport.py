@@ -961,6 +961,8 @@ class ReportCache:
         When the last `update` finished (HST); None before the first.
     error : `str`
         What the last `poll` failed with; None when it worked.
+    readingSince : `datetime.datetime`
+        When the `poll` under way began (HST); None between polls.
     interval : `float`
         Seconds between the watching thread's updates; None when not watched.
     """
@@ -984,7 +986,9 @@ class ReportCache:
         self.built = 0
         self.readAt: datetime | None = None
         self.error: str | None = None
+        self.readingSince: datetime | None = None
         self.interval: float | None = None
+        self._staleSaid = False
 
     def update(self) -> bool:
         """Read the store's source and make the report again if the store changed; return whether it did.
@@ -1013,13 +1017,28 @@ class ReportCache:
             return changed
 
     def poll(self) -> None:
-        """`update`, keeping the last page and noting the ``error`` when it fails."""
+        """`update`, keeping the last page and noting the ``error`` when it fails.
+
+        A read that took longer than `status` waits before calling the results stale is logged
+        when it ends, with how long it took.
+        """
+        self.readingSince = datetime.now(HST)
         try:
             self.update()
         except Exception as error:
             _log.exception("Reading the results failed; keeping the last page")
             lines = f"{type(error).__name__}: {error}".splitlines()
             self.error = lines[0][:200] if lines else type(error).__name__
+        finally:
+            start, self.readingSince = self.readingSince, None
+            took = (datetime.now(HST) - start).total_seconds()
+            if took > self._staleAfter():
+                _log.warning("Reading the results took %.0f s (from %s HST)", took, f"{start:%H:%M:%S}")
+            self._staleSaid = False
+
+    def _staleAfter(self) -> float:
+        """Seconds without a read that worked after which a watched cache's results are stale."""
+        return max(3 * (self.interval or 0.0), 90.0)
 
     def watch(self, interval: float) -> threading.Thread:
         """Start a thread that calls `poll` every ``interval`` seconds, and return it."""
@@ -1059,21 +1078,41 @@ class ReportCache:
         return f"{head}{live}{end}{tail}"
 
     def status(self) -> dict:
-        """Return what the served page asks for: ``built``, ``readAt``, ``stale`` and ``error``.
+        """Return what the served page asks for: ``built``, ``readAt``, ``stale``, ``reading`` and ``error``.
 
         ``readAt`` is the time of the last update that worked (HST, with its date when that is
         not today); ``stale`` is whether a watched cache has gone three intervals, and at least
-        90 s, without one, as when a read hangs.
+        90 s, without one; ``reading`` is when the read under way began (HST), empty between
+        reads: a stale cache that is reading is waiting on a slow or hung read, one that is not
+        has stopped reading. The first stale answer of a wait is logged.
         """
         now = datetime.now(HST)
-        readAt = self.readAt
-        if readAt is None:
-            return {"built": self.built, "readAt": "", "stale": False, "error": self.error}
-        age = (now - readAt).total_seconds()
+        readAt, readingSince = self.readAt, self.readingSince
+
+        def when(moment: datetime | None) -> str:
+            if moment is None:
+                return ""
+            return f"{moment:%H:%M:%S}" if moment.date() == now.date() else f"{moment:%Y-%m-%d %H:%M}"
+
+        stale = (
+            readAt is not None
+            and self.interval is not None
+            and (now - readAt).total_seconds() > self._staleAfter()
+        )
+        if stale and not self._staleSaid:
+            self._staleSaid = True
+            _log.warning(
+                "No read of the results has worked since %s HST; %s",
+                when(readAt),
+                f"one has been under way since {when(readingSince)} HST"
+                if readingSince
+                else "none is under way",
+            )
         return {
             "built": self.built,
-            "readAt": f"{readAt:%H:%M:%S}" if readAt.date() == now.date() else f"{readAt:%Y-%m-%d %H:%M}",
-            "stale": self.interval is not None and age > max(3 * self.interval, 90.0),
+            "readAt": when(readAt),
+            "stale": stale,
+            "reading": when(readingSince),
             "error": self.error,
         }
 

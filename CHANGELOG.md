@@ -38,7 +38,9 @@ All notable changes to this project are documented here. The format follows
   page up, or the server.
 - **The page served follows the server.** Every few seconds it asks for `/status`, reloads itself when a newer
   page has been made, keeping the filters, buttons and place as they were left, and says when the results were
-  last read: in red, with the error, when a read fails or none has worked for three intervals (90 s at least).
+  last read: in red, with the error, when a read fails; in amber, "Still reading", when none has worked for three
+  intervals (90 s at least) and one is under way; in red when none is. `serve` logs a failed read, the wait, and a
+  slow read's duration.
   A page written by `report`, or served from a snapshot, is as before and fetches nothing.
 - A database connection that is not answered is given up on after 10 s (`PGCONNECT_TIMEOUT`, when not set).
 
