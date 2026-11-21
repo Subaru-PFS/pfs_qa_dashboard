@@ -7,6 +7,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Previous/next visit navigation** on the per-visit page: a nav row with the previous visit on the left, the
+  night page in the centre and the next visit on the right. The neighbours are `visit ± 1` with no check that they
+  exist, so a gap in the numbering lands on a no-result page; below visit 1 there is no previous link.
+
+### Changed
+
+- The per-visit page's heading now carries the visit's identifying facts (time, exposure, type, arms) as the
+  title, rather than a bare "Visit N" with those facts in a byline; the header uses the full content width.
+
 ## [0.7.0] - 2026-11-20
 
 ### Added
