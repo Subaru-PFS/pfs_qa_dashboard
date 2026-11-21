@@ -72,6 +72,9 @@ def _page(title: str, body: str) -> str:
         '<!doctype html>\n<html lang="en" data-theme="light">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{html.escape(title)}</title>\n<style>\n{theme}"
+        # The title carries the visit's identifying facts, so let the header use the full content
+        # width (the shared theme caps it at a 68ch reading column, which wraps the longer title).
+        "  header { max-width: none; }\n"
         "  .verdict { font-size: 1.05rem; padding: 2px 12px; }\n"
         "  td.cam, th.cam { text-align: center; }\n"
         "  thead th.camhead { text-align: center; }\n"
