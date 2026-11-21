@@ -48,6 +48,25 @@ def testVisitPageShowsSkyResidualBySpecies():
     assert "Sky-line residual by species" not in arc
 
 
+def testVisitPageHasPrevNextNav():
+    tables = _tables((7, "b1", "science", _science(), {"gate": ("PASS", "")}))
+    page = buildVisitPage(tables, None, 7)
+    # Dumb nav: the neighbours are visit ± 1 with no existence check.
+    assert "href='/visit/6' rel='prev'" in page and "href='/visit/8' rel='next'" in page
+    # The night page sits between prev and next, in that order.
+    nav = re.search(r"<nav class='visitnav'>(.*?)</nav>", page).group(1)
+    order = [nav.index("rel='prev'"), nav.index("href='/'"), nav.index("rel='next'")]
+    assert order == sorted(order) and "Night page" in nav
+    # Below visit 1 there is no previous link (it never points at visit 0).
+    first = buildVisitPage(_tables((1, "b1", "science", _science(), {"gate": ("PASS", "")})), None, 1)
+    assert "rel='prev'" not in first and "href='/visit/2' rel='next'" in first
+    # Negative control: the previous link is visit - 1, not the same visit or visit + 1.
+    assert "href='/visit/7' rel='prev'" not in page
+    # A no-result visit is still navigable away from.
+    none = buildVisitPage({}, None, 5)
+    assert "href='/visit/4' rel='prev'" in none and "href='/visit/6' rel='next'" in none
+
+
 def testVisitPageWithNoQaResult():
     info = pd.DataFrame(
         {
@@ -64,8 +83,11 @@ def testVisitPageWithNoQaResult():
     )
     # Visit 9 is not in the QA tables (not reduced): the page says so, from the opdb info.
     page = buildVisitPage(_tables((1, "r1", "science", _science())), info, 9)
-    assert "<h1>Visit 9</h1>" in page and "No QA result" in page
-    assert "2026-11-04 22:00 HST" in page
+    assert "No QA result" in page
+    # The identifying facts are the large title, not a byline under a bare "Visit N".
+    heading = re.search(r"<h1>(.*?)</h1>", page).group(1)
+    assert heading.startswith("Visit 9 · ")
+    assert "2026-11-04 22:00 HST" in heading and "b1 r1" in heading
     # No detector table without QA data.
     assert "Measurements by detector" not in page
 

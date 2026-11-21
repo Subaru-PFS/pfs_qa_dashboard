@@ -72,17 +72,27 @@ def _page(title: str, body: str) -> str:
         '<!doctype html>\n<html lang="en" data-theme="light">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{html.escape(title)}</title>\n<style>\n{theme}"
+        # The title carries the visit's identifying facts, so let the header use the full content
+        # width (the shared theme caps it at a 68ch reading column, which wraps the longer title).
+        "  header { max-width: none; }\n"
         "  .verdict { font-size: 1.05rem; padding: 2px 12px; }\n"
         "  td.cam, th.cam { text-align: center; }\n"
         "  thead th.camhead { text-align: center; }\n"
         "  thead th.camhead .chip { display: block; margin-top: 3px; }\n"
+        "  nav.visitnav { display: flex; justify-content: space-between; gap: 12px;"
+        " margin: 0 0 14px; font-size: 0.95rem; }\n"
+        "  nav.visitnav .nolink { color: var(--fg-3); }\n"
         "</style>\n</head>\n<body>\n<main>\n"
         f"{body}\n</main>\n</body>\n</html>\n"
     )
 
 
 def _header(visit: int, vrow: pd.Series | None, info: pd.Series | None) -> str:
-    """Return the page header: the visit, when it was taken, what it is, and the overall verdict."""
+    """Return the page header: the visit and its identifying facts as the title, the sequence, and the verdict.
+
+    The title carries the visit number and what identifies it — when it was taken, the exposure,
+    the type and the arms — rather than relegating them to a byline under a bare "Visit N".
+    """
     bits = []
     if vrow is not None:
         if vrow.get("hst"):
@@ -111,10 +121,9 @@ def _header(visit: int, vrow: pd.Series | None, info: pd.Series | None) -> str:
         verdict = (
             f"<span class='chip verdict {_CLASS.get(vrow['status'], 'unknown')}'>{vrow['status']}</span>"
         )
-    meta = " · ".join(bits)
+    title = " · ".join([f"Visit {visit}", *bits])
     return (
-        f"<header>\n<h1>Visit {visit}</h1>\n"
-        + (f"<p class='meta'>{meta}</p>\n" if meta else "")
+        f"<header>\n<h1>{title}</h1>\n"
         + (f"<p class='meta'>{sequence}</p>\n" if sequence else "")
         + (f"<p>{verdict}</p>\n" if verdict else "")
         + "</header>"
@@ -128,6 +137,24 @@ def _links() -> str:
         "Every verdict here is the gate's, read back from qadb; this page judges nothing. "
         "Pipeline PDFs and the line-residual image are not yet shown.</p></section>"
     )
+
+
+def _nav(visit: int) -> str:
+    """Navigation row: the previous visit left, the night page centre, the next visit right.
+
+    The previous/next links are deliberately dumb: the neighbours are ``visit - 1``
+    and ``visit + 1`` with no check that either exists, so a gap in the numbering
+    lands on a no-result page. The previous link is dropped below visit 1 so it never
+    points at visit 0.
+    """
+    prev = (
+        f"<a href='/visit/{visit - 1}' rel='prev'>&larr; Visit {visit - 1}</a>"
+        if visit > 1
+        else "<span class='nolink'>&larr; Visit</span>"
+    )
+    night = "<a href='/'>Night page</a>"
+    nxt = f"<a href='/visit/{visit + 1}' rel='next'>Visit {visit + 1} &rarr;</a>"
+    return f"<nav class='visitnav'>{prev}{night}{nxt}</nav>"
 
 
 def _detectorTable(perCam: pd.DataFrame) -> str:
@@ -261,7 +288,8 @@ def buildVisitPage(tables: Any, info: pd.DataFrame | None, visit: int, now: date
             "<section class='block'><p>No QA result for this visit: it has not been reduced, or the "
             "reduction stored nothing. The night page shows it as awaiting QA.</p></section>"
         )
-        return _page(f"Visit {visit}", _header(int(visit), None, infoRow) + "\n" + note + "\n" + _links())
+        body = _nav(int(visit)) + "\n" + _header(int(visit), None, infoRow) + "\n" + note + "\n" + _links()
+        return _page(f"Visit {visit}", body)
 
     infoForTable = info[info["visit"] == int(visit)] if infoRow is not None else None
     vrow = visitTable(images, infoForTable).iloc[0]
@@ -281,6 +309,7 @@ def buildVisitPage(tables: Any, info: pd.DataFrame | None, visit: int, now: date
     # vrow["status"] is already the worst of the visit's detectors (visitTable), so it is the overall verdict.
     body = "\n".join(
         [
+            _nav(int(visit)),
             _header(int(visit), vrow, infoRow),
             _detectorTable(perCam),
             _grid(perCam),
