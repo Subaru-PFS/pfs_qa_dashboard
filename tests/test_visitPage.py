@@ -48,6 +48,21 @@ def testVisitPageShowsSkyResidualBySpecies():
     assert "Sky-line residual by species" not in arc
 
 
+def testVisitPageHasPrevNextNav():
+    tables = _tables((7, "b1", "science", _science(), {"gate": ("PASS", "")}))
+    page = buildVisitPage(tables, None, 7)
+    # Dumb nav: the neighbours are visit ± 1 with no existence check.
+    assert "href='/visit/6' rel='prev'" in page and "href='/visit/8' rel='next'" in page
+    # Below visit 1 there is no previous link (it never points at visit 0).
+    first = buildVisitPage(_tables((1, "b1", "science", _science(), {"gate": ("PASS", "")})), None, 1)
+    assert "rel='prev'" not in first and "href='/visit/2' rel='next'" in first
+    # Negative control: the previous link is visit - 1, not the same visit or visit + 1.
+    assert "href='/visit/7' rel='prev'" not in page
+    # A no-result visit is still navigable away from.
+    none = buildVisitPage({}, None, 5)
+    assert "href='/visit/4' rel='prev'" in none and "href='/visit/6' rel='next'" in none
+
+
 def testVisitPageWithNoQaResult():
     info = pd.DataFrame(
         {

@@ -76,6 +76,9 @@ def _page(title: str, body: str) -> str:
         "  td.cam, th.cam { text-align: center; }\n"
         "  thead th.camhead { text-align: center; }\n"
         "  thead th.camhead .chip { display: block; margin-top: 3px; }\n"
+        "  nav.visitnav { display: flex; justify-content: space-between; gap: 12px;"
+        " margin: 0 0 14px; font-size: 0.95rem; }\n"
+        "  nav.visitnav .nolink { color: var(--fg-3); }\n"
         "</style>\n</head>\n<body>\n<main>\n"
         f"{body}\n</main>\n</body>\n</html>\n"
     )
@@ -128,6 +131,22 @@ def _links() -> str:
         "Every verdict here is the gate's, read back from qadb; this page judges nothing. "
         "Pipeline PDFs and the line-residual image are not yet shown.</p></section>"
     )
+
+
+def _nav(visit: int) -> str:
+    """Previous/next links for the adjacent visits.
+
+    Deliberately dumb: the neighbours are ``visit - 1`` and ``visit + 1`` with no
+    check that either exists, so a gap in the numbering lands on a no-result page.
+    The previous link is dropped below visit 1 so it never points at visit 0.
+    """
+    prev = (
+        f"<a href='/visit/{visit - 1}' rel='prev'>&larr; Visit {visit - 1}</a>"
+        if visit > 1
+        else "<span class='nolink'>&larr; Visit</span>"
+    )
+    nxt = f"<a href='/visit/{visit + 1}' rel='next'>Visit {visit + 1} &rarr;</a>"
+    return f"<nav class='visitnav'>{prev}{nxt}</nav>"
 
 
 def _detectorTable(perCam: pd.DataFrame) -> str:
@@ -261,7 +280,8 @@ def buildVisitPage(tables: Any, info: pd.DataFrame | None, visit: int, now: date
             "<section class='block'><p>No QA result for this visit: it has not been reduced, or the "
             "reduction stored nothing. The night page shows it as awaiting QA.</p></section>"
         )
-        return _page(f"Visit {visit}", _header(int(visit), None, infoRow) + "\n" + note + "\n" + _links())
+        body = _nav(int(visit)) + "\n" + _header(int(visit), None, infoRow) + "\n" + note + "\n" + _links()
+        return _page(f"Visit {visit}", body)
 
     infoForTable = info[info["visit"] == int(visit)] if infoRow is not None else None
     vrow = visitTable(images, infoForTable).iloc[0]
@@ -281,6 +301,7 @@ def buildVisitPage(tables: Any, info: pd.DataFrame | None, visit: int, now: date
     # vrow["status"] is already the worst of the visit's detectors (visitTable), so it is the overall verdict.
     body = "\n".join(
         [
+            _nav(int(visit)),
             _header(int(visit), vrow, infoRow),
             _detectorTable(perCam),
             _grid(perCam),
