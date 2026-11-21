@@ -490,6 +490,16 @@ def testReportCommandWritesThePage(tmp_path, capsys):
     assert "unrecognized arguments: --kms-r" in capsys.readouterr().err
 
 
+def testReportNamesThePage(tmp_path):
+    cli = _cli()
+    snapshot = _snapshot(tmp_path / "snap")
+    out = tmp_path / "out"
+    cli.main(["report", "--snapshot", str(snapshot), "--out", str(out), "--name", "run99"])
+    assert (out / "run99.html").exists()
+    # Negative control: the default index.html is not written when --name names the page.
+    assert not (out / "index.html").exists()
+
+
 def _fetch(application, path):
     """Return the response of ``application`` to a GET of ``path``, served on a port of its own."""
     import asyncio

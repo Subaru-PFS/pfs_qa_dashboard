@@ -74,9 +74,9 @@ server may then need restarting.
 ## Offline: a file, or a snapshot
 
 ```bash
-# Write the run report as one stand-alone page (index.html), with visits.csv and images.csv
+# Write the run report as one stand-alone page (<name>.html, default index.html), with visits.csv and images.csv
 python bin/qaDashboard.py report --collection qaActor/reductions --first-visit <first visit> \
-    --opdb-host 127.0.0.1 --opdb-port 5432 --title "Run31 visit verdicts" --out <dir>
+    --opdb-host 127.0.0.1 --opdb-port 5432 --title "Run31 visit verdicts" --name run31 --out <dir>
 
 # Read a collection once into a snapshot (parquet per table + provenance.json), then serve or write it offline
 python bin/qaDashboard.py snapshot --collection qaActor/reductions --opdb-host 127.0.0.1 --out <dir>
