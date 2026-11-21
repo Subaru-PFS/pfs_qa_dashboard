@@ -312,3 +312,33 @@ def testALoadCommittedAfterALaterStampedOneIsRead():
     # Negative control: a load stamped further back than the overlap is not read.
     qadb.loads.append([image(1004, "b", "PASS", 2.5, store.since - OVERLAP - pd.Timedelta(seconds=1))])
     assert not store.refresh() and (1004, "b") not in _statuses(store)
+
+
+def testATableWithSeveralRowsPerImageIsReplacedByImage():
+    """The line-residual metrics hold many rows per image: a reload replaces the image's rows, and no other's."""
+
+    def metrics(rows, decidedAt):
+        return pd.DataFrame(
+            [
+                {"visit": v, "arm": "b", "spectrograph": 1, "metric": m, "value": x, "decidedAt": decidedAt}
+                for v, m, x in rows
+            ]
+        )
+
+    def read(since):
+        held = tables([image(1001, "b", "PASS", 2.5, "t1"), image(1002, "b", "PASS", 2.5, "t1")])
+        held["dmLineResidualMetrics"] = metrics(
+            [(1001, "dx", 0.1), (1001, "dy", 0.2), (1001, "rms", 0.3), (1002, "dx", 0.4), (1002, "dy", 0.5)],
+            "t1",
+        )
+        if since is not None:
+            held = tables([image(1002, "b", "FAIL", 2.5, "t2")])
+            held["dmLineResidualMetrics"] = metrics([(1002, "dx", 1.4), (1002, "dy", 1.5)], "t2")
+        return held
+
+    store = QadbStore(read)
+    assert store.refresh()
+    held = store.raw["dmLineResidualMetrics"].sort_values(["visit", "metric"])
+    assert held["value"].tolist() == [0.1, 0.2, 0.3, 1.4, 1.5]
+    # Negative control: the other image's three rows are all kept, not cut to one per image.
+    assert int((held["visit"] == 1001).sum()) == 3

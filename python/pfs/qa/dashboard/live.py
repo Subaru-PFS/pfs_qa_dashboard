@@ -173,7 +173,8 @@ class QadbStore:
             if held is None or held.empty:
                 self.raw[name] = read
                 continue
-            others = held[~_images(held[_IMAGE]).isin(_images(read[_IMAGE]))]
+            # One key per held row (a table may hold several rows per image), against the images read.
+            others = held[~pd.MultiIndex.from_frame(held[_IMAGE]).isin(_images(read[_IMAGE]))]
             parts = [part for part in (others, read) if len(part)]
             self.raw[name] = pd.concat(parts, ignore_index=True) if parts else held.iloc[:0]
         read = tables.get("visitTimes")
