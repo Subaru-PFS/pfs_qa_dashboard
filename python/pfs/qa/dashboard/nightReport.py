@@ -154,7 +154,7 @@ def _feedRows(visits: pd.DataFrame) -> str:
         else:
             detectors = html.escape(_flaggedText(row.flagged)) or "–"
         out.append(
-            f"<tr><th scope='row'><a href='visit/{row.visit}'>{row.visit}</a></th>"
+            f"<tr><th scope='row'><a href='/visit/{row.visit}'>{row.visit}</a></th>"
             f"<td class='l'>{when}</td><td class='l'>{html.escape(row.label)}</td>"
             f"<td>{_fmtExp(row.exptime)}</td><td class='l'>{row.arms}</td>"
             f"<td class='l'>{_chip(row.status)}</td><td class='l'>{detectors}</td>"
@@ -212,7 +212,7 @@ def _awaitingSection(visits: pd.DataFrame) -> str:
         return ""
     order = awaiting.sort_values(["time", "visit"], ascending=[False, False], na_position="last")
     rows = "\n".join(
-        f"<tr><th scope='row'><a href='visit/{row.visit}'>{row.visit}</a></th>"
+        f"<tr><th scope='row'><a href='/visit/{row.visit}'>{row.visit}</a></th>"
         f"<td class='l'>{html.escape(row.hst)}</td><td class='l'>{html.escape(row.label)}</td>"
         f"<td class='l'>{row.slit}</td><td>{_fmtExp(row.exptime)}</td><td class='l'>{row.arms}</td></tr>"
         for row in order.itertuples()

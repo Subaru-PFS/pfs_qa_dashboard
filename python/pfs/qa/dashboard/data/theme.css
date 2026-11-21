@@ -108,6 +108,7 @@
   .tip { position: fixed; z-index: 20; pointer-events: none; background: var(--surface); color: var(--fg); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; font-size: 0.82rem; line-height: 1.45; box-shadow: 0 4px 14px rgb(0 0 0 / 0.18); max-width: 300px; }
   .ctl { font-size: 0.78rem; color: var(--fg-2); align-self: center; }
   .sq { cursor: default; }
+  a.sq { cursor: pointer; text-decoration: none; }
   .sq:hover { outline: 2px solid var(--fg); outline-offset: 0; }
   .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
   .seg button { font: inherit; font-size: 0.85rem; padding: 5px 11px; border: 0; border-right: 1px solid var(--rule); background: var(--surface); color: var(--fg-2); cursor: pointer; }

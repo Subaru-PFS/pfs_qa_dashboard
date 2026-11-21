@@ -271,6 +271,42 @@ def testTheCachedPageIsMadeAgainOnlyWhenTheStoreChanges(monkeypatch):
     assert "[300," not in first
 
 
+def _infoRow(visit, minute):
+    return pd.DataFrame(
+        {
+            "visit": [visit],
+            "time": pd.to_datetime([f"2026-11-04 20:{minute:02d}"]),
+            "exptime": [300.0],
+            "sequenceType": ["scienceObject"],
+            "sequenceName": [None],
+            "expType": ["object"],
+            "cameras": ["b1 r1"],
+            "iis": [False],
+            "sequenceEnd": ["completed"],
+        }
+    )
+
+
+def testANewExposureRebuildsEvenWhenQadbIsUnchanged():
+    """The night page stays live: a visit the opdb newly reports rebuilds, though qadb has not changed."""
+    store = _Store(_tables((1, "r1", "science", _science())))
+    store.version = 0  # _Store.refresh never bumps it, so qadb looks unchanged after the first build
+    taken = [1]
+
+    def readInfo(first, last):
+        rows = pd.concat([_infoRow(v, v) for v in taken], ignore_index=True)
+        return rows[(rows["visit"] >= first) & (rows["visit"] <= last)]
+
+    cache = ReportCache(store, readInfo=readInfo)
+    cache.update()
+    assert cache.built == 1 and cache.info["visit"].tolist() == [1]
+    # A new exposure is taken; qadb still holds nothing new for it.
+    taken.append(2)
+    assert cache.update() and cache.built == 2 and cache.info["visit"].tolist() == [1, 2]
+    # Negative control: with no newer visit, the incremental read brings nothing and nothing is rebuilt.
+    assert not cache.update() and cache.built == 2
+
+
 def testAStoreWithNoImageYetStillHasAPage():
     store = _Store({})
     store.times = store.times.iloc[:0]

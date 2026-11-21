@@ -187,7 +187,7 @@
       (!kind || r[2].startsWith(kind)) && (!slit || r[3] === slit) &&
       (!status || (status === "notpass" ? r[6] !== "PASS" : r[6] === status)) && (!visit || String(r[0]).startsWith(visit)));
     rows.innerHTML = shown.map((r) =>
-      `<tr><th scope="row">${r[0]}</th><td class="l">${r[1]}</td><td class="l">${esc(r[2])}</td><td class="l">${r[3]}</td><td>${r[4]}</td><td class="l">${r[5]}</td>` +
+      `<tr><th scope="row"><a href="/visit/${r[0]}">${r[0]}</a></th><td class="l">${r[1]}</td><td class="l">${esc(r[2])}</td><td class="l">${r[3]}</td><td>${r[4]}</td><td class="l">${r[5]}</td>` +
       `<td class="l"><span class="chip ${CLS[r[6]]}">${r[6]}</span></td><td class="l">${esc(r[7])}</td><td class="l why">${esc(r[8])}</td></tr>`).join("");
     count.textContent = `${shown.length.toLocaleString()} of ${DATA.length.toLocaleString()} visits`;
   }
@@ -232,7 +232,7 @@
     const square = ([i, status]) => {
       const start = Math.max(STARTS[i], from), end = Math.min(STARTS[i] + lasts(i), to);
       const place = byTime ? ` style="left:${along(start)}%;width:${((end - start) / (hours * 60) * 100).toFixed(3)}%"` : "";
-      return `<span class="sq ${CLS[status]}" data-i="${i}"${place} role="img" aria-label="Visit ${DATA[i][0]}, ${status}"></span>`;
+      return `<a class="sq ${CLS[status]}" href="/visit/${DATA[i][0]}" data-i="${i}"${place} role="img" aria-label="Visit ${DATA[i][0]}, ${status}"></a>`;
     };
     const notes = [];
     if (outside) notes.push(`${outside} ${outside === 1 ? "visit" : "visits"} outside 18:00 to 07:00 ${outside === 1 ? "is" : "are"} not drawn.`);

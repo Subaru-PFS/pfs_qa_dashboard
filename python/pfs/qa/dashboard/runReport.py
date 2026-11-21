@@ -175,6 +175,11 @@ def worst(statuses: Iterable[Any]) -> str:
     return max(known, key=STATUS_RANK.get) if known else "UNKNOWN"
 
 
+def _visitLink(visit: Any) -> str:
+    """Return a link to a visit's page (``/visit/<n>``); absolute, so it works from ``/run`` too."""
+    return f"<a href='/visit/{int(visit)}'>{int(visit)}</a>"
+
+
 def _skyLimits(arm: str) -> tuple[float, float]:
     """Return the gate's WARN and FAIL on an arm's sky-line residual after the visit's adjustment, in km/s."""
     check = next(
@@ -855,7 +860,7 @@ def renderPage(
 
     notPassing = visits[(visits["status"] != "PASS") & (visits["illumination"] != "iis")]
     flagged = "\n".join(
-        f"<tr><th scope='row'>{r.visit}</th><td class='l'>{r.hst}</td><td class='l'>{html.escape(r.label)}</td>"
+        f"<tr><th scope='row'>{_visitLink(r.visit)}</th><td class='l'>{r.hst}</td><td class='l'>{html.escape(r.label)}</td>"
         f"<td class='l'><span class='chip {r.status.lower()}'>{r.status}</span></td>"
         f"<td class='l'>{flaggedDetectors(r.flagged)}</td><td class='l why'>{html.escape(r.why)}</td></tr>"
         for r in notPassing.itertuples()
@@ -869,7 +874,7 @@ def renderPage(
         )
     if len(noResult):
         missingRows = "\n".join(
-            f"<tr><th scope='row'>{r.visit}</th><td class='l'>{r.hst}</td><td class='l'>{html.escape(r.label)}</td>"
+            f"<tr><th scope='row'>{_visitLink(r.visit)}</th><td class='l'>{r.hst}</td><td class='l'>{html.escape(r.label)}</td>"
             f"<td class='l'>{r.slit}</td><td>{'' if pd.isna(r.exptime) else round(float(r.exptime))}</td>"
             f"<td class='l'>{r.arms}</td><td class='l why'>{html.escape(r.why)}</td></tr>"
             for r in noResult.itertuples()
@@ -1074,26 +1079,21 @@ class ReportCache:
         return self.reports.get(self.primary)
 
     def update(self) -> bool:
-        """Read the store's source and make the pages again if the store changed; return whether it did.
+        """Read the sources and make the pages again if anything changed; return whether it did.
 
-        This reads qadb, and the opdb when the store changed: call it where waiting is no harm
-        (before serving, and then on `watch`'s thread). All pages are made from one read.
+        This reads qadb, and the opdb for the visits taken: call it where waiting is no harm (before
+        serving, and then on `watch`'s thread). A new exposure, even before it is judged, makes the
+        pages again, so the night page stays live during a run that is not being reduced.
         """
         with self._lock:
             self.store.refresh()
             version = self.store.version
-            changed = not self.reports or self._version != version
+            qadbChanged = not self.reports or self._version != version
+            info, newExposures = self._refreshInfo(qadbChanged)
+            changed = qadbChanged or newExposures
             if changed:
                 # A store that has read no image yet holds no table: the page then says so, with no visit.
                 tables = {name: self.store.raw.get(name, pd.DataFrame(columns=_IMAGE)) for name in _TABLES}
-                info = self._info
-                visits = sorted({int(visit) for name in tables for visit in tables[name]["visit"]})
-                if info is None and self._readInfo is not None and visits:
-                    # To the latest visit taken, not just the latest judged, so the night page can
-                    # show tonight's exposures as awaiting QA (the run report ignores those rows).
-                    info = self._readInfo(self._firstVisit or visits[0], LAST_VISIT)
-                elif info is None:
-                    info = self.store.times
                 # Together, so a page is never served under another's count.
                 self.reports = {
                     name: builder(tables, info=info, **options)
@@ -1105,6 +1105,32 @@ class ReportCache:
             self.readAt = datetime.now(HST)
             self.error = None
             return changed
+
+    def _refreshInfo(self, qadbChanged: bool) -> tuple[pd.DataFrame | None, bool]:
+        """Return the visit information to build with, and whether the opdb brought new visits.
+
+        A fixed ``info`` is returned unchanged. Without the opdb, qadb's own visit times are used.
+        Otherwise the opdb is read to the latest visit taken: the whole range on a qadb change (and the
+        first time), so judged visits are current, and only the visits newer than the last read between
+        qadb changes, so a new exposure shows without waiting for its reduction.
+        """
+        if self._info is not None:
+            return self._info, False
+        raw = self.store.raw
+        visits = sorted(
+            {int(v) for name in _TABLES for v in raw.get(name, pd.DataFrame(columns=_IMAGE))["visit"]}
+        )
+        if self._readInfo is None or not visits:
+            return self.store.times, False
+        first = self._firstVisit or visits[0]
+        if qadbChanged or self.info is None:
+            return self._readInfo(first, LAST_VISIT), False
+        lastMax = int(self.info["visit"].max()) if len(self.info) else first - 1
+        extra = self._readInfo(lastMax + 1, LAST_VISIT)
+        if extra is None or not len(extra):
+            return self.info, False
+        merged = pd.concat([self.info, extra], ignore_index=True).drop_duplicates("visit", keep="last")
+        return merged.sort_values("visit", ignore_index=True), True
 
     def poll(self) -> None:
         """`update`, keeping the last page and noting the ``error`` when it fails.

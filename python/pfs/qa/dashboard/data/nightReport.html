@@ -145,7 +145,7 @@
       if (STARTS[i] + lasts(i) < from || STARTS[i] > to) { outside += 1; return; }
       const start = Math.max(STARTS[i], from), end = Math.min(STARTS[i] + lasts(i), to);
       const w = ((end - start) / (hours * 60) * 100).toFixed(3);
-      cells.push(`<span class="sq ${CLS[r[6]]}${i === latest ? " newest" : ""}" data-i="${i}" style="left:${along(start)}%;width:${w}%" role="img" aria-label="Visit ${r[0]}, ${r[6]}"></span>`);
+      cells.push(`<a class="sq ${CLS[r[6]]}${i === latest ? " newest" : ""}" href="/visit/${r[0]}" data-i="${i}" style="left:${along(start)}%;width:${w}%" role="img" aria-label="Visit ${r[0]}, ${r[6]}"></a>`);
     });
     const step = Math.max(1, Math.ceil(hours / Math.max((cal.clientWidth - 120) / 52, 4)));
     const ticks = [];
