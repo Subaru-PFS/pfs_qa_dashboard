@@ -135,10 +135,10 @@ def _summaryTile(label: str, visits: pd.DataFrame) -> str:
         count = int((visits["status"] == status).sum())
         if count:
             chips += f"<span class='chip {_CLASS[status]}'>{count} {status}</span>"
-    judged = visits[~visits["status"].isin(_PENDING)]
+    # The big number is every visit taken, so the tile reads sensibly early in a night when none is judged yet.
     return (
         f"<div class='tile'><span class='lab'>{html.escape(label)}</span>"
-        f"<span class='big'>{len(judged)}</span>"
+        f"<span class='big'>{len(visits)}</span>"
         f"<span class='row'>{chips or 'none'}</span></div>"
     )
 
