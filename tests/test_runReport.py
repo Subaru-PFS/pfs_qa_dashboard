@@ -154,6 +154,71 @@ def testTheResidualIsInKmPerSecondOnTheArmsBestSpecies():
     assert pixels != pytest.approx(images.loc[1, "kms"])
 
 
+def testCalibrationDriftIsTheTraceXAndNeonY():
+    tables = _tables(
+        (1001, "b1", "trace", {("calib", "Trace", "medianDeltaX"): 0.3}),
+        (1002, "b1", "arc", {("calib", "NeI", "medianDeltaY"): -0.2, ("calib", "KrI", "medianDeltaY"): -2.0}),
+    )
+    visits = runReport.visitTable(imageTable(tables))
+    drift = runReport.calibrationDrift(tables, visits).set_index("which")
+    assert drift.loc["trace", "value"] == pytest.approx(0.3)
+    assert drift.loc["arc", "value"] == pytest.approx(-0.2)
+    # Negative control: the arc trend is the nightly Neon, not the species furthest off (KrI at -2.0).
+    assert not np.isclose(drift.loc["arc", "value"], -2.0)
+
+
+def testDriftVerdictIsTheCalibOffsetLimitNotTheImageGate():
+    check = registry.CHECKS["calibOffset"]
+    tables = _tables(
+        (
+            1001,
+            "b1",
+            "trace",
+            {("calib", "Trace", "medianDeltaX"): check.warn - 0.3},
+            {"gate": ("FAIL", "x")},
+        ),
+        (1002, "b2", "trace", {("calib", "Trace", "medianDeltaX"): check.warn + 0.1}),
+        (1003, "b3", "trace", {("calib", "Trace", "medianDeltaX"): check.fail + 0.1}),
+    )
+    visits = runReport.visitTable(imageTable(tables))
+    drift = runReport.calibrationDrift(tables, visits).set_index("camera")
+    assert drift.loc["b1", "status"] == "PASS"
+    assert drift.loc["b2", "status"] == "WARN"
+    assert drift.loc["b3", "status"] == "FAIL"
+    # Negative control: the drift's verdict is its own offset's, not the image's overall gate (b1's is FAIL).
+    assert drift.loc["b1", "status"] != "FAIL"
+
+
+def testCalibrationDriftLeavesOutScienceAndEngineering():
+    tables = _tables(
+        (1001, "b1", "trace", {("calib", "Trace", "medianDeltaX"): 0.1}),
+        (1002, "b1", "science", _science(x=0.1)),
+        (1003, "b1", "arc", {("calib", "NeI", "medianDeltaY"): 0.1}, {"illumination": "iis"}),
+    )
+    visits = runReport.visitTable(imageTable(tables))
+    drift = runReport.calibrationDrift(tables, visits)
+    # Only the full-slit quartz; the science frame and the engineering-fiber arc are left out.
+    assert set(drift["visit"]) == {1001}
+
+
+def testCalibDriftSectionGroupsBySpectrographAndArm():
+    tables = _tables(
+        (1001, "b1", "trace", {("calib", "Trace", "medianDeltaX"): 0.1}),
+        (1001, "r1", "trace", {("calib", "Trace", "medianDeltaX"): 0.1}),
+        (1002, "b2", "trace", {("calib", "Trace", "medianDeltaX"): 0.1}),
+    )
+    visits = runReport.visitTable(imageTable(tables))
+    drift = runReport.calibrationDrift(tables, visits)
+    bySm = runReport.calibDriftSection(drift, by="spectrograph")
+    byArm = runReport.calibDriftSection(drift, by="arm")
+    # Grouped by spectrograph, a column is SM1 (its b and r) and a column is SM2.
+    assert "Spectrograph 1" in bySm and "Spectrograph 2" in bySm
+    assert bySm.count('class="driftcol"') == 2
+    # Grouped by arm, a column is the b arm (both spectrographs) and a column is the r arm.
+    assert "b arm" in byArm and "r arm" in byArm
+    assert byArm.count('class="driftcol"') == 2
+
+
 def testAVisitTakesItsWorstDetectorAndTheEveningsDate():
     tables = _tables(
         (1, "b1", "science", _science(species="OI")),

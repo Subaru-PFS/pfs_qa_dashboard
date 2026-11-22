@@ -72,6 +72,25 @@
   </section>
 
   <section class="block">
+    <h2>Daily calibration drift from the calibration in use</h2>
+    <p>Per detector, each daily calibration's offset from <code>detectorMap_calib</code> over the whole run: a quartz's trace offset in x, and the nightly Neon arc's line offset in y. The shaded band is the run's own 5th-to-95th percentile; the latest night's points are larger. A point is coloured when its own offset reaches the calibration-offset limit (WARN at 1.0 px, FAIL at 2.0 px). Each group is a column stacked on a shared time axis, so a drift common to a whole spectrograph, or one detector drifting alone, reads down the column.</p>
+    <div class="legend">
+      <span><svg width="46" height="14" aria-hidden="true"><rect x="1" y="3" width="44" height="8" rx="2" fill="var(--series-1-soft)"/><line x1="1" x2="45" y1="7" y2="7" stroke="var(--series-1)"/></svg>trace offset in x, run band and nightly trend</span>
+      <span><svg width="46" height="14" aria-hidden="true"><rect x="1" y="3" width="44" height="8" rx="2" fill="var(--series-2-soft)"/><line x1="1" x2="45" y1="7" y2="7" stroke="var(--series-2)"/></svg>Neon arc offset in y</span>
+      <span><svg width="40" height="14" aria-hidden="true"><circle cx="8" cy="7" r="1.6" fill="var(--fg-3)"/><circle cx="22" cy="7" r="3.6" fill="none" stroke="var(--fg)" stroke-width="1.4"/><circle cx="34" cy="7" r="3.2" fill="var(--fail-fill)" stroke="var(--surface)"/></svg>a visit; the latest night's, ringed; WARN or FAIL, coloured</span>
+    </div>
+    <div class="driftview">
+      <input class="driftby" type="radio" name="driftby" id="drift-sm" checked>
+      <input class="driftby" type="radio" name="driftby" id="drift-arm">
+      <div class="segmented"><label for="drift-sm">By spectrograph</label><label for="drift-arm">By arm</label></div>
+      <div class="bysm">{{CALIB_DRIFT_SM}}</div>
+      <div class="byarm">{{CALIB_DRIFT_ARM}}</div>
+    </div>
+  </section>
+
+{{CALIB_SET}}
+
+  <section class="block">
     <h2>Science frames: offsets from the calibration</h2>
     <p>The x offset is the median offset of every fiber's trace from the calibration. The y offset is that of the sky lines, taking the species furthest off on each image. The km/s value converts each species' offset with the dispersion at its own lines. Values are as measured: on visits read with the m arm the gate first subtracts a standing offset (the b arm's in x, the n arm's in y) where qadb holds one, so a value drawn here may sit beyond a limit it passed.</p>
     <div class="legend">
@@ -284,6 +303,25 @@
   sel.night = fNight.checked;
   renderCal();
   render();
+</script>
+
+<div class="modal" id="drift-zoom" hidden role="dialog" aria-modal="true" aria-label="Enlarged calibration drift chart">
+  <div class="sheet"><button type="button" class="x" aria-label="Close">&times;</button><div class="zoombody"></div></div>
+</div>
+<script>
+(function () {
+  const modal = document.getElementById("drift-zoom");
+  if (!modal) return;
+  const body = modal.querySelector(".zoombody");
+  const open = (col) => { body.innerHTML = col.outerHTML; modal.hidden = false; document.body.style.overflow = "hidden"; };
+  const close = () => { modal.hidden = true; body.innerHTML = ""; document.body.style.overflow = ""; };
+  document.addEventListener("click", (e) => {
+    const col = e.target.closest ? e.target.closest(".driftcols .driftcol") : null;
+    if (col) { open(col); return; }
+    if (e.target === modal || (e.target.closest && e.target.closest(".x"))) close();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !modal.hidden) close(); });
+})();
 </script>
 </body>
 </html>
