@@ -8,6 +8,8 @@ or the Python API.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-21
+
 ### Added
 
 - **AG seeing** on the night page's Conditions tile: the tile now leads with the night's median seeing (FWHM,
