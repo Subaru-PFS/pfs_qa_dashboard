@@ -955,8 +955,8 @@ def _driftPanel(
     svg = (
         f'<svg class="drift" viewBox="0 0 {_DW} {height}" preserveAspectRatio="xMidYMid meet" '
         f'role="img" aria-label="{camera}: offset from the calibration over the run">'
-        + _driftTrack(trace, "rng", "trace x", xt, _TOP, activeNight)
-        + _driftTrack(arc, "rng2", "Neon y", xt, _TOP + _TRACK + _GAP, activeNight)
+        + _driftTrack(trace, "rng", "trace x (px)", xt, _TOP, activeNight)
+        + _driftTrack(arc, "rng2", "Neon y (px)", xt, _TOP + _TRACK + _GAP, activeNight)
         + _dateAxis(t0, t1, height - 6)
         + "</svg>"
     )

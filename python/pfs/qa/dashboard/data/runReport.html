@@ -311,11 +311,11 @@
   const modal = document.getElementById("drift-zoom");
   if (!modal) return;
   const body = modal.querySelector(".zoombody");
-  const open = (fig) => { body.innerHTML = fig.outerHTML; modal.hidden = false; document.body.style.overflow = "hidden"; };
+  const open = (col) => { body.innerHTML = col.outerHTML; modal.hidden = false; document.body.style.overflow = "hidden"; };
   const close = () => { modal.hidden = true; body.innerHTML = ""; document.body.style.overflow = ""; };
   document.addEventListener("click", (e) => {
-    const fig = e.target.closest ? e.target.closest(".driftcols figure.panel") : null;
-    if (fig && !modal.contains(fig)) { open(fig); return; }
+    const col = e.target.closest ? e.target.closest(".driftcols .driftcol") : null;
+    if (col) { open(col); return; }
     if (e.target === modal || (e.target.closest && e.target.closest(".x"))) close();
   });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !modal.hidden) close(); });

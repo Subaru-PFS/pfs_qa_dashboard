@@ -16,10 +16,12 @@ All notable changes to this project are documented here. The format follows
   the rest of the run. A point is coloured when its own offset reaches the `calibOffset` limit (WARN 1.0 px, FAIL
   2.0 px), independent of the image's overall gate verdict. The charts are stacked into **columns on a shared time
   axis** and a toggle groups them **by spectrograph** (a shift common to a whole unit, or one detector drifting
-  alone, reads down the column) or **by arm** (the same detector across the four spectrographs). Clicking a
-  detector's chart opens it enlarged in the shared modal overlay (`.modal`/`.sheet`, as INSTRM-3130's Conditions
-  tile uses). All drift data is read from qadb (`dm_line_residual_qa_metric`, written by the actor's per-visit
-  load); the page judges nothing.
+  alone, reads down the column) or **by arm** (the same detector across the four spectrographs). Each track is
+  labelled with its units (both offsets are in pixels). Clicking a chart opens its **whole group** — a
+  spectrograph's arms, or an arm's spectrographs — enlarged and time-aligned in the shared modal overlay
+  (`.modal`/`.sheet`, as INSTRM-3130's Conditions tile uses), so a shift common to the group reads at a glance.
+  All drift data is read from qadb (`dm_line_residual_qa_metric`, written by the actor's per-visit load); the
+  page judges nothing.
 
 ## [0.8.0] - 2026-11-21
 

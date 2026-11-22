@@ -96,8 +96,9 @@
   .sheet h2 { margin-top: 0; }
   .sheet .x { position: absolute; top: 8px; right: 12px; border: none; background: none; color: var(--fg-3); font-size: 1.7rem; line-height: 1; cursor: pointer; padding: 2px 6px; }
   .sheet .x:hover { color: var(--fg); }
-  .sheet .zoombody figure.panel { margin: 0; border: none; background: none; padding: 0; }
-  .sheet .zoombody figcaption b { font-size: 1.15rem; }
+  .sheet .zoombody .colhead { margin: 0 0 10px; font-size: 1.05rem; color: var(--fg); }
+  .sheet .zoombody .driftcol { gap: 12px; }
+  .sheet .zoombody figcaption b { font-size: 1.05rem; }
   figure.panel { margin: 0; min-width: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 7px 9px 3px; }
   figure.panel figcaption { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
   figure.panel figcaption b { font-size: 0.92rem; color: var(--fg); }
