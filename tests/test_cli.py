@@ -96,6 +96,26 @@ def testServeTakesOneSource():
     assert parser.parse_args(["serve", "--snapshot", "d"]).snapshot == Path("d")
 
 
+def testDebugEnablesAutoreloadOfTheAssetsNotTheModules(monkeypatch):
+    """``serve --debug`` hand-watches the ``data/`` assets (not the modules) and starts autoreload."""
+    cli = _cli()
+    parser = cli.makeParser()
+    assert parser.parse_args(["serve", "--collection", "c"]).debug is False
+    assert parser.parse_args(["serve", "--collection", "c", "--debug"]).debug is True
+
+    from tornado import autoreload
+
+    watched: list[str] = []
+    started: list[bool] = []
+    monkeypatch.setattr(autoreload, "watch", watched.append)
+    monkeypatch.setattr(autoreload, "start", lambda *args, **kwargs: started.append(True))
+    cli._autoreload()
+    assert started
+    assert {"theme.css", "runReport.html", "nightReport.html"} <= {Path(p).name for p in watched}
+    # Negative control: the Python modules are left to autoreload's own module watch, not hand-watched.
+    assert not any(p.endswith(".py") for p in watched)
+
+
 def testSnapshotWritesWhatServeReads(tmp_path, monkeypatch):
     """``snapshot`` reads qadb once into a directory that ``serve --snapshot`` serves."""
     asked = _qadb(monkeypatch)
