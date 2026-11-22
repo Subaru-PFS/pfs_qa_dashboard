@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-21
+
 ### Added
 
 - **Previous/next visit navigation** on the per-visit page: a nav row with the previous visit on the left, the
