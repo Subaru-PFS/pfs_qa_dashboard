@@ -22,6 +22,23 @@
   .sq.awaiting, .cal .cells.time .sq.awaiting { background: var(--series-1-soft); box-shadow: inset 0 0 0 1px var(--series-1); }
   .chip.awaiting { color: var(--series-1); background: var(--series-1-soft); }
   .tile.awaiting { border-color: var(--series-1); }
+  /* Conditions tile: an AG-transparency summary (median + sparkline) that opens the modal below. */
+  .tile.cond { cursor: pointer; text-align: left; font: inherit; color: inherit; appearance: none; -webkit-appearance: none; }
+  .tile.cond:hover { border-color: var(--series-1); }
+  .tile.cond:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+  .tile .big .unit { font-size: 0.9rem; font-weight: 400; color: var(--fg-3); font-family: var(--body); }
+  .tile.cond .sub::after { content: " \2197"; }
+  .spark { display: block; width: 100%; height: 32px; }
+  .spark polyline { fill: none; stroke: var(--series-1); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+  /* The modal toolbox (.modal / .sheet / .x) is shared, in theme.css — the Conditions modal and the
+     calibration-drift zoom both use it. */
+  .tchart { overflow-x: auto; }
+  .tplot { display: block; width: 100%; height: auto; min-width: 520px; }
+  .tplot .grid { stroke: var(--rule); stroke-width: 1; }
+  .tplot .grid.vx { opacity: 0.55; }
+  .tplot .ylab, .tplot .xlab { fill: var(--fg-3); font-size: 11px; font-family: var(--body); font-variant-numeric: tabular-nums; }
+  .tplot .band { fill: var(--series-1-soft); stroke: none; }
+  .tplot .median { fill: none; stroke: var(--series-1); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
 </style>
 </head>
 <body>
@@ -137,6 +154,8 @@
 
 </main>
 
+{{CONDITIONS_MODAL}}
+
 <script>
   const DATA = {{DATA}};
   const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", UNKNOWN: "unknown", AWAITING: "awaiting", "NO RESULT": "none" };
@@ -196,6 +215,16 @@
   cal.addEventListener("click", (e) => { const sq = e.target.closest(".sq"); if (sq) { const b = sq.getBoundingClientRect(); showTip(sq, b.left, b.bottom - 12); } });
   renderCal();
   window.addEventListener("resize", renderCal);
+
+  // The Conditions tile opens a modal with the full AG-transparency chart; close on backdrop, ×, or Escape.
+  const modal = document.getElementById("conditions");
+  if (modal) {
+    const open = () => { modal.hidden = false; document.body.style.overflow = "hidden"; };
+    const close = () => { modal.hidden = true; document.body.style.overflow = ""; };
+    document.querySelectorAll('[aria-controls="conditions"]').forEach((b) => b.addEventListener("click", open));
+    modal.addEventListener("click", (e) => { if (e.target === modal || e.target.closest(".x")) close(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !modal.hidden) close(); });
+  }
 </script>
 
 <div class="modal" id="drift-zoom" hidden role="dialog" aria-modal="true" aria-label="Enlarged calibration drift chart">

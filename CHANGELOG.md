@@ -22,6 +22,13 @@ All notable changes to this project are documented here. The format follows
   (`.modal`/`.sheet`, as INSTRM-3130's Conditions tile uses), so a shift common to the group reads at a glance.
   All drift data is read from qadb (`dm_line_residual_qa_metric`, written by the actor's per-visit load); the
   page judges nothing.
+- **AG sky transparency** on the night page: a **Conditions** tile (in place of the Science verdict tile) with
+  the night's median sky transparency and a sparkline, which opens a modal holding the full per-night time
+  series — a median line with a 25th-to-75th-percentile band over the same 18:00–07:00 hours as the verdict
+  clock. The numbers are qadb's `transparency_agc_exposure` (the guide cameras' per-exposure transparency, a
+  median over the brighter guide stars; uncalibrated, a clear sky reads about 0.8), read for the night's visits
+  when serving a live collection. A read that fails is logged and the tile falls back to the Science counts, so
+  it never blanks the page; the tile and modal are absent for a snapshot or offline report (INSTRM-3130).
 
 ## [0.8.0] - 2026-11-21
 
