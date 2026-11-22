@@ -101,9 +101,10 @@ def renderResidual(
 
     fig = plotDetectorResiduals(data, title=title, limits=dict(limits) if limits else None)
     buffer = io.BytesIO()
-    # The figure is a bare matplotlib.figure.Figure (no pyplot state), so it is freed when it goes out
-    # of scope; nothing to close.
-    fig.savefig(buffer, format="png", dpi=_DPI, bbox_inches="tight")
+    # Exactly the figure's 15×8 inches (no tight bbox), so the page can reserve the box with a 15/8
+    # aspect-ratio and show a loader without the layout shifting when the image arrives. The figure is a
+    # bare matplotlib.figure.Figure (no pyplot state), so it is freed when it goes out of scope.
+    fig.savefig(buffer, format="png", dpi=_DPI)
     return buffer.getvalue()
 
 
@@ -111,7 +112,8 @@ def _placeholder(text: str) -> bytes:
     """Return a small PNG carrying ``text``, for a detector the Butler has no residual data for."""
     from matplotlib.figure import Figure
 
-    fig = Figure(figsize=(6, 1.6))
+    # The plot's 15:8 shape, so it fills the page's aspect-ratio box and covers the loading spinner.
+    fig = Figure(figsize=(7.5, 4))
     ax = fig.add_subplot(111)
     ax.axis("off")
     ax.text(0.5, 0.5, text, ha="center", va="center", fontsize="medium", color="#555555")

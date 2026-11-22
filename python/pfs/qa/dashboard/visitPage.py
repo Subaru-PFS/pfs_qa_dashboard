@@ -23,7 +23,6 @@ from pfs.qa.dashboard.runReport import (
     ARMS,
     NO_RESULT,
     SPECIES_LABEL,
-    STATUS_RANK,
     _calibrationOffsets,
     _fontFaces,
     _theme,
@@ -86,9 +85,24 @@ def _page(title: str, body: str) -> str:
         # The residual plots: each a full-width figure (the drawing is wide, two rows by three columns),
         # the image scaling to the column so it reads on a phone too.
         "  .residuals { display: flex; flex-direction: column; gap: 20px; }\n"
-        "  .residuals figure { margin: 0; }\n"
+        "  .residuals figure { margin: 0; scroll-margin-top: 12px; }\n"
         "  .residuals figcaption { font-weight: 600; margin: 0 0 4px; }\n"
-        "  .residuals img { width: 100%; height: auto; border: 1px solid var(--rule); border-radius: 4px; }\n"
+        # A 15:8 box (the figure's own shape) reserves the image's height before it loads, so a lazily
+        # fetched plot does not shift the page; a spinner sits in the box until the opaque PNG covers it.
+        "  .residuals .imgwrap { position: relative; aspect-ratio: 15 / 8; overflow: hidden; cursor: zoom-in;"
+        " border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); }\n"
+        "  .residuals .imgwrap::before { content: ''; position: absolute; top: 50%; left: 50%; width: 34px;"
+        " height: 34px; margin: -17px 0 0 -17px; border: 3px solid var(--rule); border-top-color: var(--fg-3);"
+        " border-radius: 50%; animation: residual-spin 0.8s linear infinite; }\n"
+        "  .residuals .imgwrap img { display: block; width: 100%; height: 100%; object-fit: contain;"
+        " position: relative; z-index: 1; }\n"
+        "  @keyframes residual-spin { to { transform: rotate(360deg); } }\n"
+        "  @media (prefers-reduced-motion: reduce) { .residuals .imgwrap::before { animation: none; } }\n"
+        # Click a plot to enlarge it: a full-screen overlay, filled from the already-loaded image (no refetch).
+        "  #lightbox { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center;"
+        " justify-content: center; padding: 20px; background: rgba(0, 0, 0, 0.85); cursor: zoom-out; }\n"
+        "  #lightbox[hidden] { display: none; }\n"
+        "  #lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }\n"
         "</style>\n</head>\n<body>\n<main>\n"
         f"{body}\n</main>\n</body>\n</html>\n"
     )
@@ -147,34 +161,50 @@ def _links(residuals: bool = False) -> str:
     )
 
 
+#: The inline script that enlarges a residual plot on click: a full-screen overlay filled from the
+#: already-loaded image (its own ``src``), so no image is fetched twice. Closed by a click or Escape.
+_LIGHTBOX_SCRIPT = (
+    "<script>\n"
+    "(function () {\n"
+    "  var box = document.getElementById('lightbox'), big = box.querySelector('img');\n"
+    "  document.querySelectorAll('.residuals .imgwrap img').forEach(function (img) {\n"
+    "    img.addEventListener('click', function () {\n"
+    "      big.src = img.currentSrc || img.src; big.alt = img.alt; box.hidden = false;\n"
+    "    });\n"
+    "  });\n"
+    "  function close() { box.hidden = true; big.removeAttribute('src'); }\n"
+    "  box.addEventListener('click', close);\n"
+    "  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });\n"
+    "})();\n"
+    "</script>"
+)
+
+
 def _residualSection(perCam: pd.DataFrame, visit: int) -> str:
-    """Return the per-detector detector-map residual plots, no-go detectors first.
+    """Return the per-detector detector-map residual plots, in detector order.
 
     One ``<img>`` per detector, served by the dashboard at ``/visit/<n>/residual/<camera>.png`` and
     drawn on demand from the stored per-line data: the page carries no plot data itself, so it stays
-    small and the browser pulls the images lazily and in parallel. The order puts the detectors that
-    did not pass first, since those are the ones to look at.
+    small and the browser pulls the images lazily and in parallel. Each figure has an ``id`` the
+    Detectors table links to, and a click enlarges it (`_LIGHTBOX_SCRIPT`). ``perCam`` is already in
+    detector order (``_cameraKey``).
     """
-    order = perCam.assign(
-        _rank=perCam["status"].map(STATUS_RANK).fillna(0),
-        _cam=perCam["camera"].map(_cameraKey),
-    ).sort_values(["_rank", "_cam"], ascending=[False, True])
     figures = []
-    for row in order.itertuples():
-        chip = _chip(row.status)
+    for row in perCam.itertuples():
         figures.append(
-            f"<figure><figcaption>{row.camera} {chip}</figcaption>"
-            f"<img loading='lazy' src='/visit/{int(visit)}/residual/{row.camera}.png' "
-            f"alt='DetectorMap line residuals for {row.camera}, visit {int(visit)}'></figure>"
+            f"<figure id='resid-{row.camera}'><figcaption>{row.camera} {_chip(row.status)}</figcaption>"
+            f"<div class='imgwrap'><img loading='lazy' src='/visit/{int(visit)}/residual/{row.camera}.png' "
+            f"alt='DetectorMap line residuals for {row.camera}, visit {int(visit)}'></div></figure>"
         )
     return (
         "<section class='block'><h2>DetectorMap line residuals</h2>"
         "<p>Per detector, the line residuals against the calibration (drift) and against the visit's own "
         "adjusted detectorMap (scatter), drawn from the stored per-line data. Δx is in pixels (left two "
         "columns, per fiber); Δy in km/s where the collection stored it (lamp and sky lines, per wavelength); "
-        "the dashed bands are the gate's warn/fail limits in force now. Detectors that did not pass come "
-        "first.</p>"
+        "the dashed bands are the gate's warn/fail limits in force now. Click a plot to enlarge it.</p>"
         f"<div class='residuals'>\n{chr(10).join(figures)}\n</div></section>"
+        "\n<div id='lightbox' hidden><img alt=''></div>"
+        f"\n{_LIGHTBOX_SCRIPT}"
     )
 
 
@@ -196,19 +226,25 @@ def _nav(visit: int) -> str:
     return f"<nav class='visitnav'>{prev}{night}{nxt}</nav>"
 
 
-def _detectorTable(perCam: pd.DataFrame) -> str:
-    """Return the per-detector verdicts and the gate's reason."""
+def _detectorTable(perCam: pd.DataFrame, residuals: bool = False) -> str:
+    """Return the per-detector verdicts and the gate's reason.
+
+    With ``residuals``, each detector name links to its residual plot below (``#resid-<camera>``), so the
+    table at the top of the page is also the way to jump to a detector's plot.
+    """
     rows = []
     for row in perCam.itertuples():
         reason = html.escape(row.reason) if isinstance(row.reason, str) and row.reason else ""
+        name = f"<a href='#resid-{row.camera}'>{row.camera}</a>" if residuals else row.camera
         rows.append(
-            f"<tr><th scope='row'>{row.camera}</th><td class='l'>{_chip(row.status)}</td>"
+            f"<tr><th scope='row'>{name}</th><td class='l'>{_chip(row.status)}</td>"
             f"<td class='l'>{html.escape(str(row.frameType)) if isinstance(row.frameType, str) else '–'}</td>"
             f"<td class='l why'>{reason or '–'}</td></tr>"
         )
+    jump = " Each detector links to its residual plot below." if residuals else ""
     return (
         "<section class='block'><h2>Detectors</h2>"
-        "<p>Each detector's verdict and the gate's reason, as stored in qadb.</p>"
+        f"<p>Each detector's verdict and the gate's reason, as stored in qadb.{jump}</p>"
         "<div class='tablewrap'><table><thead><tr><th scope='col' class='l'>Detector</th>"
         "<th scope='col' class='l'>Verdict</th><th scope='col' class='l'>Frame type</th>"
         "<th scope='col' class='l'>Reason</th></tr></thead><tbody>\n"
@@ -369,7 +405,7 @@ def buildVisitPage(
         [
             _nav(int(visit)),
             _header(int(visit), vrow, infoRow),
-            _detectorTable(perCam),
+            _detectorTable(perCam, residuals),
             _grid(perCam),
             _speciesSection(tables),
             *([_residualSection(perCam, int(visit))] if residuals else []),

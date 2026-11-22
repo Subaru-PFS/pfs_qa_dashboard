@@ -33,7 +33,8 @@ three share one stylesheet (`data/theme.css`). A visit takes the worst verdict a
   the stored reason for the limits, rather than re-deriving them from the current registry (a visit may have been
   judged with a different threshold set). The page is built from the server's cached read, so it needs no database
   of its own. With `serve --butler` (below) it also shows each detector's **detector-map line residual plot** —
-  the drift and scatter views drawn from the stored per-line data, no-go detectors first.
+  the drift and scatter views drawn from the stored per-line data, in detector order, linked from the
+  Detectors table and enlarged on click.
 
 Every visit on the run report and both clocks links to its `/visit/<n>` page (the every-visit table, the
 not-passing and no-result lists, and each heatmap square).

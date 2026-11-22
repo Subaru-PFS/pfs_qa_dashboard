@@ -79,11 +79,15 @@ def testVisitPageShowsResidualPlotsWhenServed():
 
     page = buildVisitPage(tables, None, 7, residuals=True)
     assert "DetectorMap line residuals" in page
-    # One image per detector, pointing at the dashboard's on-demand residual route.
+    # One lazily-loaded image per detector, pointing at the dashboard's on-demand residual route.
+    assert page.count("src='/visit/7/residual/") == 2 and "loading='lazy'" in page
     assert "src='/visit/7/residual/b1.png'" in page and "src='/visit/7/residual/n1.png'" in page
-    assert page.count("<img ") == 2 and "loading='lazy'" in page
-    # No-go detectors come first: the FAIL detector's image is before the PASS one's.
-    assert page.index("residual/n1.png") < page.index("residual/b1.png")
+    # Regular detector order (brnm): b1 before n1, regardless of verdict.
+    assert page.index("residual/b1.png") < page.index("residual/n1.png")
+    # The Detectors table links each detector to its plot below (the figure carries the anchor).
+    assert "<a href='#resid-n1'>n1</a>" in page and "id='resid-n1'" in page
+    # Click-to-enlarge: a lightbox overlay and the script that fills it from the clicked image.
+    assert "id='lightbox'" in page and "imgwrap" in page and "addEventListener('click'" in page
     # The page itself still carries no plot data (the browser fetches the images); it stays small.
     assert "data:image" not in page
     # The "not yet shown" note drops the line-residual plots once they are shown.
