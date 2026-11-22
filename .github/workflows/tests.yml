@@ -13,10 +13,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # The drp_qa the dashboard reads qadb with (pfs.drp.qa.qadb.reader): a release tag.
-  DRP_QA_REF: 0.6.1
-
 jobs:
   tests:
     name: Tests (Python ${{ matrix.python-version }})
@@ -32,11 +28,13 @@ jobs:
       # drp_qa and pfs_utils are not installable from PyPI, and drp_qa's own
       # install would pull pfs_utils' dependencies from git: put drp_qa's
       # python/ on PYTHONPATH, and install pfs_utils without its dependencies,
-      # as drp_qa's CI does.
+      # as drp_qa's CI does. Track its main (not a pinned tag) — the two repos
+      # release together, and the dashboard reads qadb (pfs.drp.qa.qadb.reader)
+      # and labels shaka exposures (pfs.drp.qa.comparison.classify.shakaOf) from it.
       - uses: actions/checkout@v4
         with:
           repository: Subaru-PFS/drp_qa
-          ref: ${{ env.DRP_QA_REF }}
+          ref: main
           path: drp_qa
 
       - uses: actions/setup-python@v5

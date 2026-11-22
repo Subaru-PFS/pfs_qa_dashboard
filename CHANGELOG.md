@@ -8,6 +8,14 @@ or the Python API.
 
 ## [Unreleased]
 
+### Added
+
+- **Shaka exposures labelled** (PIPE2D-1955) — a visit taken on a one-fiber-group (shaka) design
+  (`cobraHome-MOD<k>_group<n>`, which lights one group of every `k`-th cobra) is tagged `· shaka MOD4 group2`
+  on its label, so it reads apart from a fully lit arc or trace on the night page, the run report and the
+  visit page. `readVisitInfo` reads the design name (only for the one-fiber-group designs, so proprietary
+  field names stay in the opdb) and derives the label with drp_qa's `comparison.classify.shakaOf`.
+
 ## [0.11.0] - 2026-11-21
 
 ### Added

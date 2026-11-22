@@ -43,6 +43,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from pfs.drp.qa.comparison.classify import shakaLabel, shakaOf
 from pfs.drp.qa.metrics.registry import CHECKS, FIXED, specFor
 from pfs.qa.dashboard.live import GATE, HST, LAST_VISIT
 
@@ -148,12 +149,16 @@ _INFO = [
     "cameras",
     "iis",
     "sequenceEnd",
+    "shaka",
 ]
 _TABLES = ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics", GATE)
 
 _log = logging.getLogger(__name__)
 
 # Every visit that exposed the spectrograph in a range: one row each (a visit is in one sequence at most).
+# The design name is read only for the one-fiber-group (shaka) designs (a MOD<k> before a group<n>); a
+# science design's name can be a field or target name, which is proprietary, so the CASE returns NULL for it
+# and the proprietary names never leave the opdb. `pfs.drp.qa.comparison.classify.shakaOf` parses the rest.
 _VISIT_INFO_SQL = """
 SELECT v.pfs_visit_id AS visit, v.issued_at AS time, sv.exp_type,
     (SELECT max(e.exptime) FROM sps_exposure e WHERE e.pfs_visit_id = v.pfs_visit_id) AS exptime,
@@ -161,12 +166,14 @@ SELECT v.pfs_visit_id AS visit, v.issued_at AS time, sv.exp_type,
         FROM sps_exposure e JOIN sps_camera c ON c.sps_camera_id = e.sps_camera_id
         WHERE e.pfs_visit_id = v.pfs_visit_id) AS cameras,
     s.sequence_type, s.name AS sequence_name,
-    position('iis' IN lower(s.cmd_str)) > 0 AS iis, st.status_flag, st.cmd_output
+    position('iis' IN lower(s.cmd_str)) > 0 AS iis, st.status_flag, st.cmd_output,
+    CASE WHEN d.design_name ~* 'mod[0-9].*group[0-9]' THEN d.design_name END AS design_name
 FROM pfs_visit v
 JOIN sps_visit sv ON sv.pfs_visit_id = v.pfs_visit_id
 LEFT JOIN visit_set vs ON vs.pfs_visit_id = v.pfs_visit_id
 LEFT JOIN iic_sequence s ON s.iic_sequence_id = vs.iic_sequence_id
 LEFT JOIN iic_sequence_status st ON st.iic_sequence_id = s.iic_sequence_id
+LEFT JOIN pfs_design d ON d.pfs_design_id = v.pfs_design_id
 WHERE v.pfs_visit_id BETWEEN :first AND :last
 """
 
@@ -374,9 +381,11 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
         exposure type); ``cameras`` (those that exposed, ``b1 n1 r1``);
         ``sequenceType`` and ``sequenceName`` (the IIC sequence's type and name,
         e.g. ``Arc: Neon``, both missing outside any sequence); ``iis`` (whether
-        the sequence's command lit the engineering fibers); and
+        the sequence's command lit the engineering fibers);
         ``sequenceEnd``, how the sequence ended (``completed``, or what it
-        reported when it did not).
+        reported when it did not); and ``shaka``, its shaka label
+        (``shaka MOD4 group2``) when it was taken on a one-fiber-group design,
+        else ``""`` (`pfs.drp.qa.comparison.classify.shakaOf`).
     """
     read = opdb.query_dataframe(_VISIT_INFO_SQL, params={"first": int(first), "last": int(last)})
     columns = [
@@ -390,6 +399,7 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
         "iis",
         "status_flag",
         "cmd_output",
+        "design_name",
     ]
     read = pd.DataFrame(columns=columns) if read is None else read.reindex(columns=columns)
     ended = []
@@ -404,6 +414,8 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
         columns={"sequence_type": "sequenceType", "sequence_name": "sequenceName", "exp_type": "expType"}
     )
     info["sequenceEnd"] = pd.Series(ended, index=info.index, dtype=object)
+    # A shaka exposure (one fiber group lit) is labelled as such; a non-shaka design gives "".
+    info["shaka"] = [shakaLabel(*shakaOf(name)) for name in info["design_name"]]
     info = info.reindex(columns=_INFO).drop_duplicates("visit")
     info["visit"] = info["visit"].astype("int64")
     info["time"] = pd.to_datetime(info["time"])
@@ -536,7 +548,8 @@ def visitTable(
     Returns
     -------
     `pandas.DataFrame`
-        Sorted by ``visit``: ``kind``, ``label`` (the kind as shown), ``lamp``,
+        Sorted by ``visit``: ``kind``, ``label`` (the kind as shown, with a
+        ``· shaka MOD4 group2`` tag on a one-fiber-group exposure), ``lamp``,
         ``illumination``, ``slit``, ``arms``, ``detectors``, ``status``, ``flagged`` (``b1 W n3 F``),
         ``detectorsStatus`` (``b1P b2W ...``), ``why``, ``time``, ``hst``,
         ``night`` (the HST date of the evening), ``exptime`` and
@@ -594,7 +607,9 @@ def visitTable(
             labels.append(f"unclassified ({SEQUENCE_LABELS.get(sequence, sequence)})")
         else:
             labels.append("unclassified (no sequence)")
-    visits["label"] = labels
+    # A shaka exposure (one fiber group lit) is labelled apart from a fully lit one of the same kind.
+    shaka = visits["shaka"].fillna("") if "shaka" in visits else pd.Series("", index=visits.index)
+    visits["label"] = [f"{label} · {tag}" if tag else label for label, tag in zip(labels, shaka, strict=True)]
     visits["slit"] = visits["illumination"].map({"full": "full slit", "iis": "engineering fibers"}).fillna("")
     return visits.sort_values("visit", ignore_index=True)
 

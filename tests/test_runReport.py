@@ -771,3 +771,44 @@ def testAVisitTakenAndNeverJudgedShowsAsNoResult():
     # Negative control: a page whose visits all have results has no such section or note.
     whole = buildReport(tables, info=info[info["visit"].isin([2, 5])]).html
     assert "Visits with no QA result" not in whole and "more with no QA result" not in whole
+
+
+def testReadVisitInfoLabelsShaka():
+    raw = pd.DataFrame(
+        {
+            "visit": [1, 2],
+            "time": [pd.Timestamp("2026-11-21 19:14"), pd.Timestamp("2026-11-21 19:20")],
+            "exp_type": ["arc", "arc"],
+            "exptime": [120.0, 120.0],
+            "cameras": ["b1 r1", "b1 r1"],
+            "sequence_type": ["scienceArc", "scienceArc"],
+            "sequence_name": ["Arc: Neon", "Arc: Neon"],
+            "iis": [False, False],
+            "status_flag": [0, 0],
+            "cmd_output": ["complete", "complete"],
+            # The opdb returns a name only for a one-fiber-group design; a science field's name is NULL.
+            "design_name": ["cobraHome-MOD4_group2", None],
+        }
+    )
+
+    class Opdb:
+        def query_dataframe(self, sql, params):
+            assert "design_name" in sql and "~*" in sql  # the proprietary guard runs in the opdb
+            return raw
+
+    info = runReport.readVisitInfo(Opdb(), 1, 2).set_index("visit")
+    assert "design_name" not in info.columns  # the raw name is not carried past the derived label
+    assert info.loc[1, "shaka"] == "shaka MOD4 group2"
+    assert info.loc[2, "shaka"] == ""  # negative control: a fully lit / science design is not shaka
+
+
+def testVisitTableTagsShakaInLabel():
+    tables = _tables((1, "r1", "arc", {}), (2, "r1", "arc", {}))
+    info = _taken(
+        (1, "arc", "scienceArc", False, "completed"),
+        (2, "arc", "scienceArc", False, "completed"),
+    )
+    info["shaka"] = ["shaka MOD4 group2", ""]  # visit 1 is shaka, visit 2 fully lit
+    visits = runReport.visitTable(measure(tables), info).set_index("visit")
+    assert visits.loc[1, "label"] == "arc, Neon · shaka MOD4 group2"
+    assert visits.loc[2, "label"] == "arc, Neon"  # negative control: the fully lit arc carries no tag
