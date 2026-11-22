@@ -8,6 +8,12 @@ or the Python API.
 
 ## [Unreleased]
 
+### Added
+
+- `serve --debug`: restart the server when the dashboard's code or its `data/` assets (CSS, HTML, fonts)
+  change (Tornado's autoreload). Unlike `--refresh`, which reloads the data, this reloads the code; a
+  restart re-reads the databases, so it pairs with `serve --snapshot` for the dev loop.
+
 ## [0.10.0] - 2026-11-21
 
 ### Added

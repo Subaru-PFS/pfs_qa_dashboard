@@ -72,6 +72,11 @@ def makeParser() -> argparse.ArgumentParser:
         "--address", default="localhost", help="interface to listen on; 0.0.0.0 for the local network"
     )
     serve.add_argument("--show", action="store_true", help="open a browser")
+    serve.add_argument(
+        "--debug",
+        action="store_true",
+        help="development: restart the server when the dashboard's code or its data/ assets change",
+    )
 
     snapshot = commands.add_parser(
         "snapshot",
@@ -241,14 +246,29 @@ def serve(args: argparse.Namespace) -> None:
     print(
         f"Serving the night page at http://{args.address}:{args.port}/ and the run report at /run", flush=True
     )
-    listen(Application(routes(cache, mounts, visit=visitPage)), args.address, args.port, args.show)
+    listen(
+        Application(routes(cache, mounts, visit=visitPage)),
+        args.address,
+        args.port,
+        args.show,
+        debug=args.debug,
+    )
 
 
-def listen(application, address: str, port: int, show: bool = False) -> None:
-    """Serve a Tornado ``application`` on ``address:port`` until interrupted; ``show`` opens a browser on it."""
+def listen(application, address: str, port: int, show: bool = False, debug: bool = False) -> None:
+    """Serve a Tornado ``application`` on ``address:port`` until interrupted.
+
+    ``show`` opens a browser on it. ``debug`` auto-reloads the server (Tornado's autoreload) when the
+    dashboard's code or its ``data/`` assets change, by restarting the process; each restart re-reads the
+    databases, so it pairs well with ``--snapshot``.
+    """
 
     async def run() -> None:
         application.listen(port, address=address)
+        if debug:
+            # Started here, inside the running loop, so the watch binds to it, not to a loop that is
+            # replaced by asyncio.run (which is why Application(debug=True) would not do).
+            _autoreload()
         if show:
             import webbrowser
 
@@ -257,6 +277,24 @@ def listen(application, address: str, port: int, show: bool = False) -> None:
 
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(run())
+
+
+def _autoreload() -> None:
+    """Restart the process when a Python module or a ``data/`` asset changes (development only).
+
+    Autoreload already watches the imported modules; the ``data/`` assets (the CSS, HTML and fonts baked
+    into a page when it is built) are not modules, so they are added to the watch by hand.
+    """
+    from tornado import autoreload
+
+    from pfs.qa.dashboard.runReport import _DATA
+
+    for asset in sorted(path for path in _DATA.rglob("*") if path.is_file()):
+        autoreload.watch(str(asset))
+    autoreload.start()
+    print(
+        "Auto-reload on: a change to the dashboard's code or its data/ assets restarts the server", flush=True
+    )
 
 
 def snapshot(args: argparse.Namespace) -> None:
