@@ -14,8 +14,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The drp_qa the dashboard reads qadb with (pfs.drp.qa.qadb.reader): a release tag.
-  DRP_QA_REF: 0.6.1
+  # The drp_qa the dashboard reads qadb (pfs.drp.qa.qadb.reader) and labels shaka exposures
+  # (pfs.drp.qa.comparison.classify.shakaOf, from 0.11.0) with: a release tag.
+  DRP_QA_REF: 0.11.0
 
 jobs:
   tests:
