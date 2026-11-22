@@ -11,13 +11,15 @@ shared with `runReport`.
 
 import html
 import json
-from collections.abc import Mapping
+import logging
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from pfs.qa.dashboard.agTransparency import conditions
 from pfs.qa.dashboard.live import HST
 from pfs.qa.dashboard.runReport import (
     AWAITING,
@@ -33,6 +35,8 @@ from pfs.qa.dashboard.runReport import (
 )
 
 __all__ = ["DATA_COLUMNS", "activeNight", "buildNightReport", "renderNight"]
+
+_log = logging.getLogger(__name__)
 
 _DATA = Path(__file__).parent / "data"
 
@@ -236,6 +240,7 @@ def renderNight(
     source: str = "",
     runUrl: str = "/run",
     now: datetime | None = None,
+    transparency: pd.DataFrame | None = None,
 ) -> str:
     """Return the night page as one stand-alone HTML document.
 
@@ -247,6 +252,8 @@ def renderNight(
         The night shown (HST evening date).
     title, source, runUrl, now
         The page title; the source note (HTML); the link to the whole-run report; the time made (HST).
+    transparency : `pandas.DataFrame`, optional
+        The night's AG transparency (`agTransparency.readTransparency`); its section is omitted when None or empty.
     """
     now = datetime.now(HST) if now is None else now
     judged = visits[~visits["status"].isin(_PENDING)]
@@ -258,10 +265,13 @@ def renderNight(
         )
         + _tally("Engineering", judged[judged["illumination"] == "iis"])
     )
+    # The third tile is the night's AG conditions (a transparency summary that opens a modal) when there is
+    # transparency to show; otherwise the science verdict counts, as before.
+    condTile, condModal = conditions(transparency, night)
     tiles = (
         _latestTile(visits, images)
         + _summaryTile("Tonight", visits)
-        + _summaryTile("Science", visits[visits["kind"] == "science"])
+        + (condTile or _summaryTile("Science", visits[visits["kind"] == "science"]))
     )
     offsetsHtml, offsetAxis, residualsHtml = scienceSections(images[images["kind"] == "science"])
     nightText = html.escape(night) if night else "the latest night"
@@ -274,6 +284,7 @@ def renderNight(
         "{{NIGHT}}": nightText,
         "{{TILES}}": tiles,
         "{{LEAD}}": lead,
+        "{{CONDITIONS_MODAL}}": condModal,
         "{{AWAITING_SECTION}}": _awaitingSection(visits),
         "{{FEED}}": _feedRows(visits),
         "{{OFFSETS}}": offsetsHtml,
@@ -301,6 +312,7 @@ def buildNightReport(
     night: str | None = None,
     runUrl: str = "/run",
     now: datetime | None = None,
+    readTransparency: Callable[[int, int], pd.DataFrame] | None = None,
 ) -> Report:
     """Return the night page of what a qadb read holds, scoped to one night (the latest by default).
 
@@ -314,11 +326,23 @@ def buildNightReport(
         As `renderNight` takes them.
     night : `str`, optional
         The night (HST evening date) to show; the most recent with a visit when None.
+    readTransparency : callable, optional
+        ``readTransparency(first, last)`` returns the AG transparency of a visit range
+        (`agTransparency.readTransparency` over qadb). Read for the night's visits and drawn as a section;
+        a read that fails is logged and the section omitted, so it never blanks the page. None omits it.
     """
     allImages = measure(tables)
     allVisits = visitTable(allImages, infoFromTables(tables) if info is None else info, awaiting=True)
     night = activeNight(allVisits) if night is None else night
     visits = allVisits[allVisits["night"] == night] if night else allVisits
     images = allImages[allImages["visit"].isin(set(visits["visit"]))]
-    page = renderNight(visits, images, night, title=title, source=source, runUrl=runUrl, now=now)
+    transparency = None
+    if readTransparency is not None and len(visits):
+        try:
+            transparency = readTransparency(int(visits["visit"].min()), int(visits["visit"].max()))
+        except Exception:
+            _log.exception("Reading AG transparency failed; omitting the section")
+    page = renderNight(
+        visits, images, night, title=title, source=source, runUrl=runUrl, now=now, transparency=transparency
+    )
     return Report(images, visits, page)
