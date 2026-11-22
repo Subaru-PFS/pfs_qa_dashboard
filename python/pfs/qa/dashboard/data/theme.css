@@ -86,6 +86,18 @@
   @media (max-width: 480px) { .driftcols { grid-template-columns: minmax(0, 1fr); } }
   .driftcol { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
   h3.colhead { margin: 2px 0 0; font-size: 0.82rem; font-weight: 600; color: var(--fg-2); }
+  .driftcols figure.panel { cursor: zoom-in; }
+  .driftcols figure.panel:hover { border-color: var(--fg-3); }
+  /* Shared modal toolbox (.modal / .sheet / .x), also used by INSTRM-3130's Conditions tile. Clicking a
+     detector's chart opens it enlarged here; the SVG is vector, so it stays crisp. */
+  .modal { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, 0.5); }
+  .modal[hidden] { display: none; }
+  .sheet { position: relative; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 20px 22px; width: min(960px, 100%); max-height: calc(100vh - 40px); overflow: auto; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35); }
+  .sheet h2 { margin-top: 0; }
+  .sheet .x { position: absolute; top: 8px; right: 12px; border: none; background: none; color: var(--fg-3); font-size: 1.7rem; line-height: 1; cursor: pointer; padding: 2px 6px; }
+  .sheet .x:hover { color: var(--fg); }
+  .sheet .zoombody figure.panel { margin: 0; border: none; background: none; padding: 0; }
+  .sheet .zoombody figcaption b { font-size: 1.15rem; }
   figure.panel { margin: 0; min-width: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 7px 9px 3px; }
   figure.panel figcaption { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
   figure.panel figcaption b { font-size: 0.92rem; color: var(--fg); }
