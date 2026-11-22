@@ -19,7 +19,7 @@ from typing import Any
 
 import pandas as pd
 
-from pfs.qa.dashboard.agTransparency import conditions
+from pfs.qa.dashboard.agConditions import conditions
 from pfs.qa.dashboard.live import HST
 from pfs.qa.dashboard.runReport import (
     AWAITING,
@@ -241,6 +241,7 @@ def renderNight(
     runUrl: str = "/run",
     now: datetime | None = None,
     transparency: pd.DataFrame | None = None,
+    seeing: pd.DataFrame | None = None,
 ) -> str:
     """Return the night page as one stand-alone HTML document.
 
@@ -252,8 +253,9 @@ def renderNight(
         The night shown (HST evening date).
     title, source, runUrl, now
         The page title; the source note (HTML); the link to the whole-run report; the time made (HST).
-    transparency : `pandas.DataFrame`, optional
-        The night's AG transparency (`agTransparency.readTransparency`); its section is omitted when None or empty.
+    transparency, seeing : `pandas.DataFrame`, optional
+        The night's AG transparency and seeing (`agConditions.readTransparency` / `readSeeing`); the Conditions
+        tile and its modal are built from whichever has data, and omitted when neither does.
     """
     now = datetime.now(HST) if now is None else now
     judged = visits[~visits["status"].isin(_PENDING)]
@@ -265,9 +267,9 @@ def renderNight(
         )
         + _tally("Engineering", judged[judged["illumination"] == "iis"])
     )
-    # The third tile is the night's AG conditions (a transparency summary that opens a modal) when there is
-    # transparency to show; otherwise the science verdict counts, as before.
-    condTile, condModal = conditions(transparency, night)
+    # The third tile is the night's AG conditions (seeing and transparency, opening a modal) when there is any
+    # to show; otherwise the science verdict counts, as before.
+    condTile, condModal = conditions(transparency, seeing, night)
     tiles = (
         _latestTile(visits, images)
         + _summaryTile("Tonight", visits)
@@ -313,6 +315,7 @@ def buildNightReport(
     runUrl: str = "/run",
     now: datetime | None = None,
     readTransparency: Callable[[int, int], pd.DataFrame] | None = None,
+    readSeeing: Callable[[int, int], pd.DataFrame] | None = None,
 ) -> Report:
     """Return the night page of what a qadb read holds, scoped to one night (the latest by default).
 
@@ -326,23 +329,35 @@ def buildNightReport(
         As `renderNight` takes them.
     night : `str`, optional
         The night (HST evening date) to show; the most recent with a visit when None.
-    readTransparency : callable, optional
-        ``readTransparency(first, last)`` returns the AG transparency of a visit range
-        (`agTransparency.readTransparency` over qadb). Read for the night's visits and drawn as a section;
-        a read that fails is logged and the section omitted, so it never blanks the page. None omits it.
+    readTransparency, readSeeing : callable, optional
+        ``read(first, last)`` returning a visit range's AG transparency / seeing (`agConditions.readTransparency`
+        / `readSeeing` over qadb). Read for the night's visits to build the Conditions tile and modal; a read
+        that fails is logged and that metric dropped, so it never blanks the page. None omits the metric.
     """
     allImages = measure(tables)
     allVisits = visitTable(allImages, infoFromTables(tables) if info is None else info, awaiting=True)
     night = activeNight(allVisits) if night is None else night
     visits = allVisits[allVisits["night"] == night] if night else allVisits
     images = allImages[allImages["visit"].isin(set(visits["visit"]))]
-    transparency = None
-    if readTransparency is not None and len(visits):
+
+    def read(reader: Callable[[int, int], pd.DataFrame] | None, what: str) -> pd.DataFrame | None:
+        if reader is None or not len(visits):
+            return None
         try:
-            transparency = readTransparency(int(visits["visit"].min()), int(visits["visit"].max()))
+            return reader(int(visits["visit"].min()), int(visits["visit"].max()))
         except Exception:
-            _log.exception("Reading AG transparency failed; omitting the section")
+            _log.exception("Reading AG %s failed; dropping that metric", what)
+            return None
+
     page = renderNight(
-        visits, images, night, title=title, source=source, runUrl=runUrl, now=now, transparency=transparency
+        visits,
+        images,
+        night,
+        title=title,
+        source=source,
+        runUrl=runUrl,
+        now=now,
+        transparency=read(readTransparency, "transparency"),
+        seeing=read(readSeeing, "seeing"),
     )
     return Report(images, visits, page)
