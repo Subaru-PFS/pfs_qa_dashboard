@@ -32,7 +32,9 @@ three share one stylesheet (`data/theme.css`). A visit takes the worst verdict a
   reduced — reads "No QA result (not reduced)" from the opdb's sequence information. It shows values and leans on
   the stored reason for the limits, rather than re-deriving them from the current registry (a visit may have been
   judged with a different threshold set). The page is built from the server's cached read, so it needs no database
-  of its own.
+  of its own. With `serve --butler` (below) it also shows each detector's **detector-map line residual plot** —
+  the drift and scatter views drawn from the stored per-line data, in detector order, linked from the
+  Detectors table and enlarged on click.
 
 Every visit on the run report and both clocks links to its `/visit/<n>` page (the every-visit table, the
 not-passing and no-result lists, and each heatmap square).
@@ -63,6 +65,13 @@ opdb, the visits taken since — so a new exposure makes the pages again and the
 is not being reduced. The whole opdb range is re-read on a qadb change, so judged visits stay current. The
 databases are read off the server's loop, and a browser is answered at once with the last page made, so a database
 that fails or hangs does not hold the page up.
+
+To show the detector-map residual plots on the per-visit page, add `--butler <repo>` (e.g. `/work/datastore`),
+pointing at a Butler on the same host that holds the collection's `dmLineResidualData` — the per-line data the
+plot needs, which lives in the Butler, not qadb. This needs the LSST stack and `--collection` (a snapshot has no
+per-line data). Each plot is rendered when its `<img>` (`/visit/<n>/residual/<camera>.png`) is fetched, on a small
+thread pool off the server's loop, and cached — so the page is answered at once and nothing is drawn until a visit
+is viewed. Without `--butler` the page shows no plot.
 
 The live pages follow the server: every few seconds each asks for `/status`, reloads when a newer page has been
 made (keeping the filters, buttons and place), and says at the bottom right when the results were last read — red

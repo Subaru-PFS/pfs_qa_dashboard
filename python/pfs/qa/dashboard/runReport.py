@@ -1612,10 +1612,13 @@ def routes(
     cache: ReportCache,
     mounts: Mapping[str, str] | None = None,
     visit: Callable[[int], str] | None = None,
+    residual: Callable[[int, str], bytes | None] | None = None,
 ) -> list[tuple[str, type]]:
     """Return the Tornado routes serving a `ReportCache`: its pages, and `status` at ``/status``.
 
-    None of them reads a database: each answers from what the cache last made.
+    The pages read no database: each answers from what the cache last made. The residual route is the
+    exception — it renders a detector's plot from the Butler on the request — so it is answered off the
+    event loop, on a small thread pool, and the page already shown is never held up by it.
 
     Parameters
     ----------
@@ -1627,6 +1630,10 @@ def routes(
     visit : callable, optional
         ``visit(n)`` returns a per-visit page's HTML; when given, it is served at
         ``/visit/<n>`` (a reserved route the night page links to).
+    residual : callable, optional
+        ``residual(n, camera)`` returns a detector's residual plot as PNG bytes, or None when ``camera``
+        is not one of the visit's detectors; when given, it is served at
+        ``/visit/<n>/residual/<camera>.png`` (what the visit page's ``<img>`` tags fetch).
     """
     from tornado.web import RequestHandler
 
@@ -1656,4 +1663,25 @@ def routes(
                 self.write(visit(int(number)))
 
         handlers.append((r"/visit/([0-9]+)", VisitHandler))
+    if residual is not None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        from tornado.ioloop import IOLoop
+
+        # A few workers: a plot reads a detector's per-line rows from the Butler and draws it (~1 s), so
+        # several load in parallel, but not so many that the host runs out of memory. The read guards
+        # itself; rendering is the parallel part.
+        pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="residual")
+
+        class ResidualHandler(RequestHandler):
+            async def get(self, number: str, camera: str) -> None:
+                png = await IOLoop.current().run_in_executor(pool, residual, int(number), camera)
+                if png is None:
+                    self.set_status(404)
+                    return
+                self.set_header("Content-Type", "image/png")
+                self.set_header("Cache-Control", "no-cache")
+                self.write(png)
+
+        handlers.append((r"/visit/([0-9]+)/residual/([brnm][1-4])\.png", ResidualHandler))
     return handlers

@@ -162,6 +162,60 @@ def testServeRefusesADirectoryThatIsNotASnapshot(tmp_path, monkeypatch, capsys):
     assert served and served[0].snapshot == tmp_path / "snap"
 
 
+def testButlerNeedsACollection(monkeypatch, capsys):
+    """``serve --butler`` is only for a live collection: a snapshot has no per-line data to plot."""
+    cli = _cli()
+    served = []
+    monkeypatch.setattr(cli, "serve", served.append)
+    with pytest.raises(SystemExit):
+        cli.main(["serve", "--snapshot", "d", "--butler", "/work/datastore"])
+    assert "--butler needs --collection" in capsys.readouterr().err and not served
+    # Negative control: with a collection, --butler is accepted.
+    cli.main(["serve", "--collection", "c", "--butler", "/work/datastore"])
+    assert served and served[0].butler == "/work/datastore" and served[0].instrument == "PFS"
+
+
+def testButlerResidualsReadsTheButlerAndRenders(monkeypatch):
+    """``butlerResiduals`` wires a Butler read of ``dmLineResidualData`` to the residual renderer."""
+    from test_runReport import _science, _tables
+    from test_visitResiduals import _lineData
+
+    gets = []
+
+    class FakeButler:
+        def __init__(self, repo, collections, writeable):
+            self.repo, self.collections, self.writeable = repo, collections, writeable
+
+        def get(self, dataset, dataId):
+            gets.append((dataset, dataId))
+            if dataId["arm"] == "b":
+                return _lineData()
+            raise LookupError("no such dataset")  # n1: the task wrote nothing
+
+    monkeypatch.setitem(sys.modules, "lsst", types.ModuleType("lsst"))
+    monkeypatch.setitem(sys.modules, "lsst.daf", types.ModuleType("lsst.daf"))
+    monkeypatch.setitem(sys.modules, "lsst.daf.butler", types.SimpleNamespace(Butler=FakeButler))
+
+    cli = _cli()
+    args = types.SimpleNamespace(butler="/work/datastore", collection="c", instrument="PFS")
+    tables = _tables(
+        (42, "b1", "science", _science(), {"gate": ("PASS", "")}),
+        (42, "n1", "science", _science(), {"gate": ("FAIL", "x")}),
+    )
+    images = cli.butlerResiduals(args, lambda visit: tables)
+
+    # A detector with data is read from the Butler and rendered to a PNG.
+    assert images.png(42, "b1")[:4] == b"\x89PNG"
+    assert gets == [("dmLineResidualData", {"instrument": "PFS", "visit": 42, "arm": "b", "spectrograph": 1})]
+    # A detector the Butler has none for (LookupError) is a placeholder, not an error.
+    assert images.png(42, "n1")[:4] == b"\x89PNG"
+    # A camera not among the visit's detectors is a 404 (None), and never read.
+    assert images.png(42, "r4") is None
+    assert all(dataId["arm"] != "r" for _, dataId in gets)
+    # Negative control: without --butler there is no renderer at all.
+    assert cli.butlerResiduals(types.SimpleNamespace(butler=None), lambda visit: tables) is None
+
+
 def testOptionsOfTheMetricViewsAndTheReportsOwnLimitsAreGone(capsys):
     """The reference visits and websocket origins were the metric views', the limits the report's own judging."""
     parser = _cli().makeParser()
