@@ -8,6 +8,18 @@ or the Python API.
 
 ## [Unreleased]
 
+### Added
+
+- **Detector-map residual plots on the visit page** (PIPE2D-2030): the per-visit page now shows
+  `pfs.drp.qa.plotting.dmResiduals.plotDetectorResiduals` for each detector — the drift (vs the calibration)
+  and scatter (vs the visit's own adjusted detectorMap) line residuals — drawn on demand from the stored
+  per-line `dmLineResidualData`, no-go detectors first, with the gate's warn/fail limits as dashed bands. The
+  plot's per-line data is in the Butler, not qadb, so it is served only in the live mode and only with
+  `serve --butler <repo>` (needs the LSST stack and `--collection`): each plot is rendered when its
+  `<img>` is fetched (`/visit/<n>/residual/<camera>.png`), off the event loop and cached, so the page stays
+  small and nothing is rendered until it is viewed. Without `--butler`, the page shows no plot, as before.
+  Rendering adds `matplotlib` and `seaborn` (drp_qa's plotting) as dependencies.
+
 ## [0.12.0] - 2026-11-21
 
 ### Added

@@ -67,6 +67,29 @@ def testVisitPageHasPrevNextNav():
     assert "href='/visit/4' rel='prev'" in none and "href='/visit/6' rel='next'" in none
 
 
+def testVisitPageShowsResidualPlotsWhenServed():
+    tables = _tables(
+        (7, "b1", "science", _science(x=0.2), {"gate": ("PASS", "")}),
+        (7, "n1", "science", _science(x=0.3), {"gate": ("FAIL", "OH residual +1.20 km/s >= fail 1")}),
+    )
+    # Off by default: a snapshot or a server without the Butler shows no plot, only the note that it is absent.
+    plain = buildVisitPage(tables, None, 7)
+    assert "DetectorMap line residuals" not in plain
+    assert "line-residual plots are not yet shown" in plain
+
+    page = buildVisitPage(tables, None, 7, residuals=True)
+    assert "DetectorMap line residuals" in page
+    # One image per detector, pointing at the dashboard's on-demand residual route.
+    assert "src='/visit/7/residual/b1.png'" in page and "src='/visit/7/residual/n1.png'" in page
+    assert page.count("<img ") == 2 and "loading='lazy'" in page
+    # No-go detectors come first: the FAIL detector's image is before the PASS one's.
+    assert page.index("residual/n1.png") < page.index("residual/b1.png")
+    # The page itself still carries no plot data (the browser fetches the images); it stays small.
+    assert "data:image" not in page
+    # The "not yet shown" note drops the line-residual plots once they are shown.
+    assert "line-residual plots are not yet shown" not in page
+
+
 def testVisitPageWithNoQaResult():
     info = pd.DataFrame(
         {

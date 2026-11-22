@@ -23,6 +23,7 @@ from pfs.qa.dashboard.runReport import (
     ARMS,
     NO_RESULT,
     SPECIES_LABEL,
+    STATUS_RANK,
     _calibrationOffsets,
     _fontFaces,
     _theme,
@@ -82,6 +83,12 @@ def _page(title: str, body: str) -> str:
         "  nav.visitnav { display: flex; justify-content: space-between; gap: 12px;"
         " margin: 0 0 14px; font-size: 0.95rem; }\n"
         "  nav.visitnav .nolink { color: var(--fg-3); }\n"
+        # The residual plots: each a full-width figure (the drawing is wide, two rows by three columns),
+        # the image scaling to the column so it reads on a phone too.
+        "  .residuals { display: flex; flex-direction: column; gap: 20px; }\n"
+        "  .residuals figure { margin: 0; }\n"
+        "  .residuals figcaption { font-weight: 600; margin: 0 0 4px; }\n"
+        "  .residuals img { width: 100%; height: auto; border: 1px solid var(--rule); border-radius: 4px; }\n"
         "</style>\n</head>\n<body>\n<main>\n"
         f"{body}\n</main>\n</body>\n</html>\n"
     )
@@ -130,12 +137,44 @@ def _header(visit: int, vrow: pd.Series | None, info: pd.Series | None) -> str:
     )
 
 
-def _links() -> str:
+def _links(residuals: bool = False) -> str:
+    notShown = "Pipeline PDFs are" if residuals else "Pipeline PDFs and the line-residual plots are"
     return (
         "<section class='text notes'><p class='meta'>Back to the "
         "<a href='/'>night page</a> or the <a href='/run'>run report</a>. "
         "Every verdict here is the gate's, read back from qadb; this page judges nothing. "
-        "Pipeline PDFs and the line-residual image are not yet shown.</p></section>"
+        f"{notShown} not yet shown.</p></section>"
+    )
+
+
+def _residualSection(perCam: pd.DataFrame, visit: int) -> str:
+    """Return the per-detector detector-map residual plots, no-go detectors first.
+
+    One ``<img>`` per detector, served by the dashboard at ``/visit/<n>/residual/<camera>.png`` and
+    drawn on demand from the stored per-line data: the page carries no plot data itself, so it stays
+    small and the browser pulls the images lazily and in parallel. The order puts the detectors that
+    did not pass first, since those are the ones to look at.
+    """
+    order = perCam.assign(
+        _rank=perCam["status"].map(STATUS_RANK).fillna(0),
+        _cam=perCam["camera"].map(_cameraKey),
+    ).sort_values(["_rank", "_cam"], ascending=[False, True])
+    figures = []
+    for row in order.itertuples():
+        chip = _chip(row.status)
+        figures.append(
+            f"<figure><figcaption>{row.camera} {chip}</figcaption>"
+            f"<img loading='lazy' src='/visit/{int(visit)}/residual/{row.camera}.png' "
+            f"alt='DetectorMap line residuals for {row.camera}, visit {int(visit)}'></figure>"
+        )
+    return (
+        "<section class='block'><h2>DetectorMap line residuals</h2>"
+        "<p>Per detector, the line residuals against the calibration (drift) and against the visit's own "
+        "adjusted detectorMap (scatter), drawn from the stored per-line data. Δx is in pixels (left two "
+        "columns, per fiber); Δy in km/s where the collection stored it (lamp and sky lines, per wavelength); "
+        "the dashed bands are the gate's warn/fail limits in force now. Detectors that did not pass come "
+        "first.</p>"
+        f"<div class='residuals'>\n{chr(10).join(figures)}\n</div></section>"
     )
 
 
@@ -247,7 +286,13 @@ def _speciesSection(tables: Any) -> str:
     )
 
 
-def buildVisitPage(tables: Any, info: pd.DataFrame | None, visit: int, now: datetime | None = None) -> str:
+def buildVisitPage(
+    tables: Any,
+    info: pd.DataFrame | None,
+    visit: int,
+    now: datetime | None = None,
+    residuals: bool = False,
+) -> str:
     """Return the per-visit page for ``visit`` as one stand-alone HTML document.
 
     Parameters
@@ -263,6 +308,11 @@ def buildVisitPage(tables: Any, info: pd.DataFrame | None, visit: int, now: date
         The visit to show.
     now : `datetime.datetime`, optional
         The time the page was made (HST); unused for now, kept for symmetry.
+    residuals : `bool`, optional
+        Whether detector-map residual plots are served (`ResidualImages`, the
+        live ``--butler`` mode): when so, the page shows an ``<img>`` per detector
+        pointing at ``/visit/<n>/residual/<camera>.png``. Off by default, so a
+        snapshot or a server without the Butler shows no plot.
     """
     now = datetime.now(HST) if now is None else now
     # Normalise to the tables `measure` needs, so a slice missing one (before the first read) still renders.
@@ -288,7 +338,15 @@ def buildVisitPage(tables: Any, info: pd.DataFrame | None, visit: int, now: date
             "<section class='block'><p>No QA result for this visit: it has not been reduced, or the "
             "reduction stored nothing. The night page shows it as awaiting QA.</p></section>"
         )
-        body = _nav(int(visit)) + "\n" + _header(int(visit), None, infoRow) + "\n" + note + "\n" + _links()
+        body = (
+            _nav(int(visit))
+            + "\n"
+            + _header(int(visit), None, infoRow)
+            + "\n"
+            + note
+            + "\n"
+            + _links(residuals)
+        )
         return _page(f"Visit {visit}", body)
 
     infoForTable = info[info["visit"] == int(visit)] if infoRow is not None else None
@@ -314,7 +372,8 @@ def buildVisitPage(tables: Any, info: pd.DataFrame | None, visit: int, now: date
             _detectorTable(perCam),
             _grid(perCam),
             _speciesSection(tables),
-            _links(),
+            *([_residualSection(perCam, int(visit))] if residuals else []),
+            _links(residuals),
         ]
     )
     title = f"Visit {visit}"

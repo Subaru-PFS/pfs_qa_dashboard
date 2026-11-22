@@ -625,6 +625,38 @@ def testServeMountsTheNightPageAndTheRunReport(tmp_path, monkeypatch):
         _fetch(served["application"], "/dashboard")
 
 
+def testResidualRouteServesPngOnDemand(tmp_path):
+    """``routes(..., residual=...)`` serves a detector's plot at ``/visit/<n>/residual/<camera>.png``."""
+    from tornado.httpclient import HTTPClientError
+    from tornado.web import Application
+
+    from pfs.qa.dashboard.live import QadbStore
+    from pfs.qa.dashboard.qadbSource import readSnapshot
+    from pfs.qa.dashboard.runReport import ReportCache, infoFromTables, routes
+
+    tables, _ = readSnapshot(_snapshot(tmp_path / "snap"))
+    cache = ReportCache(QadbStore.fromTables(tables), info=infoFromTables(tables))
+    cache.update()
+
+    asked = []
+
+    def residual(number, camera):
+        asked.append((number, camera))
+        return b"\x89PNG-stub-bytes" if (number, camera) == (1, "r1") else None
+
+    app = Application(routes(cache, {"/": cache.primary}, residual=residual))
+    served = _fetch(app, "/visit/1/residual/r1.png")
+    assert served.code == 200 and served.headers["Content-Type"] == "image/png"
+    assert served.body == b"\x89PNG-stub-bytes" and asked == [(1, "r1")]
+    # A camera the renderer has nothing for (None) is a 404.
+    with pytest.raises(HTTPClientError, match="404"):
+        _fetch(app, "/visit/1/residual/b2.png")
+    # Negative control: a path that is not a camera (arm letter + spectrograph digit) is not even routed.
+    with pytest.raises(HTTPClientError, match="404"):
+        _fetch(app, "/visit/1/residual/zz.png")
+    assert (1, "zz") not in asked
+
+
 def testServeFromQadbWatchesItAndThePageFollows(monkeypatch):
     """Live, ``serve`` makes the first page, then leaves the reading to the cache's thread."""
     import sys

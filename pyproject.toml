@@ -19,7 +19,9 @@ classifiers = [
 
 # drp_qa (pfs.drp.qa) and pfs_utils are needed too. Neither is installable from
 # PyPI: they come from the LSST/PFS stack or from checkouts on PYTHONPATH. pyyaml
-# and scipy are for drp_qa, whose qadb reader imports them.
+# and scipy are for drp_qa, whose qadb reader imports them; matplotlib and seaborn
+# for drp_qa's plotting (pfs.drp.qa.plotting), which the per-visit page renders for
+# the detector-map residual plots in the live --butler mode.
 dependencies = [
     "numpy >= 2.0",
     "pandas",
@@ -29,6 +31,8 @@ dependencies = [
     "sqlalchemy",
     "tornado",
     "psycopg[binary]",
+    "matplotlib",
+    "seaborn",
 ]
 
 [project.optional-dependencies]

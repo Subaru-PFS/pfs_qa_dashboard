@@ -67,6 +67,16 @@ def makeParser() -> argparse.ArgumentParser:
         "--snapshot", type=Path, metavar="DIR", help="a snapshot written by the snapshot command"
     )
     serve.add_argument("--refresh", type=float, default=30.0, help="seconds between qadb reads (default 30)")
+    serve.add_argument(
+        "--butler",
+        metavar="REPO",
+        help=(
+            "a Butler repository (e.g. /work/datastore) on this host, for the detector-map residual plots on"
+            " the per-visit page: each is drawn on demand from the collection's dmLineResidualData. Needs the"
+            " LSST stack; only with --collection (a snapshot has no per-line data). Omit for no plots."
+        ),
+    )
+    serve.add_argument("--instrument", default="PFS", help="the Butler instrument for --butler (default PFS)")
     serve.add_argument("--port", type=int, default=5006)
     serve.add_argument(
         "--address", default="localhost", help="interface to listen on; 0.0.0.0 for the local network"
@@ -110,6 +120,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command == "serve" and args.refresh < 1:
         parser.error("--refresh: at least 1 second")
+    if args.command == "serve" and args.butler and not args.collection:
+        parser.error("--butler needs --collection: a snapshot has no per-line residual data to plot")
     if args.command in ("serve", "report") and args.snapshot is not None:
         missing = [
             name
@@ -253,6 +265,54 @@ def pages(
     }
 
 
+def butlerResiduals(args: argparse.Namespace, sliceStore):
+    """Return a `ResidualImages` for the per-visit residual plots, or None without ``--butler``.
+
+    The Butler read is the only stack-bound part: imported here, guarded by a lock in case the Butler
+    is not thread-safe, and a missing dataset returns None rather than raising. The detector context
+    (which cameras a visit has, and each one's frame type) comes from the cached store, so it needs no
+    database.
+    """
+    if not args.butler:
+        return None
+
+    import threading
+
+    from lsst.daf.butler import Butler
+
+    from pfs.qa.dashboard.runReport import imageTable
+    from pfs.qa.dashboard.visitResiduals import ResidualImages
+
+    butler = Butler(args.butler, collections=[args.collection], writeable=False)
+    lock = threading.Lock()
+
+    def readLineData(visit: int, arm: str, spectrograph: int):
+        dataId = {
+            "instrument": args.instrument,
+            "visit": int(visit),
+            "arm": arm,
+            "spectrograph": int(spectrograph),
+        }
+        with lock:
+            try:
+                return butler.get("dmLineResidualData", dataId)
+            except LookupError:
+                # The collection holds no dmLineResidualData for this detector (the task did not run,
+                # or wrote nothing): the plot shows a placeholder, not an error.
+                return None
+
+    def context(visit: int) -> dict:
+        images = imageTable(sliceStore(int(visit)))
+        images = images[images["visit"] == int(visit)]
+        return dict(zip(images["camera"], images["frameType"], strict=True))
+
+    print(
+        f"Serving detector-map residual plots from the Butler at {args.butler} ({args.collection})",
+        flush=True,
+    )
+    return ResidualImages(readLineData, context)
+
+
 def serve(args: argparse.Namespace) -> None:
     """Serve the night page (``/``) and the run report (``/run``) of a collection or a snapshot."""
     # One line per request, with the client's address: shows whether a browser reached the server.
@@ -311,8 +371,8 @@ def serve(args: argparse.Namespace) -> None:
         )
         cache.update()
 
-    def visitPage(number: int) -> str:
-        """Build the per-visit page from the cached store (no database read)."""
+    def sliceStore(number: int) -> dict:
+        """Return the cached store's four tables, each scoped to ``number``'s rows."""
         # Fixed names via get(), not raw.items(): the refresh thread may add a table key concurrently.
         raw = cache.store.raw
         sliced = {}
@@ -320,14 +380,27 @@ def serve(args: argparse.Namespace) -> None:
             frame = raw.get(name)
             if frame is not None and "visit" in getattr(frame, "columns", []):
                 sliced[name] = frame[frame["visit"] == number]
-        return buildVisitPage(sliced, cache.info, number)
+        return sliced
+
+    residualImages = butlerResiduals(args, sliceStore)
+
+    def visitPage(number: int) -> str:
+        """Build the per-visit page from the cached store (no database read)."""
+        return buildVisitPage(sliceStore(number), cache.info, number, residuals=residualImages is not None)
 
     mounts = {"/": "night", "/run": "report"}
     print(
         f"Serving the night page at http://{args.address}:{args.port}/ and the run report at /run", flush=True
     )
     listen(
-        Application(routes(cache, mounts, visit=visitPage)),
+        Application(
+            routes(
+                cache,
+                mounts,
+                visit=visitPage,
+                residual=residualImages.png if residualImages is not None else None,
+            )
+        ),
         args.address,
         args.port,
         args.show,
