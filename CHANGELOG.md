@@ -2,10 +2,16 @@
 
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html): a release is a `MAJOR.MINOR.PATCH` git tag, with
-`version` in `pyproject.toml` to match. Before 1.0.0 a minor release may change the command line or the Python API.
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html): a release is a `MAJOR.MINOR.PATCH` git tag (the
+package version is derived from it by setuptools-scm). Before 1.0.0 a minor release may change the command line
+or the Python API.
 
 ## [Unreleased]
+
+### Changed
+
+- The package version is now derived from the latest git tag by setuptools-scm, instead of a hard-coded
+  `version` in `pyproject.toml`; a release is a tag alone, with no file to edit.
 
 ## [0.9.0] - 2026-11-21
 
