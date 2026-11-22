@@ -176,18 +176,31 @@ def _renderEvent(event: CalibSet) -> str:
             f"<td class='l'>{label}</td>{''.join(cells)}</tr>"
         )
     notes = "".join(f"<li>{html.escape(line)}</li>" for line in event.notes)
-    nogo = int((grid == "no-go").to_numpy().sum())
+    flat = grid.to_numpy().astype(str)
+    nogo = int((flat == "no-go").sum())
+    measured = int((flat == "go").sum()) + nogo
+    if nogo:
+        state = f'<span class="chip fail">{nogo} no-go</span>'
+    elif measured == 0:
+        state = '<span class="setstate">not yet measured</span>'
+    else:
+        state = '<span class="setstate">all go</span>'
+    # Open an event with something to act on (a no-go); collapse the rest so the section stays short.
+    count = len(event.visits)
+    summary = (
+        f"Set — {html.escape(event.label)} HST · {count} visit{'' if count == 1 else 's'} · "
+        f"{html.escape(event.lamps)} · {state}"
+    )
     return (
-        f"<h3 class='colhead'>Set — {html.escape(event.label)} HST · {len(event.visits)} visits · "
-        f"{html.escape(event.lamps)}"
-        + (f" · <span class='chip fail'>{nogo} no-go</span>" if nogo else " · all go")
-        + "</h3>"
-        "<div class='tablewrap'><table class='setgrid'><thead><tr>"
+        f'<details class="setevent"{" open" if nogo else ""}>\n'
+        f"  <summary>{summary}</summary>\n"
+        "  <div class='tablewrap tall'><table class='setgrid'><thead><tr>"
         "<th scope='col'>Visit</th><th scope='col' class='l'>Exposure</th>"
         f"{headCells}</tr></thead><tbody>\n"
         + "\n".join(rows)
         + "\n</tbody></table></div>"
         + (f"<ul class='setnotes'>{notes}</ul>" if notes else "")
+        + "\n</details>"
     )
 
 

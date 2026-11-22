@@ -95,6 +95,11 @@
   td.setcell.na { color: var(--rule); }
   ul.setnotes { margin: 6px 0 0; padding-left: 18px; color: var(--fg-2); font-size: 0.82rem; }
   ul.setnotes li { max-width: 90ch; }
+  details.setevent { margin-top: 8px; }
+  details.setevent > summary { cursor: pointer; font-size: 0.86rem; font-weight: 600; color: var(--fg-2); padding: 3px 0; }
+  details.setevent > summary:hover { color: var(--fg); }
+  details.setevent[open] > summary { margin-bottom: 6px; }
+  .setstate { font-weight: 400; color: var(--fg-3); }
   .driftcols figure.panel { cursor: zoom-in; }
   .driftcols figure.panel:hover { border-color: var(--fg-3); }
   /* Shared modal toolbox (.modal / .sheet / .x), also used by INSTRM-3130's Conditions tile. Clicking a

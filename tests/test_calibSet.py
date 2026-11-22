@@ -37,8 +37,16 @@ def testRenderShowsGoNoGoAndMissing():
     assert "Leave out: n4 1001 (reserved RMS off)." in html  # the notes
     assert "1 no-go" in html  # the event's no-go chip
     assert '<a href="/visit/1001">1001</a>' in html  # the visit links to its page
+    assert '<details class="setevent" open>' in html  # an event with a no-go opens
     # Negative control: only the one cell is no-go, not the whole grid.
     assert html.count("setcell nogo") == 1
+
+
+def testAllGoEventCollapsesByDefault():
+    event = _event({}, [(1001, "halogen", 1, 3), (1002, "halogen", 2, 3)])
+    html = renderCalibSet([event])
+    assert '<details class="setevent">' in html  # no " open": an all-go event starts collapsed
+    assert "all go" in html
 
 
 def testRenderEmptyIsBlank():
