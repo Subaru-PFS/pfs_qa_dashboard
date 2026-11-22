@@ -155,6 +155,50 @@ def testAnAwaitingArcShowsItsLamp():
     assert "arc, Neon" in made.html
 
 
+def _transparencyReader(exposures):
+    """Return a ``readTransparency(first, last)`` giving the exposures whose visit is in the range."""
+
+    def read(first, last):
+        return exposures[(exposures["visit"] >= first) & (exposures["visit"] <= last)].reset_index(drop=True)
+
+    return read
+
+
+def testTheNightShowsAgTransparencyWhenAReaderGivesIt():
+    tables = _tables((1, "r1", "science", _science()))
+    info = _info([1], ["2026-11-04 20:00"])
+    exposures = pd.DataFrame(
+        {
+            "visit": 1,
+            "agcExposureId": range(30),
+            "time": pd.date_range("2026-11-04 20:00", periods=30, freq="1min"),
+            "transparency": pd.Series(range(30)).mul(0.002).add(0.76),
+        }
+    )
+    made = buildNightReport(tables, info=info, readTransparency=_transparencyReader(exposures))
+    # The Conditions tile (opening the modal) replaces the Science tile, and the modal holds the chart.
+    assert "class='tile cond'" in made.html and "aria-controls='conditions'" in made.html
+    assert "id='conditions'" in made.html and "AG sky transparency tonight" in made.html
+    assert "30 AG exposures" in made.html and "<span class='lab'>Science</span>" not in made.html
+    # Negative control: without a reader there is no Conditions tile or modal; the Science tile stays.
+    plain = buildNightReport(tables, info=info).html
+    assert "AG sky transparency tonight" not in plain and "id='conditions'" not in plain
+    assert "class='tile cond'" not in plain and "<span class='lab'>Science</span>" in plain
+
+
+def testATransparencyReadThatFailsDoesNotBlankThePage():
+    tables = _tables((1, "r1", "science", _science()))
+    info = _info([1], ["2026-11-04 20:00"])
+
+    def boom(first, last):
+        raise RuntimeError("qadb unreachable")
+
+    made = buildNightReport(tables, info=info, readTransparency=boom)
+    # The page is still built from the rest; only the transparency section is missing.
+    assert made.html.startswith("<!doctype html>") and "The night on the clock" in made.html
+    assert "AG sky transparency tonight" not in made.html
+
+
 def testAwaitingAndNoResultAreToldApart():
     tables = _tables((2, "r1", "science", _science()), (5, "r1", "science", _science()))
     # Visit 3 was taken before the latest judged (5) and passed over; visit 7 after it, still awaiting.
