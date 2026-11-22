@@ -8,6 +8,8 @@ or the Python API.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-21
+
 ### Added
 
 - **Daily calibration drift** (PIPE2D-1986): a new section on the night page and the run report showing each
