@@ -12,6 +12,9 @@ All notable changes to this project are documented here. The format follows
 - **Previous/next visit navigation** on the per-visit page: a nav row with the previous visit on the left, the
   night page in the centre and the next visit on the right. The neighbours are `visit ± 1` with no check that they
   exist, so a gap in the numbering lands on a no-result page; below visit 1 there is no previous link.
+- **`report --name`** names the stand-alone page `<name>.html` (default `index`), so a redone run's report can be
+  written as e.g. `run31.html` and served from a directory of per-run pages. `drp_qa`'s `drpQa.py redo` prints the
+  matching command (PIPE2D-2016).
 
 ### Changed
 

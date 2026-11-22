@@ -84,7 +84,7 @@ def makeParser() -> argparse.ArgumentParser:
     report = commands.add_parser(
         "report",
         parents=[databases, page],
-        help="write the run report as one stand-alone page (index.html), with its visits and images as CSV",
+        help="write the run report as one stand-alone page (<name>.html), with its visits and images as CSV",
     )
     source = report.add_mutually_exclusive_group(required=True)
     source.add_argument("--collection", help="the collection loaded into qadb, e.g. qaActor/reductions")
@@ -92,6 +92,11 @@ def makeParser() -> argparse.ArgumentParser:
         "--snapshot", type=Path, metavar="DIR", help="a snapshot written by the snapshot command"
     )
     report.add_argument("--out", type=Path, required=True, metavar="DIR", help="the directory written to")
+    report.add_argument(
+        "--name",
+        default="index",
+        help="the page's file name, written <name>.html (default: index, e.g. run31)",
+    )
     return parser
 
 
@@ -288,7 +293,8 @@ def report(args: argparse.Namespace) -> None:
         source = snapshotSource(tables, provenance)
     made = buildReport(tables, info=info, **reportOptions(args, source))
     args.out.mkdir(parents=True, exist_ok=True)
-    (args.out / "index.html").write_text(made.html)
+    page = args.out / f"{args.name}.html"
+    page.write_text(made.html)
     made.visits.to_csv(args.out / "visits.csv", index=False)
     made.images.to_csv(args.out / "images.csv", index=False)
 
@@ -305,7 +311,7 @@ def report(args: argparse.Namespace) -> None:
         f"all visits: {tally(made.visits)}",
         flush=True,
     )
-    print(f"Wrote {args.out / 'index.html'} in {time.monotonic() - start:.1f} s", flush=True)
+    print(f"Wrote {page} in {time.monotonic() - start:.1f} s", flush=True)
 
 
 if __name__ == "__main__":
