@@ -30,17 +30,10 @@
   .tile.cond .sub::after { content: " \2197"; }
   .spark { display: block; width: 100%; height: 32px; }
   .spark polyline { fill: none; stroke: var(--series-1); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-  /* The modal with the full per-night chart. */
-  .modal { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,0.5); }
-  .modal[hidden] { display: none; }
-  .sheet { position: relative; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 20px 22px; width: min(960px, 100%); max-height: calc(100vh - 40px); overflow: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.35); }
-  .sheet h2 { margin-top: 0; }
-  .sheet p { color: var(--fg-2); max-width: 74ch; margin: 0 0 6px; }
-  .sheet .meta { color: var(--fg-3); }
+  /* The modal toolbox (.modal / .sheet / .x) is shared, in theme.css — the Conditions modal and the
+     calibration-drift zoom both use it. The Conditions modal's own content styles: */
   .sheet .cond-metric { margin-top: 22px; }
   .sheet .cond-metric h3 { margin: 0 0 4px; font-family: var(--display); font-weight: 600; font-size: 1.05rem; }
-  .sheet .x { position: absolute; top: 8px; right: 12px; border: none; background: none; color: var(--fg-3); font-size: 1.7rem; line-height: 1; cursor: pointer; padding: 2px 6px; }
-  .sheet .x:hover { color: var(--fg); }
   .tchart { overflow-x: auto; }
   .tplot { display: block; width: 100%; height: auto; min-width: 520px; }
   .tplot .grid { stroke: var(--rule); stroke-width: 1; }
@@ -83,6 +76,23 @@
 {{FEED}}
         </tbody>
       </table>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>Daily calibration drift from the calibration in use</h2>
+    <p>Per detector, each daily calibration's offset from <code>detectorMap_calib</code> over the whole run: a quartz's trace offset in x, and the nightly Neon arc's line offset in y. The shaded band is the run's own 5th-to-95th percentile, so tonight's points — larger — show whether today's set is in line with the rest of the run. A point is coloured when its own offset reaches the calibration-offset limit (WARN at 1.0 px, FAIL at 2.0 px).</p>
+    <div class="legend">
+      <span><svg width="46" height="14" aria-hidden="true"><rect x="1" y="3" width="44" height="8" rx="2" fill="var(--series-1-soft)"/><line x1="1" x2="45" y1="7" y2="7" stroke="var(--series-1)"/></svg>trace offset in x, run band and nightly trend</span>
+      <span><svg width="46" height="14" aria-hidden="true"><rect x="1" y="3" width="44" height="8" rx="2" fill="var(--series-2-soft)"/><line x1="1" x2="45" y1="7" y2="7" stroke="var(--series-2)"/></svg>Neon arc offset in y</span>
+      <span><svg width="40" height="14" aria-hidden="true"><circle cx="8" cy="7" r="1.6" fill="var(--fg-3)"/><circle cx="22" cy="7" r="3.6" fill="none" stroke="var(--fg)" stroke-width="1.4"/><circle cx="34" cy="7" r="3.2" fill="var(--fail-fill)" stroke="var(--surface)"/></svg>a visit; tonight's, ringed; WARN or FAIL, coloured</span>
+    </div>
+    <div class="driftview">
+      <input class="driftby" type="radio" name="driftby" id="drift-sm" checked>
+      <input class="driftby" type="radio" name="driftby" id="drift-arm">
+      <div class="segmented"><label for="drift-sm">By spectrograph</label><label for="drift-arm">By arm</label></div>
+      <div class="bysm">{{CALIB_DRIFT_SM}}</div>
+      <div class="byarm">{{CALIB_DRIFT_ARM}}</div>
     </div>
   </section>
 
@@ -217,6 +227,25 @@
     modal.addEventListener("click", (e) => { if (e.target === modal || e.target.closest(".x")) close(); });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !modal.hidden) close(); });
   }
+</script>
+
+<div class="modal" id="drift-zoom" hidden role="dialog" aria-modal="true" aria-label="Enlarged calibration drift chart">
+  <div class="sheet"><button type="button" class="x" aria-label="Close">&times;</button><div class="zoombody"></div></div>
+</div>
+<script>
+(function () {
+  const modal = document.getElementById("drift-zoom");
+  if (!modal) return;
+  const body = modal.querySelector(".zoombody");
+  const open = (col) => { body.innerHTML = col.outerHTML; modal.hidden = false; document.body.style.overflow = "hidden"; };
+  const close = () => { modal.hidden = true; body.innerHTML = ""; document.body.style.overflow = ""; };
+  document.addEventListener("click", (e) => {
+    const col = e.target.closest ? e.target.closest(".driftcols .driftcol") : null;
+    if (col) { open(col); return; }
+    if (e.target === modal || (e.target.closest && e.target.closest(".x"))) close();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !modal.hidden) close(); });
+})();
 </script>
 </body>
 </html>

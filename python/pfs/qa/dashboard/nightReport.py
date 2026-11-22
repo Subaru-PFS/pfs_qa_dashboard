@@ -25,9 +25,12 @@ from pfs.qa.dashboard.runReport import (
     AWAITING,
     NO_RESULT,
     Report,
+    _calibrationOffsets,
     _fontFaces,
     _tally,
     _theme,
+    calibDriftSection,
+    calibrationDrift,
     infoFromTables,
     measure,
     scienceSections,
@@ -240,6 +243,8 @@ def renderNight(
     source: str = "",
     runUrl: str = "/run",
     now: datetime | None = None,
+    calibDriftSm: str = "",
+    calibDriftArm: str = "",
     transparency: pd.DataFrame | None = None,
     seeing: pd.DataFrame | None = None,
 ) -> str:
@@ -289,6 +294,8 @@ def renderNight(
         "{{CONDITIONS_MODAL}}": condModal,
         "{{AWAITING_SECTION}}": _awaitingSection(visits),
         "{{FEED}}": _feedRows(visits),
+        "{{CALIB_DRIFT_SM}}": calibDriftSm,
+        "{{CALIB_DRIFT_ARM}}": calibDriftArm,
         "{{OFFSETS}}": offsetsHtml,
         "{{OAXIS}}": offsetAxis,
         "{{RESIDUALS}}": residualsHtml,
@@ -334,11 +341,15 @@ def buildNightReport(
         / `readSeeing` over qadb). Read for the night's visits to build the Conditions tile and modal; a read
         that fails is logged and that metric dropped, so it never blanks the page. None omits the metric.
     """
-    allImages = measure(tables)
+    offsets = _calibrationOffsets(tables)  # shared by measure (science) and calibrationDrift (calibs)
+    allImages = measure(tables, offsets=offsets)
     allVisits = visitTable(allImages, infoFromTables(tables) if info is None else info, awaiting=True)
     night = activeNight(allVisits) if night is None else night
     visits = allVisits[allVisits["night"] == night] if night else allVisits
     images = allImages[allImages["visit"].isin(set(visits["visit"]))]
+    # The drift trend is the whole run's daily calibrations, with tonight's points marked; both
+    # groupings are rendered and a toggle on the page chooses between them.
+    drift = calibrationDrift(tables, allVisits, offsets=offsets)
 
     def read(reader: Callable[[int, int], pd.DataFrame] | None, what: str) -> pd.DataFrame | None:
         if reader is None or not len(visits):
@@ -357,6 +368,8 @@ def buildNightReport(
         source=source,
         runUrl=runUrl,
         now=now,
+        calibDriftSm=calibDriftSection(drift, activeNight=night, by="spectrograph"),
+        calibDriftArm=calibDriftSection(drift, activeNight=night, by="arm"),
         transparency=read(readTransparency, "transparency"),
         seeing=read(readSeeing, "seeing"),
     )
