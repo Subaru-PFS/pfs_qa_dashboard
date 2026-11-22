@@ -36,6 +36,7 @@ def testRenderShowsGoNoGoAndMissing():
     assert "setcell miss" in html  # the missing cell
     assert "Leave out: n4 1001 (reserved RMS off)." in html  # the notes
     assert "1 no-go" in html  # the event's no-go chip
+    assert '<a href="/visit/1001">1001</a>' in html  # the visit links to its page
     # Negative control: only the one cell is no-go, not the whole grid.
     assert html.count("setcell nogo") == 1
 

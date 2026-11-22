@@ -171,10 +171,9 @@ def _renderEvent(event: CalibSet) -> str:
             title = f"{det} {int(visit)}: {value}" if value else f"{det} {int(visit)}: not exposed"
             cells.append(f"<td class='setcell {klass}' title='{html.escape(title)}'>{text}</td>")
         label = _rowLabel(row) if row is not None else ""
-        flags = sum(str(grid.at[det, visit]) == "no-go" for det in detectors if det in grid.index)
         rows.append(
-            f"<tr><th scope='row'>{int(visit)}</th><td class='l'>{label}</td>"
-            f"{''.join(cells)}<td>{flags or ''}</td></tr>"
+            f'<tr><th scope="row"><a href="/visit/{int(visit)}">{int(visit)}</a></th>'
+            f"<td class='l'>{label}</td>{''.join(cells)}</tr>"
         )
     notes = "".join(f"<li>{html.escape(line)}</li>" for line in event.notes)
     nogo = int((grid == "no-go").to_numpy().sum())
@@ -185,7 +184,7 @@ def _renderEvent(event: CalibSet) -> str:
         + "</h3>"
         "<div class='tablewrap'><table class='setgrid'><thead><tr>"
         "<th scope='col'>Visit</th><th scope='col' class='l'>Exposure</th>"
-        f"{headCells}<th scope='col'>No-go</th></tr></thead><tbody>\n"
+        f"{headCells}</tr></thead><tbody>\n"
         + "\n".join(rows)
         + "\n</tbody></table></div>"
         + (f"<ul class='setnotes'>{notes}</ul>" if notes else "")
