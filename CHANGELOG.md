@@ -8,6 +8,8 @@ or the Python API.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-22
+
 ### Added
 
 - **Detector-map residual plots on the visit page** (PIPE2D-2030): the per-visit page now shows
