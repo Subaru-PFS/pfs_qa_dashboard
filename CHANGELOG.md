@@ -7,6 +7,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-21
+
 ### Added
 
 - **AG sky transparency** on the night page: a **Conditions** tile (in place of the Science verdict tile) with
