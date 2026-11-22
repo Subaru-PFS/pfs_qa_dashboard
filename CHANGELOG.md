@@ -8,6 +8,8 @@ or the Python API.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-21
+
 ### Added
 
 - **Shaka exposures labelled** (PIPE2D-1955) — a visit taken on a one-fiber-group (shaka) design
