@@ -25,6 +25,7 @@ from pfs.qa.dashboard.runReport import (
     AWAITING,
     NO_RESULT,
     Report,
+    _calibrationOffsets,
     _fontFaces,
     _tally,
     _theme,
@@ -340,14 +341,15 @@ def buildNightReport(
         / `readSeeing` over qadb). Read for the night's visits to build the Conditions tile and modal; a read
         that fails is logged and that metric dropped, so it never blanks the page. None omits the metric.
     """
-    allImages = measure(tables)
+    offsets = _calibrationOffsets(tables)  # shared by measure (science) and calibrationDrift (calibs)
+    allImages = measure(tables, offsets=offsets)
     allVisits = visitTable(allImages, infoFromTables(tables) if info is None else info, awaiting=True)
     night = activeNight(allVisits) if night is None else night
     visits = allVisits[allVisits["night"] == night] if night else allVisits
     images = allImages[allImages["visit"].isin(set(visits["visit"]))]
     # The drift trend is the whole run's daily calibrations, with tonight's points marked; both
     # groupings are rendered and a toggle on the page chooses between them.
-    drift = calibrationDrift(tables, allVisits)
+    drift = calibrationDrift(tables, allVisits, offsets=offsets)
 
     def read(reader: Callable[[int, int], pd.DataFrame] | None, what: str) -> pd.DataFrame | None:
         if reader is None or not len(visits):

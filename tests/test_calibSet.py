@@ -75,3 +75,20 @@ def testBuildReportSurvivesACalibSetFailure(monkeypatch):
     # The section is dropped, not fatal: the rest of the page is still there.
     assert "Calibration set: go/no-go per detector" not in report.html
     assert "Every visit" in report.html
+
+
+def testEventKeySplitsSetsOnTheGap():
+    base = pd.Timestamp("2026-11-04 03:00")
+    times = pd.Series(
+        [
+            base,
+            base + pd.Timedelta(minutes=5),
+            base + pd.Timedelta(minutes=10),  # one set, taken within minutes
+            base + pd.Timedelta(hours=5),
+            base + pd.Timedelta(hours=5, minutes=5),  # a rebuild hours later: a second event
+        ]
+    )
+    assert list(calibSet._eventKey(times)) == [0, 0, 0, 1, 1]
+    # Negative control: a gap just under the threshold does not start a new event.
+    near = pd.Series([base, base + calibSet._EVENT_GAP - pd.Timedelta(minutes=1)])
+    assert list(calibSet._eventKey(near)) == [0, 0]

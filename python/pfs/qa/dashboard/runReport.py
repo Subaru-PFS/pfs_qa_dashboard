@@ -304,7 +304,11 @@ def _calibrationOffsets(tables: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     return metrics[metrics["metric"].isin(["medianDeltaX", "medianDeltaY"])].dropna(subset=["value"])
 
 
-def measure(tables: Mapping[str, pd.DataFrame], scale: pd.DataFrame | None = None) -> pd.DataFrame:
+def measure(
+    tables: Mapping[str, pd.DataFrame],
+    scale: pd.DataFrame | None = None,
+    offsets: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Return `imageTable` with what was measured on the science frames, as measured.
 
     Parameters
@@ -313,6 +317,9 @@ def measure(tables: Mapping[str, pd.DataFrame], scale: pd.DataFrame | None = Non
         From `pfs.qa.dashboard.live.readCollection`.
     scale : `pandas.DataFrame`, optional
         `kmsPerPixel`, by default.
+    offsets : `pandas.DataFrame`, optional
+        `_calibrationOffsets` of ``tables``, computed here when None; pass it to share the one read
+        with `calibrationDrift` (both filter the same table) rather than build it twice per report.
 
     Returns
     -------
@@ -328,7 +335,7 @@ def measure(tables: Mapping[str, pd.DataFrame], scale: pd.DataFrame | None = Non
     scale = scale.rename(columns={"species": "description"})[["camera", "description", "kmsPerPixel"]]
     images = imageTable(tables)
     science = images.loc[images["kind"] == "science", _KEY]
-    offsets = _calibrationOffsets(tables).merge(science, on=_KEY)
+    offsets = (_calibrationOffsets(tables) if offsets is None else offsets).merge(science, on=_KEY)
     calib = offsets[(offsets["reference"] == "calib") & offsets["statusType"].isin(["BOTH", "UNFITTED"])]
     isTrace = calib["description"] == "Trace"
     x = calib[isTrace & (calib["metric"] == "medianDeltaX")].groupby(_KEY)["value"].first()
@@ -820,7 +827,11 @@ def _driftStatus(values: pd.Series) -> pd.Series:
     return pd.Series(verdict, index=values.index).where(values.notna(), "UNKNOWN")
 
 
-def calibrationDrift(tables: Mapping[str, pd.DataFrame], visits: pd.DataFrame) -> pd.DataFrame:
+def calibrationDrift(
+    tables: Mapping[str, pd.DataFrame],
+    visits: pd.DataFrame,
+    offsets: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Return each daily-calibration image's offset from ``detectorMap_calib``, over the run.
 
     One row per calibration image and direction the ``calibOffset`` check
@@ -849,7 +860,7 @@ def calibrationDrift(tables: Mapping[str, pd.DataFrame], visits: pd.DataFrame) -
     calib = images[images["kind"].isin(_CALIB_KINDS) & (images["illumination"] == "full")]
     if calib.empty:
         return pd.DataFrame(columns=columns)
-    offsets = _calibrationOffsets(tables)
+    offsets = _calibrationOffsets(tables) if offsets is None else offsets
     offsets = offsets[(offsets["reference"] == "calib") & (offsets["statusType"] == "BOTH")]
     traces = offsets[(offsets["description"] == "Trace") & (offsets["metric"] == "medianDeltaX")]
     trace = traces.groupby(_KEY, as_index=False)["value"].first().assign(which="trace")
@@ -1215,6 +1226,8 @@ def buildReport(
     now: datetime | None = None,
     listing: pd.DataFrame | None = None,
     normalValues: pd.DataFrame | None = None,
+    readListing: Callable[[Any, Any], pd.DataFrame] | None = None,
+    readNormalValues: Callable[[], pd.DataFrame] | None = None,
 ) -> Report:
     """Return the report of what a qadb read holds: its gate verdicts, by image and visit, and the page.
 
@@ -1230,17 +1243,29 @@ def buildReport(
     listing : `pandas.DataFrame`, optional
         The run's opdb visit listing (`pfs.drp.qa.comparison.queries.readVisitListing`), for the
         calibration-set go/no-go section (`pfs.qa.dashboard.calibSet`); None omits that section, as
-        for a snapshot or when there is no opdb.
+        for a snapshot or when there is no opdb. Ignored when ``readListing`` is given.
     normalValues : `pandas.DataFrame`, optional
         The collection's normal values (`pfs.drp.qa.qadb.reader.readNormalValues`), for the set's
-        gate rule; without them the set go/no-go rests on the sequence rules alone.
+        gate rule; without them the set go/no-go rests on the sequence rules alone. Ignored when
+        ``readNormalValues`` is given.
+    readListing, readNormalValues : callable, optional
+        ``readListing(start, end)`` and ``readNormalValues()``, read **each build** so a live serve's
+        set section stays current (a later rebuild set, newly-accepted normal values) without a
+        restart; ``start``/``end`` span the run of ``info``'s visit times. When given they supersede
+        the ``listing``/``normalValues`` frames, which stay for one-shot callers (a report, the tests).
     """
-    images = measure(tables)
+    offsets = _calibrationOffsets(tables)  # shared by measure (science) and calibrationDrift (calibs)
+    images = measure(tables, offsets=offsets)
     visits = visitTable(images, infoFromTables(tables) if info is None else info)
     # The daily-calibration drift over the whole run, the last night with a calibration marked; both
     # groupings, toggled.
-    drift = calibrationDrift(tables, visits)
+    drift = calibrationDrift(tables, visits, offsets=offsets)
     latest = max((night for night in drift["night"].dropna().unique() if night), default="")
+    # A live serve passes readers so the set section is read fresh each build, not frozen at serve start.
+    if readListing is not None:
+        listing = _runListing(readListing, info)
+    if listing is not None and readNormalValues is not None:
+        normalValues = readNormalValues()
     page = renderPage(
         images,
         visits,
@@ -1271,6 +1296,16 @@ def _calibSetSection(
     except Exception:
         _log.exception("Building the calibration-set section failed; omitting it")
         return ""
+
+
+def _runListing(
+    readListing: Callable[[Any, Any], pd.DataFrame], info: pd.DataFrame | None
+) -> pd.DataFrame | None:
+    """Return ``readListing(start, end)`` over the span of ``info``'s visit times, or None when there are none."""
+    if info is None or "time" not in info.columns or not len(info):
+        return None
+    times = pd.to_datetime(info["time"]).dropna()
+    return None if times.empty else readListing(times.min(), times.max())
 
 
 def _defaultBuilder(tables: Mapping[str, pd.DataFrame], info: pd.DataFrame | None = None, **options: Any):

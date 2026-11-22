@@ -93,6 +93,16 @@ def _hst(value: Any) -> str:
     return "?" if value is None or pd.isna(value) else pd.Timestamp(value).strftime("%Y-%m-%d %H:%M")
 
 
+def _eventKey(times: pd.Series) -> pd.Series:
+    """Return a 0, 1, 2 … id per row, stepping up where the gap to the previous exposure exceeds `_EVENT_GAP`.
+
+    ``times`` must be in time order; `setVisits` sorts the set by visit id, which is chronological, so a
+    rebuild set hours after the run-start set starts a new id and the two are reported as separate events.
+    """
+    times = pd.to_datetime(times)
+    return (times - times.shift()).gt(_EVENT_GAP).fillna(False).cumsum()
+
+
 def calibSetEvents(
     listing: pd.DataFrame,
     tables: Mapping[str, pd.DataFrame],
@@ -127,8 +137,7 @@ def calibSetEvents(
     # so this matches `calib inputs` and avoids judging a degenerate per-event subset. Slice per event.
     species = speciesTable(allSet, lines)
     judged = _judgeSet(allSet, iq, lines, reduction, normalValues)
-    times = pd.to_datetime(allSet["time_exp_start"])
-    event = (times - times.shift()).gt(_EVENT_GAP).fillna(False).cumsum()
+    event = _eventKey(allSet["time_exp_start"])
     events: list[CalibSet] = []
     for _, ofEvent in allSet.groupby(event, sort=True):
         ofEvent = ofEvent.sort_values("visit")

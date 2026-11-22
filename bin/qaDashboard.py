@@ -156,24 +156,50 @@ def reportOptions(args: argparse.Namespace, source: str) -> dict:
     return {"title": args.title, "source": source}
 
 
-def calibSetInputs(opdb, qadb, collection, times):
-    """Return ``(listing, normalValues)`` for the run report's calibration-set section, or ``(None, None)``.
+def runWindow(start, end):
+    """Return the observing period(s) overlapping ``[start, end]``, else ``[start, end]`` padded a day.
 
-    The opdb visit listing is read over the span of ``times`` (the collection's visit times, HST), padded a
-    day each side so a set at a run's edge is covered; the normal values come from qadb. No opdb, no
-    collection or no times gives ``(None, None)``, so `buildReport` omits the section.
+    The calibration-set listing is read over this so `classifyVisits` sees the whole run (``daily`` needs a
+    sequence to recur on several nights); a narrow visit range would otherwise misclassify the set.
     """
     import pandas as pd
 
-    if opdb is None or not collection or times is None or len(times) == 0:
-        return None, None
+    from pfs.drp.qa.comparison.runs import loadPeriods
+
+    periods = [p for p in loadPeriods().values() if p.start <= end and p.end >= start]
+    if periods:
+        return min(p.start for p in periods), max(p.end for p in periods)
+    return start - pd.Timedelta(days=1), end + pd.Timedelta(days=1)
+
+
+def readRunListing(opdb, times):
+    """Return the opdb visit listing over the run of ``times`` (HST), or None when there is no opdb or no time."""
+    import pandas as pd
+
+    if opdb is None or times is None or len(times) == 0:
+        return None
     span = pd.to_datetime(pd.Series(list(times))).dropna()
     if span.empty:
-        return None, None
+        return None
     from pfs.drp.qa.comparison.queries import readVisitListing
+
+    return readVisitListing(opdb, *runWindow(span.min(), span.max()))
+
+
+def calibSetInputs(opdb, qadb, collection, times):
+    """Return ``(listing, normalValues)`` for the run report's calibration-set section, or ``(None, None)``.
+
+    The opdb visit listing covers the run (`runWindow`); the normal values come from qadb. No opdb, no
+    collection or no times gives ``(None, None)``, so `buildReport` omits the section. One-shot (`report`);
+    `serve` reads them per build instead, so the section stays current.
+    """
+    if opdb is None or not collection:
+        return None, None
+    listing = readRunListing(opdb, times)
+    if listing is None:
+        return None, None
     from pfs.drp.qa.qadb.reader import readNormalValues
 
-    listing = readVisitListing(opdb, span.min() - pd.Timedelta(days=1), span.max() + pd.Timedelta(days=1))
     return listing, readNormalValues(qadb, collection)
 
 
@@ -191,15 +217,15 @@ def pages(
     source: str,
     readTransparency=None,
     readSeeing=None,
-    listing=None,
-    normalValues=None,
+    readListing=None,
+    readNormalValues=None,
 ) -> dict:
     """Return the pages a `ReportCache` builds: the night page (``/``) and the run report (``/run``).
 
     ``readTransparency(first, last)`` and ``readSeeing(first, last)`` read the night's AG transparency and
     seeing from qadb for the night page's Conditions tile; None (a snapshot, or no live qadb) omits that metric.
-    ``listing`` (the opdb visit listing) and ``normalValues`` feed the run report's calibration-set section;
-    None omits it (`calibSetInputs`).
+    ``readListing(start, end)`` and ``readNormalValues()`` feed the run report's calibration-set section, read
+    each build so it stays current; None omits it.
     """
     from pfs.qa.dashboard.nightReport import buildNightReport
     from pfs.qa.dashboard.runReport import buildReport
@@ -217,7 +243,12 @@ def pages(
         ),
         "report": (
             buildReport,
-            {"title": args.title, "source": source, "listing": listing, "normalValues": normalValues},
+            {
+                "title": args.title,
+                "source": source,
+                "readListing": readListing,
+                "readNormalValues": readNormalValues,
+            },
         ),
     }
 
@@ -236,6 +267,8 @@ def serve(args: argparse.Namespace) -> None:
     from pfs.qa.dashboard.visitPage import buildVisitPage
 
     if args.collection:
+        from pfs.drp.qa.comparison.queries import readVisitListing
+        from pfs.drp.qa.qadb.reader import readNormalValues as readNormalValuesDb
         from pfs.qa.dashboard.agConditions import readSeeing as readSeeingDb
         from pfs.qa.dashboard.agConditions import readTransparency as readTransparencyDb
 
@@ -245,7 +278,13 @@ def serve(args: argparse.Namespace) -> None:
         readInfo = None if opdb is None else (lambda first, last: readVisitInfo(opdb, first, last))
         readTransparency = lambda first, last: readTransparencyDb(qadb, first, last)  # noqa: E731
         readSeeing = lambda first, last: readSeeingDb(qadb, first, last)  # noqa: E731
-        listing, normalValues = calibSetInputs(opdb, qadb, args.collection, store.times.get("time"))
+        # Read the set's inputs each build (not frozen at serve start), so a later rebuild set or
+        # newly-accepted normal values appear without a restart.
+        readListing = (
+            None if opdb is None else (lambda start, end: readVisitListing(opdb, *runWindow(start, end)))
+        )
+        # The set section needs the opdb listing, so without an opdb neither reader is used.
+        readNormalValues = None if opdb is None else (lambda: readNormalValuesDb(qadb, args.collection))
         cache = ReportCache(
             store,
             readInfo,
@@ -255,8 +294,8 @@ def serve(args: argparse.Namespace) -> None:
                 sourceText(args.collection, opdb is not None),
                 readTransparency,
                 readSeeing,
-                listing,
-                normalValues,
+                readListing,
+                readNormalValues,
             ),
         )
         cache.update()
