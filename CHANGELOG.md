@@ -23,6 +23,13 @@ or the Python API.
   (`.modal`/`.sheet`, shared with the Conditions modal), so a shift common to the group reads at a glance.
   All drift data is read from qadb (`dm_line_residual_qa_metric`, written by the actor's per-visit load); the
   page judges nothing.
+- **Calibration-set go/no-go** (PIPE2D-1986): the run report adds a section judging each of a run's
+  set-building events per detector — a go/no-go grid (the set's exposures down, the 16 detectors across: go,
+  no-go, exposed-but-not-measured, not-exposed) with the leave-out and lamp-trend notes. It reuses
+  `drpQa.py calib inputs`' stack-free judging (`pfs.drp.qa.comparison.calibInputs`), fed from the opdb visit
+  listing and qadb (the measured numbers and the collection's normal values); the gate rule needs the normal
+  values and the reserved-RMS rule needs `reductionStats`, so a sparse run shows mostly go and missing. The
+  section is omitted for a snapshot or when there is no opdb.
 - `serve --debug`: restart the server when the dashboard's code or its `data/` assets (CSS, HTML, fonts)
   change (Tornado's autoreload). Unlike `--refresh`, which reloads the data, this reloads the code; a
   restart re-reads the databases, so it pairs with `serve --snapshot` for the dev loop.

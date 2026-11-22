@@ -1028,6 +1028,7 @@ def renderPage(
     now: datetime | None = None,
     calibDriftSm: str = "",
     calibDriftArm: str = "",
+    calibSet: str = "",
 ) -> str:
     """Return the report as one HTML document, with its styles, charts and script inline.
 
@@ -1167,6 +1168,7 @@ def renderPage(
         "{{TITLE}}": html.escape(title),
         "{{FONT_FACES}}": _fontFaces(),
         "{{SUMMARY}}": "\n".join(summary),
+        "{{CALIB_SET}}": calibSet,
         "{{CALIB_DRIFT_SM}}": calibDriftSm,
         "{{CALIB_DRIFT_ARM}}": calibDriftArm,
         "{{OFFSETS}}": offsetsHtml,
@@ -1211,6 +1213,8 @@ def buildReport(
     title: str = "Visit verdicts",
     source: str = "",
     now: datetime | None = None,
+    listing: pd.DataFrame | None = None,
+    normalValues: pd.DataFrame | None = None,
 ) -> Report:
     """Return the report of what a qadb read holds: its gate verdicts, by image and visit, and the page.
 
@@ -1223,6 +1227,13 @@ def buildReport(
         `infoFromTables` when None.
     title, source, now
         As `renderPage` takes them.
+    listing : `pandas.DataFrame`, optional
+        The run's opdb visit listing (`pfs.drp.qa.comparison.queries.readVisitListing`), for the
+        calibration-set go/no-go section (`pfs.qa.dashboard.calibSet`); None omits that section, as
+        for a snapshot or when there is no opdb.
+    normalValues : `pandas.DataFrame`, optional
+        The collection's normal values (`pfs.drp.qa.qadb.reader.readNormalValues`), for the set's
+        gate rule; without them the set go/no-go rests on the sequence rules alone.
     """
     images = measure(tables)
     visits = visitTable(images, infoFromTables(tables) if info is None else info)
@@ -1238,8 +1249,28 @@ def buildReport(
         now=now,
         calibDriftSm=calibDriftSection(drift, activeNight=latest, by="spectrograph", highlight="latest"),
         calibDriftArm=calibDriftSection(drift, activeNight=latest, by="arm", highlight="latest"),
+        calibSet=_calibSetSection(listing, tables, normalValues),
     )
     return Report(images, visits, page)
+
+
+def _calibSetSection(
+    listing: pd.DataFrame | None, tables: Mapping[str, pd.DataFrame], normalValues: pd.DataFrame | None
+) -> str:
+    """Return the calibration-set go/no-go section, or ``""`` when there is no opdb listing or on failure.
+
+    Imported lazily (it pulls in ``pfs.drp.qa.comparison``); a failure is logged and the section omitted,
+    so it never blanks the page.
+    """
+    if listing is None:
+        return ""
+    try:
+        from pfs.qa.dashboard.calibSet import calibSetEvents, renderCalibSet
+
+        return renderCalibSet(calibSetEvents(listing, tables, normalValues))
+    except Exception:
+        _log.exception("Building the calibration-set section failed; omitting it")
+        return ""
 
 
 def _defaultBuilder(tables: Mapping[str, pd.DataFrame], info: pd.DataFrame | None = None, **options: Any):

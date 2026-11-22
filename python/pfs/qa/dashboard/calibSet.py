@@ -174,5 +174,17 @@ def _renderEvent(event: CalibSet) -> str:
 
 
 def renderCalibSet(events: list[CalibSet]) -> str:
-    """Return the calibration-set section's body: each set event's go/no-go grid and notes."""
-    return "\n".join(_renderEvent(event) for event in events) if events else ""
+    """Return the whole calibration-set section (heading and each event's go/no-go grid), or ``""`` when none."""
+    if not events:
+        return ""
+    body = "\n".join(_renderEvent(event) for event in events)
+    return (
+        '  <section class="block">\n'
+        "    <h2>Calibration set: go/no-go per detector</h2>\n"
+        "    <p>Each of the run's set-building events, judged per detector image, reusing "
+        "<code>calib inputs</code>. A green cell is go, a red cell a detector to leave out of that exposure's "
+        "inputs, a dot exposed but not measured, blank not exposed. The gate rule needs the collection's normal "
+        "values and the reserved-RMS rule needs <code>reductionStats</code>, so a sparse run shows mostly go "
+        "and missing.</p>\n"
+        f"{body}\n  </section>"
+    )
