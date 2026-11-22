@@ -26,6 +26,8 @@ from pfs.qa.dashboard.runReport import (
     _fontFaces,
     _tally,
     _theme,
+    calibDriftSection,
+    calibrationDrift,
     infoFromTables,
     measure,
     scienceSections,
@@ -236,6 +238,8 @@ def renderNight(
     source: str = "",
     runUrl: str = "/run",
     now: datetime | None = None,
+    calibDriftSm: str = "",
+    calibDriftArm: str = "",
 ) -> str:
     """Return the night page as one stand-alone HTML document.
 
@@ -276,6 +280,8 @@ def renderNight(
         "{{LEAD}}": lead,
         "{{AWAITING_SECTION}}": _awaitingSection(visits),
         "{{FEED}}": _feedRows(visits),
+        "{{CALIB_DRIFT_SM}}": calibDriftSm,
+        "{{CALIB_DRIFT_ARM}}": calibDriftArm,
         "{{OFFSETS}}": offsetsHtml,
         "{{OAXIS}}": offsetAxis,
         "{{RESIDUALS}}": residualsHtml,
@@ -320,5 +326,18 @@ def buildNightReport(
     night = activeNight(allVisits) if night is None else night
     visits = allVisits[allVisits["night"] == night] if night else allVisits
     images = allImages[allImages["visit"].isin(set(visits["visit"]))]
-    page = renderNight(visits, images, night, title=title, source=source, runUrl=runUrl, now=now)
+    # The drift trend is the whole run's daily calibrations, with tonight's points marked; both
+    # groupings are rendered and a toggle on the page chooses between them.
+    drift = calibrationDrift(tables, allVisits)
+    page = renderNight(
+        visits,
+        images,
+        night,
+        title=title,
+        source=source,
+        runUrl=runUrl,
+        now=now,
+        calibDriftSm=calibDriftSection(drift, activeNight=night, by="spectrograph"),
+        calibDriftArm=calibDriftSection(drift, activeNight=night, by="arm"),
+    )
     return Report(images, visits, page)

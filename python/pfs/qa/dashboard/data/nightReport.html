@@ -61,6 +61,23 @@
   </section>
 
   <section class="block">
+    <h2>Daily calibration drift from the calibration in use</h2>
+    <p>Per detector, each daily calibration's offset from <code>detectorMap_calib</code> over the whole run: a quartz's trace offset in x, and the nightly Neon arc's line offset in y. The shaded band is the run's own 5th-to-95th percentile, so tonight's points — larger — show whether today's set is in line with the rest of the run. A point is coloured when its own offset reaches the calibration-offset limit (WARN at 1.0 px, FAIL at 2.0 px).</p>
+    <div class="legend">
+      <span><svg width="46" height="14" aria-hidden="true"><rect x="1" y="3" width="44" height="8" rx="2" fill="var(--series-1-soft)"/><line x1="1" x2="45" y1="7" y2="7" stroke="var(--series-1)"/></svg>trace offset in x, run band and nightly trend</span>
+      <span><svg width="46" height="14" aria-hidden="true"><rect x="1" y="3" width="44" height="8" rx="2" fill="var(--series-2-soft)"/><line x1="1" x2="45" y1="7" y2="7" stroke="var(--series-2)"/></svg>Neon arc offset in y</span>
+      <span><svg width="40" height="14" aria-hidden="true"><circle cx="8" cy="7" r="1.6" fill="var(--fg-3)"/><circle cx="22" cy="7" r="3.6" fill="none" stroke="var(--fg)" stroke-width="1.4"/><circle cx="34" cy="7" r="3.2" fill="var(--fail-fill)" stroke="var(--surface)"/></svg>a visit; tonight's, ringed; WARN or FAIL, coloured</span>
+    </div>
+    <div class="driftview">
+      <input class="driftby" type="radio" name="driftby" id="drift-sm" checked>
+      <input class="driftby" type="radio" name="driftby" id="drift-arm">
+      <div class="segmented"><label for="drift-sm">By spectrograph</label><label for="drift-arm">By arm</label></div>
+      <div class="bysm">{{CALIB_DRIFT_SM}}</div>
+      <div class="byarm">{{CALIB_DRIFT_ARM}}</div>
+    </div>
+  </section>
+
+  <section class="block">
     <h2>Science frames tonight: offsets from the calibration</h2>
     <p>Per detector, over the night's science frames. The x offset is the median offset of every fiber's trace from the calibration; the y offset is that of the sky lines, taking the species furthest off on each image. Values are as measured; the dashed lines are the gate's WARN limit either side.</p>
     <div class="legend">

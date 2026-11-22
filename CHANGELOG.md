@@ -7,6 +7,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Daily calibration drift** (PIPE2D-1986): a new section on the night page and the run report showing each
+  daily calibration's offset from `detectorMap_calib` over the whole run — a quartz's trace offset in x and the
+  nightly Neon arc's line offset in y — per detector, with the run's own 5th-to-95th-percentile band, the nightly
+  trend, and the night-date axis. The most recent night's points are marked, so today's set can be read against
+  the rest of the run. A point is coloured when its own offset reaches the `calibOffset` limit (WARN 1.0 px, FAIL
+  2.0 px), independent of the image's overall gate verdict. The charts are stacked into **columns on a shared time
+  axis** and a toggle groups them **by spectrograph** (a shift common to a whole unit, or one detector drifting
+  alone, reads down the column) or **by arm** (the same detector across the four spectrographs). All drift data is
+  read from qadb (`dm_line_residual_qa_metric`, written by the actor's per-visit load); the page judges nothing.
+
 ## [0.8.0] - 2026-11-21
 
 ### Added

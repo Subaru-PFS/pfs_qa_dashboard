@@ -52,6 +52,8 @@ __all__ = [
     "Report",
     "ReportCache",
     "buildReport",
+    "calibDriftSection",
+    "calibrationDrift",
     "checkNotes",
     "imageTable",
     "infoFromTables",
@@ -782,12 +784,250 @@ def scienceSections(science: pd.DataFrame) -> tuple[str, str, str]:
     return "\n".join(offsetRows), offsetAxis, "\n".join(residualRows)
 
 
+#: The gate check the daily-calibration drift is judged against (its WARN/FAIL set the chart's limit lines).
+_CALIB_CHECK = CHECKS["calibOffset"]
+
+#: The daily calibrations the drift trend covers: full-slit arcs and quartz (traces). Engineering-fiber
+#: frames (lit through the IIS) are a different check and are left out.
+_CALIB_KINDS = ("arc", "quartz")
+
+#: The arc species the nightly y offset is taken on when it is measured: the nightly arc is Neon.
+_NEON = "NeI"
+
+#: The drift chart's layout, in SVG viewBox units (each chart scales to fill its panel's width).
+_DW, _GUT, _PADR = 460, 42, 10  # viewBox width, left gutter for the y labels, right padding
+_TRACK, _GAP, _TOP, _AXIS = 56, 16, 10, 20  # track height, gap between the two tracks, top padding, x axis
+
+
+def _arcYOffset(arcs: pd.DataFrame) -> pd.DataFrame:
+    """Return the nightly arc's y offset per image: the Neon (``NeI``) lines only.
+
+    The daily arc is ``Arc: Neon``; Neon is in every arm and is the consistent
+    nightly signal. A calibration set's other lamps (taken on the set's nights)
+    are judged for the set go/no-go, not shown as nightly drift, so an arc image
+    with no Neon lines contributes no point here.
+    """
+    neon = arcs[arcs["description"] == _NEON]
+    return neon.groupby(_KEY, as_index=False)["value"].first()[[*_KEY, "value"]]
+
+
+def _driftStatus(values: pd.Series) -> pd.Series:
+    """Return each offset's verdict against the ``calibOffset`` check's own limits (absolute, px)."""
+    magnitude = values.abs()
+    verdict = np.where(
+        magnitude >= _CALIB_CHECK.fail, "FAIL", np.where(magnitude >= _CALIB_CHECK.warn, "WARN", "PASS")
+    )
+    return pd.Series(verdict, index=values.index).where(values.notna(), "UNKNOWN")
+
+
+def calibrationDrift(tables: Mapping[str, pd.DataFrame], visits: pd.DataFrame) -> pd.DataFrame:
+    """Return each daily-calibration image's offset from ``detectorMap_calib``, over the run.
+
+    One row per calibration image and direction the ``calibOffset`` check
+    judges: a quartz's trace offset in x (``medianDeltaX`` of ``Trace``) and an
+    arc's line offset in y (``medianDeltaY``, the lamp's own species — Neon by
+    default, else the species furthest off). Full-slit arcs and quartz only
+    (the daily calibrations); engineering-fiber frames are left out.
+
+    Parameters
+    ----------
+    tables : mapping
+        From `pfs.qa.dashboard.live.readCollection`.
+    visits : `pandas.DataFrame`
+        `visitTable`, for each visit's ``time`` and ``night`` (HST evening date).
+
+    Returns
+    -------
+    `pandas.DataFrame`
+        ``visit``, ``camera``, ``arm``, ``spectrograph``, ``kind``, ``status``
+        (the image's gate verdict), ``which`` (``trace`` or ``arc``), ``value``
+        (the offset, px, signed), ``time`` and ``night``. Empty when the read
+        holds no daily calibration.
+    """
+    columns = [*_IMAGE, "camera", "kind", "status", "which", "value", "time", "night"]
+    images = imageTable(tables)
+    calib = images[images["kind"].isin(_CALIB_KINDS) & (images["illumination"] == "full")]
+    if calib.empty:
+        return pd.DataFrame(columns=columns)
+    offsets = _calibrationOffsets(tables)
+    offsets = offsets[(offsets["reference"] == "calib") & (offsets["statusType"] == "BOTH")]
+    traces = offsets[(offsets["description"] == "Trace") & (offsets["metric"] == "medianDeltaX")]
+    trace = traces.groupby(_KEY, as_index=False)["value"].first().assign(which="trace")
+    arcs = offsets[(offsets["metric"] == "medianDeltaY") & (offsets["description"] != "Trace")]
+    arc = _arcYOffset(arcs).assign(which="arc")
+    drift = pd.concat([trace, arc], ignore_index=True)
+    drift = drift.merge(calib[[*_IMAGE, "camera", "kind"]], on=_KEY, how="inner")
+    drift = drift.merge(visits[["visit", "time", "night"]].drop_duplicates("visit"), on="visit", how="left")
+    # The chart's verdict is the drift's own: this offset against the calibOffset limits, not the image's
+    # overall gate verdict (which can fail on an unrelated check, e.g. lines per fiber).
+    drift["status"] = _driftStatus(drift["value"])
+    return drift.reindex(columns=columns).sort_values([*_KEY, "which"], ignore_index=True)
+
+
+def _driftTrack(
+    points: pd.DataFrame, cls: str, label: str, xt: Callable[[Any], float], y0: int, activeNight: str
+) -> str:
+    """Draw one detector-and-direction track into a chart: the run band, its median, the zero line, a dot per visit.
+
+    ``points`` is one camera and direction of `calibrationDrift`. The y scale is
+    the run's own spread (so drift is visible), centred on zero and labelled at
+    its ends. Tonight's points (``night == activeNight``) are larger and ringed;
+    WARN/FAIL points take the gate's colour.
+    """
+    x0, x1 = _GUT, _DW - _PADR
+    values = points["value"].dropna()
+    if values.empty:
+        return (
+            f'<text class="tlab {cls}" x="{x0 + 2}" y="{y0 + 11}">{label}</text>'
+            f'<text class="ylab" x="{_GUT - 6}" y="{y0 + _TRACK / 2 + 3}">none</text>'
+        )
+    span = max(values.abs().quantile(0.95), 0.08) * 1.25
+    low, high = -span, span
+
+    def ys(value: float) -> float:
+        return round(y0 + _TRACK - 3 - (_clip(value, low, high) - low) / (high - low) * (_TRACK - 6), 1)
+
+    p5, p95, median = values.quantile(0.05), values.quantile(0.95), values.median()
+    parts = [
+        f'<rect class="plot" x="{x0}" y="{y0}" width="{x1 - x0}" height="{_TRACK}"/>',
+        f'<rect class="band {cls}" x="{x0}" y="{ys(p95)}" width="{x1 - x0}" height="{max(ys(p5) - ys(p95), 1)}"/>',
+        f'<line class="zero" x1="{x0}" x2="{x1}" y1="{ys(0)}" y2="{ys(0)}"/>',
+        f'<line class="med {cls}" x1="{x0}" x2="{x1}" y1="{ys(median)}" y2="{ys(median)}"/>',
+        f'<text class="tlab {cls}" x="{x0 + 3}" y="{y0 + 11}">{label}</text>',
+        f'<text class="ylab" x="{_GUT - 6}" y="{ys(high) + 3}">{high:+.2f}</text>',
+        f'<text class="ylab zero" x="{_GUT - 6}" y="{ys(0) + 3}">0</text>',
+        f'<text class="ylab" x="{_GUT - 6}" y="{ys(low) + 3}">{low:+.2f}</text>',
+    ]
+    # The nightly median, drawn as a line through the nights, to show the trajectory.
+    nightly = points.dropna(subset=["time"]).groupby("night", sort=True)
+    trail = [(xt(group["time"].median()), ys(group["value"].median())) for night, group in nightly if night]
+    if len(trail) > 1:
+        parts.append(f'<polyline class="trail {cls}" points="{" ".join(f"{x},{y}" for x, y in trail)}"/>')
+    order = points["status"].map({"WARN": 1, "FAIL": 2}).fillna(0)
+    for row in points.iloc[np.argsort(order.to_numpy(), kind="stable")].itertuples():
+        if pd.isna(row.value) or pd.isna(row.time):
+            continue
+        active = bool(activeNight) and row.night == activeNight
+        status = row.status if row.status in ("WARN", "FAIL") else ""
+        night = html.escape(str(row.night)) if row.night else "?"
+        title = (
+            f"Visit {row.visit} {row.camera}, {night}: {row.value:+.2f} px{f', {status}' if status else ''}"
+        )
+        klass = "dot" + (f" {status.lower()}" if status else "") + (" today" if active else "")
+        radius = 4.2 if active else (3.6 if status else 2.4)
+        parts.append(
+            f'<circle class="{klass}" cx="{xt(row.time)}" cy="{ys(row.value)}" r="{radius}">'
+            f"<title>{title}</title></circle>"
+        )
+    return "".join(parts)
+
+
+def _dateAxis(t0: Any, t1: Any, y: float) -> str:
+    """Draw the chart's x axis: a line and up to five night-date ticks (HST, ``MM-DD``)."""
+    if pd.isna(t0) or pd.isna(t1):
+        return ""
+    x0, x1 = _GUT, _DW - _PADR
+    out = [f'<line class="xaxis" x1="{x0}" x2="{x1}" y1="{y - 12}" y2="{y - 12}"/>']
+    for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
+        x = round(x0 + frac * (x1 - x0), 1)
+        when = t0 if t1 == t0 else t0 + (t1 - t0) * frac
+        anchor = "start" if frac == 0 else "end" if frac == 1 else "middle"
+        out.append(
+            f'<text class="xlab" x="{x}" y="{y}" text-anchor="{anchor}">{pd.Timestamp(when):%m-%d}</text>'
+        )
+    return "".join(out)
+
+
+def _driftPanel(
+    camera: str, group: pd.DataFrame, t0: Any, t1: Any, activeNight: str, highlight: str = "tonight"
+) -> str:
+    """Return one detector's drift chart: a wide two-track timeline with its own y and night-date axes."""
+    x0, x1 = _GUT, _DW - _PADR
+    height = _TOP + 2 * _TRACK + _GAP + _AXIS
+
+    def xt(time: Any) -> float:
+        if pd.isna(time) or pd.isna(t0) or t1 == t0:
+            return (x0 + x1) / 2
+        return round(x0 + 2 + (time - t0) / (t1 - t0) * (x1 - x0 - 4), 1)
+
+    trace = group[group["which"] == "trace"]
+    arc = group[group["which"] == "arc"]
+    svg = (
+        f'<svg class="drift" viewBox="0 0 {_DW} {height}" preserveAspectRatio="xMidYMid meet" '
+        f'role="img" aria-label="{camera}: offset from the calibration over the run">'
+        + _driftTrack(trace, "rng", "trace x", xt, _TOP, activeNight)
+        + _driftTrack(arc, "rng2", "Neon y", xt, _TOP + _TRACK + _GAP, activeNight)
+        + _dateAxis(t0, t1, height - 6)
+        + "</svg>"
+    )
+    marked = group[group["night"] == activeNight] if activeNight else group.iloc[:0]
+    caption = f"<b>{camera}</b>{_highlightNote(marked, highlight)}"
+    return f'<figure class="panel"><figcaption>{caption}</figcaption>{svg}</figure>'
+
+
+def _highlightNote(marked: pd.DataFrame, highlight: str) -> str:
+    """Return a detector panel's note for the highlighted night: its trace/arc medians, flagged if over limit."""
+    if marked.empty:
+        return f"<span class='sub'>no calibration {highlight}</span>"
+    out = []
+    for which, label in (("trace", "x"), ("arc", "y")):
+        values = marked.loc[marked["which"] == which, "value"].dropna()
+        if values.empty:
+            continue
+        status = worst(marked.loc[marked["which"] == which, "status"])
+        chip = f" <span class='chip {status.lower()}'>{status}</span>" if status in ("WARN", "FAIL") else ""
+        out.append(f"{label} {values.median():+.2f}{chip}")
+    return f"<span class='sub'>{highlight} {' · '.join(out)}</span>" if out else ""
+
+
+def calibDriftSection(
+    drift: pd.DataFrame, activeNight: str = "", by: str = "spectrograph", highlight: str = "tonight"
+) -> str:
+    """Return the daily-calibration drift charts: columns of per-detector timelines, stacked in time.
+
+    Shared by the run report and the night page. ``drift`` is `calibrationDrift`;
+    each detector gets a wide two-track chart (trace offset in x, Neon-arc offset
+    in y) of its offset from the calibration over the run, with the run's band and
+    tonight's points marked, so today's set can be read against the rest of the run.
+
+    Each group is a **column** of its detectors' charts, stacked on a shared time
+    axis so the visits line up vertically and a time-based drift across the column
+    is easy to read. ``by`` chooses the column: by ``spectrograph`` (the default —
+    a column is one unit's arms, so a shift common to the whole spectrograph, or
+    one detector drifting alone, stands out down the column), or by ``arm`` (a
+    column is the same detector across the four spectrographs).
+    """
+    if drift.empty:
+        return ""
+    t0, t1 = drift["time"].min(), drift["time"].max()
+    if by == "arm":
+        columns = [(f"{arm} arm", drift[drift["arm"] == arm]) for arm in ARMS]
+    else:
+        columns = [
+            (f"Spectrograph {sm}", drift[drift["spectrograph"] == sm])
+            for sm in sorted(drift["spectrograph"].dropna().unique())
+        ]
+    out = []
+    for heading, ofColumn in columns:
+        if ofColumn.empty:
+            continue
+        cameras = sorted(ofColumn["camera"].unique(), key=lambda c: (ARMS.find(c[0]) % 9, int(c[1:])))
+        panels = "".join(
+            _driftPanel(camera, ofColumn[ofColumn["camera"] == camera], t0, t1, activeNight, highlight)
+            for camera in cameras
+        )
+        out.append(f'<div class="driftcol"><h3 class="colhead">{heading}</h3>{panels}</div>')
+    return f'<div class="driftcols">{"".join(out)}</div>' if out else ""
+
+
 def renderPage(
     images: pd.DataFrame,
     visits: pd.DataFrame,
     title: str = "Visit verdicts",
     source: str = "",
     now: datetime | None = None,
+    calibDriftSm: str = "",
+    calibDriftArm: str = "",
 ) -> str:
     """Return the report as one HTML document, with its styles, charts and script inline.
 
@@ -927,6 +1167,8 @@ def renderPage(
         "{{TITLE}}": html.escape(title),
         "{{FONT_FACES}}": _fontFaces(),
         "{{SUMMARY}}": "\n".join(summary),
+        "{{CALIB_DRIFT_SM}}": calibDriftSm,
+        "{{CALIB_DRIFT_ARM}}": calibDriftArm,
         "{{OFFSETS}}": offsetsHtml,
         "{{RESIDUALS}}": residualsHtml,
         "{{OAXIS}}": offsetAxis,
@@ -984,7 +1226,20 @@ def buildReport(
     """
     images = measure(tables)
     visits = visitTable(images, infoFromTables(tables) if info is None else info)
-    return Report(images, visits, renderPage(images, visits, title=title, source=source, now=now))
+    # The daily-calibration drift over the whole run, the last night with a calibration marked; both
+    # groupings, toggled.
+    drift = calibrationDrift(tables, visits)
+    latest = max((night for night in drift["night"].dropna().unique() if night), default="")
+    page = renderPage(
+        images,
+        visits,
+        title=title,
+        source=source,
+        now=now,
+        calibDriftSm=calibDriftSection(drift, activeNight=latest, by="spectrograph", highlight="latest"),
+        calibDriftArm=calibDriftSection(drift, activeNight=latest, by="arm", highlight="latest"),
+    )
+    return Report(images, visits, page)
 
 
 def _defaultBuilder(tables: Mapping[str, pd.DataFrame], info: pd.DataFrame | None = None, **options: Any):
