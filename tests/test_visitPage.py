@@ -76,6 +76,8 @@ def testVisitPageShowsResidualPlotsWhenServed():
     plain = buildVisitPage(tables, None, 7)
     assert "DetectorMap line residuals" not in plain
     assert "line-residual plots are not yet shown" in plain
+    # Negative control: the lightbox overlay and its script never leak onto a page without the plots.
+    assert "id='lightbox'" not in plain and "<script" not in plain
 
     page = buildVisitPage(tables, None, 7, residuals=True)
     assert "DetectorMap line residuals" in page

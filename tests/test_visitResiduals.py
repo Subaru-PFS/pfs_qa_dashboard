@@ -75,6 +75,14 @@ def testLimitsByFrameType():
     assert arc["dx"] != residualLimits(SCIENCE, "r", dyKms=True)["dx"]
     # A frame type no residual check applies to gets no bands at all.
     assert residualLimits(TWILIGHT, "r", dyKms=True) == {}
+    # An unknown frame type (no gate row) has no matching check either, so no bands.
+    assert residualLimits(None, "r", dyKms=True) == {}
+
+
+def testImagesPlaceholderForEmptyData():
+    # An empty DataFrame (not just None) is also "no data" and gets the placeholder, not an exception.
+    images = ResidualImages(lambda v, a, s: pd.DataFrame(), lambda v: {"r1": SCIENCE})
+    assert images.png(42, "r1")[:4] == b"\x89PNG"
 
 
 def testRenderResidualMakesAPng():

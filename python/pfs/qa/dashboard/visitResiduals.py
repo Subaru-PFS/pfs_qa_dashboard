@@ -1,6 +1,6 @@
 """Detector-map line-residual plots for the per-visit page, rendered on demand.
 
-`pfs.drp.qa.plotting.dmResiduals.plotDetectorResiduals` (PIPE2D-1920) draws one
+`pfs.drp.qa.plotting.dmResiduals.plotDetectorResiduals` draws one
 detector's line residuals from ``dmLineResidualData``: the per-line rows the
 reduction stores and the pipeline no longer renders. qadb keeps only the
 summary and metrics, not those per-line rows, so the plot's data lives in the
@@ -37,6 +37,10 @@ _DPI = 96
 
 #: The km/s columns `plotDetectorResiduals` needs for a km/s Δy trend (else it falls back to pixels).
 _KMS_COLUMNS = {"dyKmsCalib", "dyKmsVisit"}
+
+#: Serialises matplotlib rendering across the server's threads: matplotlib is not thread-safe, so two
+#: renders at once could corrupt a figure. The Butler read (its own lock) and the event loop stay parallel.
+_RENDER_LOCK = threading.Lock()
 
 
 def _fixedLimit(
@@ -99,12 +103,13 @@ def renderResidual(
     # Imported here, not at module scope: it pulls matplotlib and seaborn, needed only when rendering.
     from pfs.drp.qa.plotting.dmResiduals import plotDetectorResiduals
 
-    fig = plotDetectorResiduals(data, title=title, limits=dict(limits) if limits else None)
     buffer = io.BytesIO()
     # Exactly the figure's 15×8 inches (no tight bbox), so the page can reserve the box with a 15/8
     # aspect-ratio and show a loader without the layout shifting when the image arrives. The figure is a
     # bare matplotlib.figure.Figure (no pyplot state), so it is freed when it goes out of scope.
-    fig.savefig(buffer, format="png", dpi=_DPI)
+    with _RENDER_LOCK:
+        fig = plotDetectorResiduals(data, title=title, limits=dict(limits) if limits else None)
+        fig.savefig(buffer, format="png", dpi=_DPI)
     return buffer.getvalue()
 
 
@@ -113,12 +118,13 @@ def _placeholder(text: str) -> bytes:
     from matplotlib.figure import Figure
 
     # The plot's 15:8 shape, so it fills the page's aspect-ratio box and covers the loading spinner.
-    fig = Figure(figsize=(7.5, 4))
-    ax = fig.add_subplot(111)
-    ax.axis("off")
-    ax.text(0.5, 0.5, text, ha="center", va="center", fontsize="medium", color="#555555")
     buffer = io.BytesIO()
-    fig.savefig(buffer, format="png", dpi=_DPI)
+    with _RENDER_LOCK:
+        fig = Figure(figsize=(7.5, 4))
+        ax = fig.add_subplot(111)
+        ax.axis("off")
+        ax.text(0.5, 0.5, text, ha="center", va="center", fontsize="medium", color="#555555")
+        fig.savefig(buffer, format="png", dpi=_DPI)
     return buffer.getvalue()
 
 
@@ -170,14 +176,17 @@ class ResidualImages:
         a camera that is not a detector of the visit (a 404).
         """
         key = (int(visit), str(camera))
-        if camera not in self._context(int(visit)):
-            return None
+        # Serve a cached plot without re-reading the store: a cached entry was a real detector when stored.
         with self._lock:
             cached = self._cache.get(key)
             if cached is not None:
                 self._cache.move_to_end(key)
                 return cached
-        png = self._render(int(visit), str(camera))
+        # Read the context once: whether ``camera`` is a detector of the visit (else a 404) and its frame type.
+        context = self._context(int(visit))
+        if camera not in context:
+            return None
+        png = self._render(int(visit), str(camera), context.get(camera))
         with self._lock:
             self._cache[key] = png
             self._cache.move_to_end(key)
@@ -185,13 +194,12 @@ class ResidualImages:
                 self._cache.popitem(last=False)
         return png
 
-    def _render(self, visit: int, camera: str) -> bytes:
+    def _render(self, visit: int, camera: str, frameType: Any) -> bytes:
         """Read the detector's rows and draw the plot, or a placeholder when there are none (no lock held)."""
         arm, spectrograph = camera[0], int(camera[1:])
         data = self._read(visit, arm, spectrograph)
         if data is None or len(data) == 0:
             return _placeholder(f"No residual data for {camera}, visit {visit}")
-        frameType = self._context(visit).get(camera)
         dyKms = set(data.columns) >= _KMS_COLUMNS
         limits = residualLimits(frameType, arm, dyKms=dyKms)
         return renderResidual(data, title=f"{camera} {visit}", limits=limits)

@@ -296,9 +296,10 @@ def butlerResiduals(args: argparse.Namespace, sliceStore):
         with lock:
             try:
                 return butler.get("dmLineResidualData", dataId)
-            except LookupError:
-                # The collection holds no dmLineResidualData for this detector (the task did not run,
-                # or wrote nothing): the plot shows a placeholder, not an error.
+            except (LookupError, FileNotFoundError):
+                # The collection holds no dmLineResidualData for this detector — the task did not run or
+                # wrote nothing (LookupError), or the dataset is registered but its file is gone
+                # (FileNotFoundError): the plot shows a placeholder, not a 500.
                 return None
 
     def context(visit: int) -> dict:
