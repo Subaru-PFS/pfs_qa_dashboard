@@ -86,6 +86,15 @@
   @media (max-width: 480px) { .driftcols { grid-template-columns: minmax(0, 1fr); } }
   .driftcol { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
   h3.colhead { margin: 2px 0 0; font-size: 0.82rem; font-weight: 600; color: var(--fg-2); }
+  /* Calibration-set go/no-go grid: a row per set exposure, a column per detector. */
+  table.setgrid { font-variant-numeric: tabular-nums; }
+  table.setgrid td.setcell { text-align: center; padding: 1px 4px; font-size: 0.66rem; line-height: 1.5; }
+  td.setcell.go { background: color-mix(in srgb, var(--pass-fill) 20%, transparent); }
+  td.setcell.nogo { background: var(--fail-fill); color: #fff; font-weight: 700; }
+  td.setcell.miss { color: var(--fg-3); }
+  td.setcell.na { color: var(--rule); }
+  ul.setnotes { margin: 6px 0 0; padding-left: 18px; color: var(--fg-2); font-size: 0.82rem; }
+  ul.setnotes li { max-width: 90ch; }
   .driftcols figure.panel { cursor: zoom-in; }
   .driftcols figure.panel:hover { border-color: var(--fg-3); }
   /* Shared modal toolbox (.modal / .sheet / .x), also used by INSTRM-3130's Conditions tile. Clicking a
