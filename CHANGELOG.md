@@ -2,8 +2,9 @@
 
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html): a release is a `MAJOR.MINOR.PATCH` git tag, with
-`version` in `pyproject.toml` to match. Before 1.0.0 a minor release may change the command line or the Python API.
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html): a release is a `MAJOR.MINOR.PATCH` git tag (the
+package version is derived from it by setuptools-scm). Before 1.0.0 a minor release may change the command line
+or the Python API.
 
 ## [Unreleased]
 
@@ -19,9 +20,29 @@ All notable changes to this project are documented here. The format follows
   alone, reads down the column) or **by arm** (the same detector across the four spectrographs). Each track is
   labelled with its units (both offsets are in pixels). Clicking a chart opens its **whole group** — a
   spectrograph's arms, or an arm's spectrographs — enlarged and time-aligned in the shared modal overlay
-  (`.modal`/`.sheet`, as INSTRM-3130's Conditions tile uses), so a shift common to the group reads at a glance.
+  (`.modal`/`.sheet`, shared with the Conditions modal), so a shift common to the group reads at a glance.
   All drift data is read from qadb (`dm_line_residual_qa_metric`, written by the actor's per-visit load); the
   page judges nothing.
+
+## [0.10.0] - 2026-11-21
+
+### Added
+
+- **AG seeing** on the night page's Conditions tile: the tile now leads with the night's median seeing (FWHM,
+  arcsec) and keeps transparency as a secondary line, and the modal shows a seeing time series alongside the
+  transparency one. Source is qadb `seeing_agc_exposure`, read for the night's visits like transparency; a
+  failed read drops only that metric. The `agTransparency` module is renamed `agConditions`, now covering both
+  (INSTRM-3131).
+
+### Changed
+
+- The package version is now derived from the latest git tag by setuptools-scm, instead of a hard-coded
+  `version` in `pyproject.toml`; a release is a tag alone, with no file to edit.
+
+## [0.9.0] - 2026-11-21
+
+### Added
+
 - **AG sky transparency** on the night page: a **Conditions** tile (in place of the Science verdict tile) with
   the night's median sky transparency and a sparkline, which opens a modal holding the full per-night time
   series — a median line with a 25th-to-75th-percentile band over the same 18:00–07:00 hours as the verdict

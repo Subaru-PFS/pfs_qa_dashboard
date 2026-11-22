@@ -31,7 +31,9 @@
   .spark { display: block; width: 100%; height: 32px; }
   .spark polyline { fill: none; stroke: var(--series-1); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
   /* The modal toolbox (.modal / .sheet / .x) is shared, in theme.css — the Conditions modal and the
-     calibration-drift zoom both use it. */
+     calibration-drift zoom both use it. The Conditions modal's own content styles: */
+  .sheet .cond-metric { margin-top: 22px; }
+  .sheet .cond-metric h3 { margin: 0 0 4px; font-family: var(--display); font-weight: 600; font-size: 1.05rem; }
   .tchart { overflow-x: auto; }
   .tplot { display: block; width: 100%; height: auto; min-width: 520px; }
   .tplot .grid { stroke: var(--rule); stroke-width: 1; }

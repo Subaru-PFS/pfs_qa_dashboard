@@ -117,7 +117,9 @@ def calibSetEvents(
         grid = goNoGo(judged[judged["visit"].isin(visitSet)], ofEvent)
         # Keep only the detectors the event exposed (a row that is all "" is not exposed at all).
         grid = grid[(grid != "").any(axis=1)]
-        notes = summary(ofEvent, judged[judged["visit"].isin(visitSet)], species[species["visit"].isin(visitSet)])
+        notes = summary(
+            ofEvent, judged[judged["visit"].isin(visitSet)], species[species["visit"].isin(visitSet)]
+        )
         lamps = ", ".join(dict.fromkeys(ofEvent["lamp"].dropna().astype(str)))
         events.append(CalibSet(_hst(ofEvent["time_exp_start"].min()), lamps, ofEvent, grid, notes))
     return events
