@@ -17,6 +17,7 @@ actor loads it, that rule is inert and the rest stand.
 """
 
 import html
+import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -59,6 +60,24 @@ class CalibSet:
     visits: pd.DataFrame
     grid: pd.DataFrame
     notes: list[str]
+
+
+#: Whether this drp_qa's ``detectorTable`` takes ``reductionStats`` (PIPE2D-2016, drp_qa 0.10.0). Before that
+#: it read the reserved-line RMS from ``iqQaMetrics`` and took no such argument; pass it only when accepted.
+_DETECTOR_TABLE_TAKES_REDUCTION = "reductionStats" in inspect.signature(detectorTable).parameters
+
+
+def _judgeSet(
+    visits: pd.DataFrame,
+    iqMetrics: pd.DataFrame,
+    lineMetrics: pd.DataFrame,
+    reductionStats: pd.DataFrame,
+    normalValues: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Judge the set's detectors, adapting to drp_qa's ``detectorTable`` signature (pre-/post-PIPE2D-2016)."""
+    if _DETECTOR_TABLE_TAKES_REDUCTION:
+        return judge(detectorTable(visits, iqMetrics, lineMetrics, reductionStats, normalValues))
+    return judge(detectorTable(visits, iqMetrics, lineMetrics, normalValues))
 
 
 def _reductionStats(tables: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
@@ -107,7 +126,7 @@ def calibSetEvents(
     # Judge the whole set once: the sequence rules group by IIC sequence, which lies within one event,
     # so this matches `calib inputs` and avoids judging a degenerate per-event subset. Slice per event.
     species = speciesTable(allSet, lines)
-    judged = judge(detectorTable(allSet, iq, lines, reduction, normalValues))
+    judged = _judgeSet(allSet, iq, lines, reduction, normalValues)
     times = pd.to_datetime(allSet["time_exp_start"])
     event = (times - times.shift()).gt(_EVENT_GAP).fillna(False).cumsum()
     events: list[CalibSet] = []
