@@ -187,13 +187,13 @@ def _renderEvent(event: CalibSet) -> str:
         state = '<span class="setstate">all go</span>'
     # Open an event with something to act on (a no-go); collapse the rest so the section stays short.
     count = len(event.visits)
-    summary = (
+    heading = (
         f"Set — {html.escape(event.label)} HST · {count} visit{'' if count == 1 else 's'} · "
         f"{html.escape(event.lamps)} · {state}"
     )
     return (
         f'<details class="setevent"{" open" if nogo else ""}>\n'
-        f"  <summary>{summary}</summary>\n"
+        f"  <summary>{heading}</summary>\n"
         "  <div class='tablewrap tall'><table class='setgrid'><thead><tr>"
         "<th scope='col'>Visit</th><th scope='col' class='l'>Exposure</th>"
         f"{headCells}</tr></thead><tbody>\n"
