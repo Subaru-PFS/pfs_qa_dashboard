@@ -116,5 +116,7 @@ CI runs both, against the drp_qa named by `DRP_QA_REF` in `.github/workflows/tes
 
 ## Versions
 
-Releases are `MAJOR.MINOR.PATCH` git tags ([Semantic Versioning](https://semver.org)), with `version` in
-`pyproject.toml` to match; user-visible changes go under `## [Unreleased]` in `CHANGELOG.md` until then.
+Releases are `MAJOR.MINOR.PATCH` git tags ([Semantic Versioning](https://semver.org)); the package version is
+derived from the latest tag by [setuptools-scm](https://setuptools-scm.readthedocs.io/), so cutting a release is
+a tag alone — there is no version to edit in `pyproject.toml`. User-visible changes go under `## [Unreleased]` in
+`CHANGELOG.md` until then.

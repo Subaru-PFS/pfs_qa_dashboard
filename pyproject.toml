@@ -1,10 +1,11 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "pfs-qa-dashboard"
-version = "0.7.0"
+# Version is derived from the latest git tag by setuptools-scm (see [tool.setuptools_scm]); never hard-code it.
+dynamic = ["version"]
 description = "The PFS QA run report, live from qadb"
 authors = [{ name = "Subaru PFS DRP Team" }]
 readme = "README.md"
@@ -40,6 +41,12 @@ include = ["pfs.qa*"]
 [tool.setuptools.package-data]
 # The run report's page template, its km/s per pixel table and the fonts it embeds.
 "pfs.qa.dashboard" = ["data/*", "data/fonts/*"]
+
+# The version comes from the git tag (e.g. 0.9.0), so releases are a tag alone with no file to edit.
+# Builds between tags get a development version (e.g. 0.9.1.dev3+g<hash>); a build with no git metadata
+# (an unpacked sdist keeps it in PKG-INFO) falls back to this.
+[tool.setuptools_scm]
+fallback_version = "0.0.0+unknown"
 
 [tool.ruff]
 target-version = "py312"
