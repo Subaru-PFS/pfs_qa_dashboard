@@ -592,10 +592,18 @@ def testServeMountsTheNightPageAndTheRunReport(tmp_path, monkeypatch):
     cli = _cli()
     served = {}
     monkeypatch.setattr(
-        cli, "listen", lambda application, address, port, show: served.update(locals()), raising=True
+        cli,
+        "listen",
+        lambda application, address, port, show, debug=False: served.update(locals()),
+        raising=True,
     )
     cli.main(["serve", "--snapshot", str(_snapshot(tmp_path / "snap")), "--title", "Run99", "--port", "5123"])
-    assert (served["address"], served["port"], served["show"]) == ("localhost", 5123, False)
+    assert (served["address"], served["port"], served["show"], served["debug"]) == (
+        "localhost",
+        5123,
+        False,
+        False,
+    )
 
     night = _fetch(served["application"], "/").body.decode()
     assert "The night on the clock" in night and "Latest visits" in night and "<h1>Run99</h1>" in night
@@ -637,7 +645,9 @@ def testServeFromQadbWatchesItAndThePageFollows(monkeypatch):
     monkeypatch.setattr(runReport.ReportCache, "watch", lambda self, interval: watched.append(interval))
     cli = _cli()
     served = {}
-    monkeypatch.setattr(cli, "listen", lambda application, address, port, show: served.update(locals()))
+    monkeypatch.setattr(
+        cli, "listen", lambda application, address, port, show, debug=False: served.update(locals())
+    )
     cli.main(["serve", "--collection", "c", "--refresh", "20"])
     assert watched == [20.0] and len(reads) == 2  # the store's first read, and the first page's
     assert cli.os.environ["PGCONNECT_TIMEOUT"] == "10"

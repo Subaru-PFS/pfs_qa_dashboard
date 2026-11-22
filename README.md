@@ -89,6 +89,18 @@ python bin/qaDashboard.py report --snapshot <dir> --out <dir>
 the fact is loaded into a qadb first (drp_qa's `bin.src/loadQadb.py`; a local copy will do). The report is made
 for any collection in qadb: the live one (`qaActor/reductions`) or a redone run's.
 
+## Developing the pages
+
+`serve --debug` restarts the server whenever the dashboard's code or its `data/` assets (`theme.css`, the
+HTML, the fonts) change — Tornado's autoreload. `--refresh` (above) only reloads the *data*; `--debug`
+reloads the *code*. A restart re-reads the databases, so develop against a snapshot, which re-reads in no
+time and never needs the tunnel:
+
+```bash
+python bin/qaDashboard.py snapshot --collection qaActor/reductions --opdb-host 127.0.0.1 --out <dir>
+python bin/qaDashboard.py serve --snapshot <dir> --debug
+```
+
 ## Running it
 
 The dashboard needs drp_qa 0.5.0 or later (`pfs.drp.qa`, with `pfs.drp.qa.qadb.reader.readGate` and the gate's
