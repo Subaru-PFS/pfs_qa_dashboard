@@ -155,8 +155,8 @@ def testAnAwaitingArcShowsItsLamp():
     assert "arc, Neon" in made.html
 
 
-def _transparencyReader(exposures):
-    """Return a ``readTransparency(first, last)`` giving the exposures whose visit is in the range."""
+def _reader(exposures):
+    """Return a ``read(first, last)`` giving the exposures whose visit is in the range."""
 
     def read(first, last):
         return exposures[(exposures["visit"] >= first) & (exposures["visit"] <= last)].reset_index(drop=True)
@@ -164,39 +164,55 @@ def _transparencyReader(exposures):
     return read
 
 
-def testTheNightShowsAgTransparencyWhenAReaderGivesIt():
-    tables = _tables((1, "r1", "science", _science()))
-    info = _info([1], ["2026-11-04 20:00"])
-    exposures = pd.DataFrame(
+def _conditionFrame(start):
+    """Return a reader-shaped frame (``visit``, ``agcExposureId``, ``time``, ``value``) for visit 1."""
+    return pd.DataFrame(
         {
             "visit": 1,
             "agcExposureId": range(30),
             "time": pd.date_range("2026-11-04 20:00", periods=30, freq="1min"),
-            "transparency": pd.Series(range(30)).mul(0.002).add(0.76),
+            "value": pd.Series(range(30)).mul(0.002).add(start),
         }
     )
-    made = buildNightReport(tables, info=info, readTransparency=_transparencyReader(exposures))
-    # The Conditions tile (opening the modal) replaces the Science tile, and the modal holds the chart.
+
+
+def testTheNightShowsAgConditionsWhenReadersGiveThem():
+    tables = _tables((1, "r1", "science", _science()))
+    info = _info([1], ["2026-11-04 20:00"])
+    made = buildNightReport(
+        tables,
+        info=info,
+        readTransparency=_reader(_conditionFrame(0.76)),
+        readSeeing=_reader(_conditionFrame(0.60)),
+    )
+    # The Conditions tile (opening the modal) replaces the Science tile; the modal has a chart per metric.
     assert "class='tile cond'" in made.html and "aria-controls='conditions'" in made.html
-    assert "id='conditions'" in made.html and "AG sky transparency tonight" in made.html
-    assert "30 AG exposures" in made.html and "<span class='lab'>Science</span>" not in made.html
-    # Negative control: without a reader there is no Conditions tile or modal; the Science tile stays.
+    assert "id='conditions'" in made.html and "AG sky conditions tonight" in made.html
+    assert "<h3>Seeing</h3>" in made.html and "<h3>Sky transparency</h3>" in made.html
+    assert "<span class='lab'>Science</span>" not in made.html
+    # Negative control: without readers there is no Conditions tile or modal; the Science tile stays.
     plain = buildNightReport(tables, info=info).html
-    assert "AG sky transparency tonight" not in plain and "id='conditions'" not in plain
+    assert "AG sky conditions tonight" not in plain and "id='conditions'" not in plain
     assert "class='tile cond'" not in plain and "<span class='lab'>Science</span>" in plain
 
 
-def testATransparencyReadThatFailsDoesNotBlankThePage():
+def testAConditionsReadThatFailsDropsOnlyThatMetric():
     tables = _tables((1, "r1", "science", _science()))
     info = _info([1], ["2026-11-04 20:00"])
 
     def boom(first, last):
         raise RuntimeError("qadb unreachable")
 
-    made = buildNightReport(tables, info=info, readTransparency=boom)
-    # The page is still built from the rest; only the transparency section is missing.
+    made = buildNightReport(
+        tables, info=info, readTransparency=boom, readSeeing=_reader(_conditionFrame(0.6))
+    )
+    # The page is built; seeing shows and the failed transparency read is dropped, not blanking the page.
     assert made.html.startswith("<!doctype html>") and "The night on the clock" in made.html
-    assert "AG sky transparency tonight" not in made.html
+    assert "AG sky conditions tonight" in made.html and "<h3>Seeing</h3>" in made.html
+    assert "<h3>Sky transparency</h3>" not in made.html
+    # Both failing: no Conditions tile or modal, the Science tile stays.
+    both = buildNightReport(tables, info=info, readTransparency=boom, readSeeing=boom).html
+    assert "id='conditions'" not in both and "<span class='lab'>Science</span>" in both
 
 
 def testAwaitingAndNoResultAreToldApart():

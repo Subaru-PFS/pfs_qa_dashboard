@@ -8,6 +8,14 @@ or the Python API.
 
 ## [Unreleased]
 
+### Added
+
+- **AG seeing** on the night page's Conditions tile: the tile now leads with the night's median seeing (FWHM,
+  arcsec) and keeps transparency as a secondary line, and the modal shows a seeing time series alongside the
+  transparency one. Source is qadb `seeing_agc_exposure`, read for the night's visits like transparency; a
+  failed read drops only that metric. The `agTransparency` module is renamed `agConditions`, now covering both
+  (INSTRM-3131).
+
 ### Changed
 
 - The package version is now derived from the latest git tag by setuptools-scm, instead of a hard-coded

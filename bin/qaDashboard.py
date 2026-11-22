@@ -160,11 +160,11 @@ def snapshotSource(tables: dict, provenance: dict) -> str:
     return sourceText(collection, "visitInfo" in tables, readOn)
 
 
-def pages(args: argparse.Namespace, source: str, readTransparency=None) -> dict:
+def pages(args: argparse.Namespace, source: str, readTransparency=None, readSeeing=None) -> dict:
     """Return the pages a `ReportCache` builds: the night page (``/``) and the run report (``/run``).
 
-    ``readTransparency(first, last)`` reads the night's AG transparency from qadb for the night page; None
-    (a snapshot, or no live qadb) omits that section.
+    ``readTransparency(first, last)`` and ``readSeeing(first, last)`` read the night's AG transparency and
+    seeing from qadb for the night page's Conditions tile; None (a snapshot, or no live qadb) omits that metric.
     """
     from pfs.qa.dashboard.nightReport import buildNightReport
     from pfs.qa.dashboard.runReport import buildReport
@@ -172,7 +172,13 @@ def pages(args: argparse.Namespace, source: str, readTransparency=None) -> dict:
     return {
         "night": (
             buildNightReport,
-            {"title": args.title, "source": source, "runUrl": "/run", "readTransparency": readTransparency},
+            {
+                "title": args.title,
+                "source": source,
+                "runUrl": "/run",
+                "readTransparency": readTransparency,
+                "readSeeing": readSeeing,
+            },
         ),
         "report": (buildReport, {"title": args.title, "source": source}),
     }
@@ -192,18 +198,20 @@ def serve(args: argparse.Namespace) -> None:
     from pfs.qa.dashboard.visitPage import buildVisitPage
 
     if args.collection:
-        from pfs.qa.dashboard.agTransparency import readTransparency as readTransparencyDb
+        from pfs.qa.dashboard.agConditions import readSeeing as readSeeingDb
+        from pfs.qa.dashboard.agConditions import readTransparency as readTransparencyDb
 
         qadb, opdb = connect(args)
         store = QadbStore.fromQadb(qadb, args.collection, args.first_visit, args.last_visit)
         print(f"{len(store.times)} visits so far", flush=True)
         readInfo = None if opdb is None else (lambda first, last: readVisitInfo(opdb, first, last))
         readTransparency = lambda first, last: readTransparencyDb(qadb, first, last)  # noqa: E731
+        readSeeing = lambda first, last: readSeeingDb(qadb, first, last)  # noqa: E731
         cache = ReportCache(
             store,
             readInfo,
             firstVisit=args.first_visit or None,
-            pages=pages(args, sourceText(args.collection, opdb is not None), readTransparency),
+            pages=pages(args, sourceText(args.collection, opdb is not None), readTransparency, readSeeing),
         )
         cache.update()
         # The databases are read on a thread of the cache's own from here on: a browser gets the last
