@@ -8,6 +8,8 @@ or the Python API.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-23
+
 ### Added
 
 - **The night page's time map is the run report's** (PIPE2D-2032): "The night on the clock" is now the same
