@@ -121,6 +121,48 @@ def testVisitPageWithNoQaResult():
     assert "Measurements by detector" not in page
 
 
+def testVisitPageShowsExtractionPlotsWhenServed():
+    tables = _tables(
+        (7, "b1", "science", _science(x=0.2), {"gate": ("PASS", "")}),
+        (7, "n1", "science", _science(x=0.3), {"gate": ("FAIL", "OH residual +1.20 km/s >= fail 1")}),
+    )
+    # Off by default: no extraction section, and the footer lists the plots as not yet shown.
+    plain = buildVisitPage(tables, None, 7)
+    assert "<h2>Extraction QA</h2>" not in plain
+    assert "extraction-QA plots" in plain and "not yet shown" in plain
+
+    page = buildVisitPage(tables, None, 7, extraction=True)
+    assert "<h2>Extraction QA</h2>" in page
+    # One lazily-loaded summary image per detector, each pointing at the on-demand extraction route.
+    assert page.count("src='/visit/7/extraction/") == 2 and "loading='lazy'" in page
+    assert "src='/visit/7/extraction/b1.png'" in page and "src='/visit/7/extraction/n1.png'" in page
+    # A "detail (PDF)" link per detector, pointing at the detail-PDF route.
+    assert "href='/visit/7/extraction/b1.pdf'>detail (PDF)</a>" in page
+    assert "href='/visit/7/extraction/n1.pdf'" in page
+    # Regular detector order (brnm): b1 before n1, regardless of verdict.
+    assert page.index("extraction/b1.png") < page.index("extraction/n1.png")
+    # Extraction is not gated: the figure anchors are extract-<camera>, and no verdict chip rides the caption.
+    assert "id='extract-b1'" in page and "id='extract-n1'" in page
+    # Click-to-enlarge is wired, and the extraction images are covered by the lightbox script.
+    assert "id='lightbox'" in page and ".extraction .imgwrap img" in page
+    # The page carries no plot data (the browser fetches the images); it stays small.
+    assert "data:image" not in page
+    # Negative control: once shown, extraction is dropped from the "not yet shown" note entirely.
+    assert "extraction-QA plots" not in page
+
+
+def testVisitPageBothPlotSectionsShareOneLightbox():
+    tables = _tables((7, "b1", "science", _science(x=0.2), {"gate": ("PASS", "")}))
+    page = buildVisitPage(tables, None, 7, residuals=True, extraction=True)
+    assert "DetectorMap line residuals" in page and "<h2>Extraction QA</h2>" in page
+    # The lightbox overlay and its script appear exactly once, shared by both sections.
+    assert page.count("id='lightbox'") == 1 and page.count("<script>") == 1
+    # The one script binds both sections' images.
+    assert "'.residuals .imgwrap img, .extraction .imgwrap img'" in page
+    # With both shown, nothing is left "not yet shown".
+    assert "not yet shown" not in page
+
+
 def testVisitPageHandlesMissingTables():
     # Before the first read the store may hold nothing: the page still renders.
     page = buildVisitPage({}, None, 5)
