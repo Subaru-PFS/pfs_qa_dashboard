@@ -26,6 +26,9 @@ or the Python API.
 
 ### Fixed
 
+- The night page's "Latest visits" table labelled a NO RESULT visit "awaiting QA" in its Detectors column, the
+  same as a genuinely pending AWAITING visit. A NO RESULT visit was passed over (its QA never ran, e.g.
+  reduceExposure errored) so none is coming; it now reads "–", and only an AWAITING visit reads "awaiting QA".
 - The night clock's tooltip read the wrong column (0.13.0): the night page emitted its per-visit rows with
   `detectorsStatus` and `why` swapped against the indices the clock script read, so a no-result or passed-over
   visit's tooltip showed the detectors string in place of the reason. Unifying on the run report's column order
