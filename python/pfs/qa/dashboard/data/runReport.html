@@ -138,7 +138,7 @@
     </div>
     <div class="tablewrap tall">
       <table>
-        <thead><tr><th scope="col" class="l">Visit</th><th scope="col" class="l">HST</th><th scope="col" class="l">Kind</th><th scope="col" class="l">Lit through</th><th scope="col">Exposure (s)</th><th scope="col" class="l">Arms</th><th scope="col" class="l">Sequence</th><th scope="col" class="l">Verdict</th><th scope="col" class="l">Detectors flagged</th><th scope="col" class="l">Why</th></tr></thead>
+        <thead><tr><th scope="col" class="l">Visit</th><th scope="col" class="l">Sequence</th><th scope="col" class="l">HST</th><th scope="col" class="l">Kind</th><th scope="col" class="l">Lit through</th><th scope="col">Exposure (s)</th><th scope="col" class="l">Arms</th><th scope="col" class="l">Verdict</th><th scope="col" class="l">Detectors flagged</th><th scope="col" class="l">Why</th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
@@ -170,7 +170,7 @@
       (!kind || r[2].startsWith(kind)) && (!slit || r[3] === slit) &&
       (!status || (status === "notpass" ? r[6] !== "PASS" : r[6] === status)) && (!visit || String(r[0]).startsWith(visit)));
     rows.innerHTML = shown.map((r) =>
-      `<tr><th scope="row"><a href="/visit/${r[0]}">${r[0]}</a></th><td class="l">${r[1]}</td><td class="l">${esc(r[2])}</td><td class="l">${r[3]}</td><td>${r[4]}</td><td class="l">${r[5]}</td><td class="l">${esc(r[11])}</td>` +
+      `<tr><th scope="row"><a href="/visit/${r[0]}">${r[0]}</a></th><td class="l">${esc(r[11])}</td><td class="l">${r[1]}</td><td class="l">${esc(r[2])}</td><td class="l">${r[3]}</td><td>${r[4]}</td><td class="l">${r[5]}</td>` +
       `<td class="l"><span class="chip ${CLS[r[6]]}">${r[6]}</span></td><td class="l">${esc(r[7])}</td><td class="l why">${esc(r[8])}</td></tr>`).join("");
     count.textContent = `${shown.length.toLocaleString()} of ${DATA.length.toLocaleString()} visits`;
   }

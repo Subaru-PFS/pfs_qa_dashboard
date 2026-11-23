@@ -211,9 +211,9 @@ def _feedRows(visits: pd.DataFrame) -> str:
             detectors = html.escape(_flaggedText(row.flagged)) or "–"
         out.append(
             f"<tr><th scope='row'><a href='/visit/{row.visit}'>{row.visit}</a></th>"
+            f"<td class='l'>{html.escape(_sequenceLabel(row.sequenceId))}</td>"
             f"<td class='l'>{when}</td><td class='l'>{html.escape(row.label)}</td>"
             f"<td>{_fmtExp(row.exptime)}</td><td class='l'>{row.arms}</td>"
-            f"<td class='l'>{html.escape(_sequenceLabel(row.sequenceId))}</td>"
             f"<td class='l'>{_chip(row.status)}</td><td class='l'>{detectors}</td>"
             f"<td class='l why'>{html.escape(row.why)}</td></tr>"
         )
