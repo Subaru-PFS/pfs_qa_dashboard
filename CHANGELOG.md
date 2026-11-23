@@ -8,6 +8,8 @@ or the Python API.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-22
+
 ### Added
 
 - **Extraction-QA plots on the visit page** (PIPE2D-2031): the per-visit page now shows each detector's
