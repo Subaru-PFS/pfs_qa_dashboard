@@ -314,6 +314,67 @@ def butlerResiduals(args: argparse.Namespace, sliceStore):
     return ResidualImages(readLineData, context)
 
 
+def butlerExtraction(args: argparse.Namespace, sliceStore):
+    """Return an `ExtractionImages` for the per-visit extraction plots, or None without ``--butler``.
+
+    Mirrors `butlerResiduals`: the Butler reads are the only stack-bound part, guarded by a lock and
+    returning None for a missing dataset. The summary PNG is drawn from ``extQaImage_pickle``; the
+    "detail (PDF)" link streams the ``extQaImage`` file straight from the datastore.
+    """
+    if not args.butler:
+        return None
+
+    import threading
+
+    from lsst.daf.butler import Butler
+
+    from pfs.qa.dashboard.runReport import imageTable
+    from pfs.qa.dashboard.visitExtraction import ExtractionImages
+
+    butler = Butler(args.butler, collections=[args.collection], writeable=False)
+    lock = threading.Lock()
+
+    def dataId(visit: int, arm: str, spectrograph: int) -> dict:
+        return {
+            "instrument": args.instrument,
+            "visit": int(visit),
+            "arm": arm,
+            "spectrograph": int(spectrograph),
+        }
+
+    def readStats(visit: int, arm: str, spectrograph: int):
+        with lock:
+            try:
+                return butler.get("extQaImage_pickle", dataId(visit, arm, spectrograph))
+            except (LookupError, FileNotFoundError):
+                # No pickle for this detector: the task did not run or wrote nothing. Plot a placeholder.
+                return None
+
+    def readImagePdf(visit: int, arm: str, spectrograph: int):
+        with lock:
+            try:
+                uri = butler.getURI("extQaImage", dataId(visit, arm, spectrograph))
+            except (LookupError, FileNotFoundError, ValueError):
+                # LookupError/FileNotFoundError: not stored; ValueError: a disassembled/multi-URI dataset.
+                return None
+        # The file read needs no butler, so it runs outside the lock; a missing file is a 404, not a 500.
+        try:
+            return uri.read()
+        except (FileNotFoundError, OSError):
+            return None
+
+    def context(visit: int) -> dict:
+        images = imageTable(sliceStore(int(visit)))
+        images = images[images["visit"] == int(visit)]
+        return dict(zip(images["camera"], images["frameType"], strict=True))
+
+    print(
+        f"Serving extraction-QA plots from the Butler at {args.butler} ({args.collection})",
+        flush=True,
+    )
+    return ExtractionImages(readStats, readImagePdf, context)
+
+
 def serve(args: argparse.Namespace) -> None:
     """Serve the night page (``/``) and the run report (``/run``) of a collection or a snapshot."""
     # One line per request, with the client's address: shows whether a browser reached the server.
@@ -379,10 +440,17 @@ def serve(args: argparse.Namespace) -> None:
         return sliced
 
     residualImages = butlerResiduals(args, sliceStore)
+    extractionImages = butlerExtraction(args, sliceStore)
 
     def visitPage(number: int) -> str:
         """Build the per-visit page from the cached store (no database read)."""
-        return buildVisitPage(sliceStore(number), cache.info, number, residuals=residualImages is not None)
+        return buildVisitPage(
+            sliceStore(number),
+            cache.info,
+            number,
+            residuals=residualImages is not None,
+            extraction=extractionImages is not None,
+        )
 
     def nightPage(date: str) -> str:
         """Build a past night's page (``/night/<date>``) from the cached store, with no new database read.
@@ -415,6 +483,8 @@ def serve(args: argparse.Namespace) -> None:
                 visit=visitPage,
                 residual=residualImages.png if residualImages is not None else None,
                 night=nightPage,
+                extraction=extractionImages.png if extractionImages is not None else None,
+                extractionPdf=extractionImages.pdf if extractionImages is not None else None,
             )
         ),
         args.address,

@@ -34,6 +34,21 @@ or the Python API.
   visit's tooltip showed the detectors string in place of the reason. Unifying on the run report's column order
   fixes it.
 
+## [0.14.0] - 2026-11-22
+
+### Added
+
+- **Extraction-QA plots on the visit page** (PIPE2D-2031): the per-visit page now shows each detector's
+  extraction-QA summary — `pfs.drp.qa.plotting.extraction.plotExtractionStats` (chiMed / chiStd / chiAtPeak /
+  resFrac per GOOD fiber against fiberId, coloured by mean extracted flux) — drawn on demand from the stored
+  `extQaImage_pickle`, in detector order, each beside a "detail (PDF)" link to the task's full `extQaImage`
+  image pages (the 2-D calexp, residual and chi images, which cannot be redrawn from the pickle). Extraction QA
+  is not loaded into qadb and carries no gate verdict, so these are diagnostic only (no verdict chip). As with
+  the residual plots the data lives in the Butler, so they are served only with `serve --butler <repo>`: the
+  summary PNG is rendered when its `<img>` is fetched (`/visit/<n>/extraction/<camera>.png`), off the event
+  loop and cached, and the detail PDF is streamed from the datastore (`/visit/<n>/extraction/<camera>.pdf`).
+  Needs a `drp_qa` that provides `plotExtractionStats`.
+
 ## [0.13.0] - 2026-11-22
 
 ### Added

@@ -1648,6 +1648,8 @@ def routes(
     visit: Callable[[int], str] | None = None,
     residual: Callable[[int, str], bytes | None] | None = None,
     night: Callable[[str], str] | None = None,
+    extraction: Callable[[int, str], bytes | None] | None = None,
+    extractionPdf: Callable[[int, str], bytes | None] | None = None,
 ) -> list[tuple[str, type]]:
     """Return the Tornado routes serving a `ReportCache`: its pages, and `status` at ``/status``.
 
@@ -1672,7 +1674,16 @@ def routes(
         ``residual(n, camera)`` returns a detector's residual plot as PNG bytes, or None when ``camera``
         is not one of the visit's detectors; when given, it is served at
         ``/visit/<n>/residual/<camera>.png`` (what the visit page's ``<img>`` tags fetch).
+    extraction : callable, optional
+        ``extraction(n, camera)`` returns a detector's extraction-QA summary as PNG bytes, or None; served
+        at ``/visit/<n>/extraction/<camera>.png``.
+    extractionPdf : callable, optional
+        ``extractionPdf(n, camera)`` returns a detector's extraction-QA detail PDF as bytes, or None;
+        served at ``/visit/<n>/extraction/<camera>.pdf`` (the "detail (PDF)" link beside each plot).
     """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tornado.ioloop import IOLoop
     from tornado.web import RequestHandler
 
     mounts = mounts or {"/": cache.primary}
@@ -1710,25 +1721,43 @@ def routes(
                 self.write(night(date))
 
         handlers.append((r"/night/(\d{4}-\d{2}-\d{2})", NightHandler))
-    if residual is not None:
-        from concurrent.futures import ThreadPoolExecutor
 
-        from tornado.ioloop import IOLoop
-
-        # A few workers: a plot reads a detector's per-line rows from the Butler and draws it (~1 s), so
-        # several load in parallel, but not so many that the host runs out of memory. The read guards
-        # itself; rendering is the parallel part.
-        pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="residual")
-
-        class ResidualHandler(RequestHandler):
+    # The Butler-backed routes render or read a detector's dataset on the request, so each answers off the
+    # event loop on its own small thread pool; the pages already shown are never held up.
+    def bytesRoute(pattern: str, source: Callable[[int, str], bytes | None], contentType: str, pool) -> None:
+        class ImageHandler(RequestHandler):
             async def get(self, number: str, camera: str) -> None:
-                png = await IOLoop.current().run_in_executor(pool, residual, int(number), camera)
-                if png is None:
+                data = await IOLoop.current().run_in_executor(pool, source, int(number), camera)
+                if data is None:
                     self.set_status(404)
                     return
-                self.set_header("Content-Type", "image/png")
+                self.set_header("Content-Type", contentType)
                 self.set_header("Cache-Control", "no-cache")
-                self.write(png)
+                self.write(data)
 
-        handlers.append((r"/visit/([0-9]+)/residual/([brnm][1-4])\.png", ResidualHandler))
+        handlers.append((pattern, ImageHandler))
+
+    # A few workers each: a residual or extraction plot reads a detector's rows from the Butler and draws
+    # it (~1 s), so several load in parallel, but not so many that the host runs out of memory.
+    if residual is not None:
+        bytesRoute(
+            r"/visit/([0-9]+)/residual/([brnm][1-4])\.png",
+            residual,
+            "image/png",
+            ThreadPoolExecutor(max_workers=3, thread_name_prefix="residual"),
+        )
+    if extraction is not None:
+        bytesRoute(
+            r"/visit/([0-9]+)/extraction/([brnm][1-4])\.png",
+            extraction,
+            "image/png",
+            ThreadPoolExecutor(max_workers=3, thread_name_prefix="extraction"),
+        )
+    if extractionPdf is not None:
+        bytesRoute(
+            r"/visit/([0-9]+)/extraction/([brnm][1-4])\.pdf",
+            extractionPdf,
+            "application/pdf",
+            ThreadPoolExecutor(max_workers=2, thread_name_prefix="extraction-pdf"),
+        )
     return handlers
