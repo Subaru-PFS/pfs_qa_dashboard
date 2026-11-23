@@ -844,3 +844,96 @@ def testVisitTableTagsShakaInLabel():
     visits = runReport.visitTable(measure(tables), info).set_index("visit")
     assert visits.loc[1, "label"] == "arc, Neon · shaka MOD4 group2"
     assert visits.loc[2, "label"] == "arc, Neon"  # negative control: the fully lit arc carries no tag
+
+
+def testReadVisitInfoCarriesTheSequenceGroup():
+    raw = pd.DataFrame(
+        {
+            "visit": [1, 2],
+            "time": [pd.Timestamp("2026-11-21 19:14"), pd.Timestamp("2026-11-21 19:20")],
+            "exp_type": ["arc", "object"],
+            "exptime": [120.0, 300.0],
+            "cameras": ["b1 r1", "b1 r1"],
+            "sequence_type": ["scienceArc", None],
+            "sequence_name": ["Arc: Neon", None],
+            "group_id": [1223, None],
+            "group_name": ["iisPersistCadence", None],
+            "iis": [False, False],
+            "status_flag": [0, None],
+            "cmd_output": ["complete", None],
+            "design_name": [None, None],
+        }
+    )
+
+    class Opdb:
+        def query_dataframe(self, sql, params):
+            assert "sequence_group" in sql and "group_id" in sql  # the group is read in the one query
+            return raw
+
+    info = runReport.readVisitInfo(Opdb(), 1, 2).set_index("visit")
+    assert info.loc[1, "groupId"] == 1223 and info.loc[1, "groupName"] == "iisPersistCadence"
+    # Negative control: a visit outside any sequence carries no group.
+    assert pd.isna(info.loc[2, "groupId"]) and pd.isna(info.loc[2, "groupName"])
+
+
+def testGroupLabelFormatsIdAndName():
+    assert runReport._groupLabel(1223, "iisPersistCadence") == "1223 · iisPersistCadence"
+    # Id alone when the group has no name, and empty when the visit has no group at all.
+    assert runReport._groupLabel(1223.0, None) == "1223"  # a float id (as pandas carries a nullable int)
+    assert runReport._groupLabel(1223, "   ") == "1223"  # negative control: a blank name is not shown
+    assert runReport._groupLabel(None, "iisPersistCadence") == ""
+
+
+def testTheEveryVisitTableShowsTheSequenceGroup():
+    tables = _tables((1, "r1", "science", _science()), (2, "r1", "science", _science()))
+    info = _taken(
+        (1, "object", "scienceObject", False, "completed"),
+        (2, "object", "scienceObject", False, "completed"),
+    )
+    info["groupId"] = [1223, None]
+    info["groupName"] = ["iisPersistCadence", None]
+    page = buildReport(tables, info=info).html
+    assert ">Group<" in page  # the column header
+    data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
+    groups = {row[0]: row[11] for row in data}
+    assert groups[1] == "1223 · iisPersistCadence"
+    # Negative control: a visit with no sequence group shows an empty cell.
+    assert groups[2] == ""
+
+
+def _twoNightSnapshot(directory):
+    """Return a snapshot with one judged visit on each of two nights (2026-11-04, then 2026-11-05)."""
+    tables = _tables(
+        (1, "r1", "science", _science(), {"gate": ("PASS", "")}),
+        (2, "r1", "science", _science(), {"gate": ("FAIL", "x offset +2.00 px >= fail 1")}),
+    )
+    times = pd.DataFrame(
+        {"pfs_visit_id": [1, 2], "time_exp_start": pd.to_datetime(["2026-11-04 23:00", "2026-11-05 23:00"])}
+    )
+    provenance = {"collection": "u/test/run (qadb snapshot)", "builtAt": "2026-11-06T08:00:00-10:00"}
+    tables = {
+        name: frame.assign(decidedAt=pd.Timestamp("2026-11-05 22:00")) for name, frame in tables.items()
+    }
+    return writeSnapshot({**tables, "visitTimes": times}, directory, provenance)
+
+
+def testNightRouteServesAPastNight(tmp_path, monkeypatch):
+    """``serve`` gives each run night its own page at ``/night/<date>``, built from the cached store."""
+    cli = _cli()
+    served = {}
+    monkeypatch.setattr(
+        cli,
+        "listen",
+        lambda application, address, port, show, debug=False: served.update(locals()),
+        raising=True,
+    )
+    cli.main(["serve", "--snapshot", str(_twoNightSnapshot(tmp_path / "snap")), "--port", "5123"])
+    # The index is the latest night (2026-11-05, visit 2), and its navigation points to the earlier one.
+    latest = _fetch(served["application"], "/").body.decode()
+    assert "Night of 2026-11-05" in latest and "const DATA = [[2," in latest
+    assert "class='nightnav'" in latest and "href='/night/2026-11-04'" in latest
+    # The dated route builds the earlier night (visit 1) on demand, with no new database read.
+    earlier = _fetch(served["application"], "/night/2026-11-04").body.decode()
+    assert "Night of 2026-11-04" in earlier and "const DATA = [[1," in earlier
+    # Negative control: the earlier night's page holds its own visit only, not the later night's.
+    assert "[[2," not in earlier and "2026-11-05 23:00" not in earlier

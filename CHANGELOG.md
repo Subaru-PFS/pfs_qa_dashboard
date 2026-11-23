@@ -8,6 +8,29 @@ or the Python API.
 
 ## [Unreleased]
 
+### Added
+
+- **The night page's time map is the run report's** (PIPE2D-2032): "The night on the clock" is now the same
+  component as the run report's "Every visit at a glance" — the By time / In order taken toggle, the
+  night-only (18:00–07:00) switch, and the arm and spectrograph selectors — scoped to the single night. The
+  clock's markup and script live in one shared partial (`data/clockControls.html`, `data/clockScript.js`) that
+  both pages render, so the two cannot drift; the night page's `AWAITING` state is carried into it.
+- **Past-night pages** (PIPE2D-2032): a `/night/<date>` page for any night of the run, built on demand from
+  the cached tables with no new database read. The night page gains earlier/later navigation and a dropdown of
+  the run's nights; `/` stays the latest night. The AG conditions tile, which needs a read of its own, is shown
+  only on the live `/` (a past night falls back to the science verdict counts).
+- **Sequence group on the visit tables** (PIPE2D-2032): the run report's "Every visit" table and the night
+  page's "Latest visits" table show each visit's sequence group as `id · name` (`iic_sequence.group_id` and
+  `sequence_group.group_name`), read by `readVisitInfo` in its one opdb query (the id alone when the group has
+  no name, blank for a visit outside any sequence).
+
+### Fixed
+
+- The night clock's tooltip read the wrong column (0.13.0): the night page emitted its per-visit rows with
+  `detectorsStatus` and `why` swapped against the indices the clock script read, so a no-result or passed-over
+  visit's tooltip showed the detectors string in place of the reason. Unifying on the run report's column order
+  fixes it.
+
 ## [0.13.0] - 2026-11-22
 
 ### Added

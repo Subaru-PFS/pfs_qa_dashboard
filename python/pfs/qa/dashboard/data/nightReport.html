@@ -18,9 +18,15 @@
   .verdict { font-size: 1.1rem; padding: 2px 12px; }
   tr.now th, tr.now td { background: var(--band); }
   .awaiting { color: var(--fg-3); font-style: italic; }
-  .cal .cells.time .sq.newest { outline: 2px solid var(--fg); outline-offset: 1px; z-index: 2; }
-  .sq.awaiting, .cal .cells.time .sq.awaiting { background: var(--series-1-soft); box-shadow: inset 0 0 0 1px var(--series-1); }
   .chip.awaiting { color: var(--series-1); background: var(--series-1-soft); }
+  /* Earlier / later night navigation and the night dropdown. */
+  .nightnav { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin-top: 10px; }
+  .nightnav .nav { font-size: 0.85rem; padding: 4px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--fg); text-decoration: none; font-variant-numeric: tabular-nums; }
+  .nightnav a.nav:hover { border-color: var(--series-1); }
+  .nightnav a.nav:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .nightnav .nav.disabled { color: var(--fg-3); opacity: 0.6; }
+  .nightnav select { font: inherit; font-size: 0.85rem; padding: 4px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--fg); font-variant-numeric: tabular-nums; }
+  .nightnav select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
   .tile.awaiting { border-color: var(--series-1); }
   /* Conditions tile: an AG-transparency summary (median + sparkline) that opens the modal below. */
   .tile.cond { cursor: pointer; text-align: left; font: inherit; color: inherit; appearance: none; -webkit-appearance: none; }
@@ -48,6 +54,7 @@
   <header>
     <h1>{{TITLE}}</h1>
     <p class="meta">{{META}}</p>
+    {{NIGHT_NAV}}
   </header>
 
   <section class="block">
@@ -56,11 +63,8 @@
 
   <section class="block">
     <h2>The night on the clock</h2>
-    <div class="legend">
-      <span><span class="sq pass"></span>PASS</span><span><span class="sq warn"></span>WARN</span><span><span class="sq fail"></span>FAIL</span><span><span class="sq unknown"></span>UNKNOWN</span><span><span class="sq awaiting"></span>AWAITING</span><span><span class="sq none"></span>NO RESULT</span>
-    </div>
-    <div class="cal" id="cal" data-night="{{NIGHT}}"></div>
-    <div class="tip" id="tip" hidden></div>
+    <p>Each visit is drawn from its start for as long as it exposed, over the night (18:00 to 07:00) or the whole day from noon; in the order taken, each visit is one square. A visit takes the worst verdict among the detectors selected. Hover or tap a visit for its number, time, kind and the detectors behind its verdict.</p>
+    {{CLOCK_CONTROLS}}
     <ul class="lead">{{LEAD}}</ul>
   </section>
 
@@ -71,7 +75,7 @@
     <p>The night's visits, most recent first. A visit that exposed the spectrograph as a science, arc or flat frame and has no QA result yet is marked <span class="awaiting">awaiting QA</span>.</p>
     <div class="tablewrap tall">
       <table>
-        <thead><tr><th scope="col" class="l">Visit</th><th scope="col" class="l">HST</th><th scope="col" class="l">Kind</th><th scope="col">Exp (s)</th><th scope="col" class="l">Arms</th><th scope="col" class="l">Verdict</th><th scope="col" class="l">Detectors</th><th scope="col" class="l">Why</th></tr></thead>
+        <thead><tr><th scope="col" class="l">Visit</th><th scope="col" class="l">HST</th><th scope="col" class="l">Kind</th><th scope="col">Exp (s)</th><th scope="col" class="l">Arms</th><th scope="col" class="l">Group</th><th scope="col" class="l">Verdict</th><th scope="col" class="l">Detectors</th><th scope="col" class="l">Why</th></tr></thead>
         <tbody>
 {{FEED}}
         </tbody>
@@ -162,61 +166,11 @@
   const DATA = {{DATA}};
   const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", UNKNOWN: "unknown", AWAITING: "awaiting", "NO RESULT": "none" };
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-  // One night on a clock from 18:00 to 07:00 (HST). Rows: [visit, hst, label, slit, exptime, arms, status, flagged, why, night, detectorsStatus].
-  const NIGHT = [18, 31]; // hours from midnight of the evening date; 07:00 next day is 31.
-  const cal = document.getElementById("cal"), tip = document.getElementById("tip");
-  const minutesOf = (r) => {
-    if (!r[1] || !r[9]) return null;
-    const [date, clock] = r[1].split(" "), [hour, minute] = clock.split(":").map(Number);
-    return (date === r[9] ? hour : hour + 24) * 60 + minute;
-  };
-  const STARTS = DATA.map(minutesOf);
-  const lasts = (i) => (+DATA[i][4] || 0) / 60;
-  const latest = DATA.reduce((best, r, i) => (STARTS[i] !== null && (best < 0 || STARTS[i] > STARTS[best]) ? i : best), -1);
-  function renderCal() {
-    const [firstHour, lastHour] = NIGHT, hours = lastHour - firstHour, from = firstHour * 60, to = lastHour * 60;
-    const along = (m) => ((m - from) / (hours * 60) * 100).toFixed(3);
-    let outside = 0, untimed = 0;
-    const cells = [];
-    DATA.forEach((r, i) => {
-      if (STARTS[i] === null) { untimed += 1; return; }
-      if (STARTS[i] + lasts(i) < from || STARTS[i] > to) { outside += 1; return; }
-      const start = Math.max(STARTS[i], from), end = Math.min(STARTS[i] + lasts(i), to);
-      const w = ((end - start) / (hours * 60) * 100).toFixed(3);
-      cells.push(`<a class="sq ${CLS[r[6]]}${i === latest ? " newest" : ""}" href="/visit/${r[0]}" data-i="${i}" style="left:${along(start)}%;width:${w}%" role="img" aria-label="Visit ${r[0]}, ${r[6]}"></a>`);
-    });
-    const step = Math.max(1, Math.ceil(hours / Math.max((cal.clientWidth - 120) / 52, 4)));
-    const ticks = [];
-    for (let h = firstHour; h <= lastHour; h += step) ticks.push(`<span style="left:${along(h * 60)}%">${String(h % 24).padStart(2, "0")}:00</span>`);
-    cal.style.setProperty("--hours", hours);
-    const notes = [];
-    if (outside) notes.push(`${outside} outside 18:00–07:00 not drawn.`);
-    if (untimed) notes.push(`${untimed} without a time not drawn.`);
-    cal.innerHTML = `<div class="night"></div><div class="axis">${ticks.join("")}</div>`
-      + `<div class="night">${cal.dataset.night}</div><div class="cells time">${cells.join("")}</div>`
-      + notes.map((n) => `<div class="night"></div><div class="night">${n}</div>`).join("");
-  }
-  const WORD = { P: "PASS", W: "WARN", F: "FAIL", U: "UNKNOWN", N: "NO RESULT" };
-  // "b1 W n3 F" -> "b1 WARN, n3 FAIL"
-  const flaggedText = (flagged) => {
-    const parts = flagged.split(" ").filter(Boolean), out = [];
-    for (let j = 0; j + 1 < parts.length; j += 2) out.push(`${parts[j]} ${WORD[parts[j + 1]] || parts[j + 1]}`);
-    return out.join(", ");
-  };
-  function showTip(sq, x, y) {
-    const r = DATA[+sq.dataset.i];
-    const detail = r[6] === "NO RESULT" ? esc(r[8]) : r[7] ? esc(flaggedText(r[7])) : r[8] ? esc(r[8]) : "all detectors";
-    tip.innerHTML = `<b>Visit ${r[0]}</b><br>${esc(r[1])} HST · ${r[4]} s<br>${esc(r[2])}${r[3] ? ", " + r[3] : ""}<br>`
-      + `<span class="chip ${CLS[r[6]]}">${r[6]}</span> ${detail}`;
-    tip.hidden = false;
-    tip.style.left = Math.max(8, Math.min(x + 12, window.innerWidth - tip.offsetWidth - 8)) + "px";
-    tip.style.top = (y + 16 + tip.offsetHeight > window.innerHeight ? y - tip.offsetHeight - 10 : y + 16) + "px";
-  }
-  cal.addEventListener("mousemove", (e) => { const sq = e.target.closest(".sq"); if (sq) showTip(sq, e.clientX, e.clientY); else tip.hidden = true; });
-  cal.addEventListener("mouseleave", () => { tip.hidden = true; });
-  cal.addEventListener("click", (e) => { const sq = e.target.closest(".sq"); if (sq) { const b = sq.getBoundingClientRect(); showTip(sq, b.left, b.bottom - 12); } });
-  renderCal();
-  window.addEventListener("resize", renderCal);
+{{CLOCK_SCRIPT}}
+
+  // The night dropdown jumps to the chosen night's page (the latest night's option points at "/").
+  const pick = document.getElementById("night-pick");
+  if (pick) pick.addEventListener("change", () => { location.href = pick.value; });
 
   // The Conditions tile opens a modal with the full AG-transparency chart; close on backdrop, ×, or Escape.
   const modal = document.getElementById("conditions");

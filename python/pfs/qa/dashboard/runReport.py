@@ -145,6 +145,8 @@ _INFO = [
     "exptime",
     "sequenceType",
     "sequenceName",
+    "groupId",
+    "groupName",
     "expType",
     "cameras",
     "iis",
@@ -165,7 +167,7 @@ SELECT v.pfs_visit_id AS visit, v.issued_at AS time, sv.exp_type,
     (SELECT string_agg(c.arm || c.sps_module_id::text, ' ' ORDER BY c.arm, c.sps_module_id)
         FROM sps_exposure e JOIN sps_camera c ON c.sps_camera_id = e.sps_camera_id
         WHERE e.pfs_visit_id = v.pfs_visit_id) AS cameras,
-    s.sequence_type, s.name AS sequence_name,
+    s.sequence_type, s.name AS sequence_name, s.group_id, g.group_name,
     position('iis' IN lower(s.cmd_str)) > 0 AS iis, st.status_flag, st.cmd_output,
     CASE WHEN d.design_name ~* 'mod[0-9].*group[0-9]' THEN d.design_name END AS design_name
 FROM pfs_visit v
@@ -173,6 +175,7 @@ JOIN sps_visit sv ON sv.pfs_visit_id = v.pfs_visit_id
 LEFT JOIN visit_set vs ON vs.pfs_visit_id = v.pfs_visit_id
 LEFT JOIN iic_sequence s ON s.iic_sequence_id = vs.iic_sequence_id
 LEFT JOIN iic_sequence_status st ON st.iic_sequence_id = s.iic_sequence_id
+LEFT JOIN sequence_group g ON g.group_id = s.group_id
 LEFT JOIN pfs_design d ON d.pfs_design_id = v.pfs_design_id
 WHERE v.pfs_visit_id BETWEEN :first AND :last
 """
@@ -380,7 +383,10 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
         ``exptime`` (the longest SpS exposure, seconds); ``expType`` (the SpS
         exposure type); ``cameras`` (those that exposed, ``b1 n1 r1``);
         ``sequenceType`` and ``sequenceName`` (the IIC sequence's type and name,
-        e.g. ``Arc: Neon``, both missing outside any sequence); ``iis`` (whether
+        e.g. ``Arc: Neon``, both missing outside any sequence); ``groupId`` and
+        ``groupName`` (the sequence group the sequence belongs to —
+        ``iic_sequence.group_id`` and ``sequence_group.group_name`` — both
+        missing outside any sequence or group); ``iis`` (whether
         the sequence's command lit the engineering fibers);
         ``sequenceEnd``, how the sequence ended (``completed``, or what it
         reported when it did not); and ``shaka``, its shaka label
@@ -396,6 +402,8 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
         "cameras",
         "sequence_type",
         "sequence_name",
+        "group_id",
+        "group_name",
         "iis",
         "status_flag",
         "cmd_output",
@@ -411,7 +419,13 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
         else:
             ended.append(str(output) if isinstance(output, str) and output else "did not complete")
     info = read.rename(
-        columns={"sequence_type": "sequenceType", "sequence_name": "sequenceName", "exp_type": "expType"}
+        columns={
+            "sequence_type": "sequenceType",
+            "sequence_name": "sequenceName",
+            "group_id": "groupId",
+            "group_name": "groupName",
+            "exp_type": "expType",
+        }
     )
     info["sequenceEnd"] = pd.Series(ended, index=info.index, dtype=object)
     # A shaka exposure (one fiber group lit) is labelled as such; a non-shaka design gives "".
@@ -475,6 +489,19 @@ def _shorten(reason: str) -> str:
 def _first(values: pd.Series) -> str:
     known = values.dropna()
     return str(known.iloc[0]) if len(known) else ""
+
+
+def _groupLabel(groupId: Any, groupName: Any) -> str:
+    """Return a visit's sequence group as ``id · name``, the id alone, or ``""`` when it has none.
+
+    ``groupId`` is ``iic_sequence.group_id`` and ``groupName`` ``sequence_group.group_name``; both are
+    missing for a visit outside any sequence, and ``groupName`` alone for a group with no name.
+    """
+    if pd.isna(groupId):
+        return ""
+    gid = str(int(groupId))
+    name = str(groupName).strip() if not pd.isna(groupName) else ""
+    return f"{gid} · {name}" if name else gid
 
 
 def _takenRow(row: Any, status: str, letter: str, why: str) -> dict:
@@ -552,8 +579,9 @@ def visitTable(
         ``· shaka MOD4 group2`` tag on a one-fiber-group exposure), ``lamp``,
         ``illumination``, ``slit``, ``arms``, ``detectors``, ``status``, ``flagged`` (``b1 W n3 F``),
         ``detectorsStatus`` (``b1P b2W ...``), ``why``, ``time``, ``hst``,
-        ``night`` (the HST date of the evening), ``exptime`` and
-        ``sequenceType``. A `NO_RESULT` row has the cameras that exposed for its
+        ``night`` (the HST date of the evening), ``exptime``,
+        ``sequenceType``, and ``groupId``/``groupName`` (the sequence group,
+        from ``info``). A `NO_RESULT` row has the cameras that exposed for its
         detectors (``b1N b2N ...``) and how its sequence ended for ``why``.
     """
     rows = []
@@ -625,6 +653,22 @@ def _theme() -> str:
     The run report and the night page share one stylesheet, inlined into each so the page fetches nothing.
     """
     return (_DATA / "theme.css").read_text()
+
+
+@functools.cache
+def _clockControls() -> str:
+    """Return the shared time-map controls (``data/clockControls.html``), for ``{{CLOCK_CONTROLS}}``.
+
+    The run report and the night page draw the same clock; the night page feeds it one night's visits.
+    Paired with `_clockScript`, which reads the page's ``DATA``, ``CLS`` and ``esc``.
+    """
+    return (_DATA / "clockControls.html").read_text()
+
+
+@functools.cache
+def _clockScript() -> str:
+    """Return the shared time-map script (``data/clockScript.js``), for ``{{CLOCK_SCRIPT}}`` inside a page's script."""
+    return (_DATA / "clockScript.js").read_text()
 
 
 @functools.cache
@@ -1170,6 +1214,7 @@ def renderPage(
             r.why,
             r.night,
             r.detectorsStatus,
+            _groupLabel(r.groupId, r.groupName),
         ]
         for r in everyVisit.itertuples()
     ]
@@ -1193,6 +1238,8 @@ def renderPage(
         "{{THEME}}": _theme(),
         "{{TITLE}}": html.escape(title),
         "{{FONT_FACES}}": _fontFaces(),
+        "{{CLOCK_CONTROLS}}": _clockControls(),
+        "{{CLOCK_SCRIPT}}": _clockScript(),
         "{{SUMMARY}}": "\n".join(summary),
         "{{CALIB_SET}}": calibSet,
         "{{CALIB_DRIFT_SM}}": calibDriftSm,
@@ -1613,6 +1660,7 @@ def routes(
     mounts: Mapping[str, str] | None = None,
     visit: Callable[[int], str] | None = None,
     residual: Callable[[int, str], bytes | None] | None = None,
+    night: Callable[[str], str] | None = None,
 ) -> list[tuple[str, type]]:
     """Return the Tornado routes serving a `ReportCache`: its pages, and `status` at ``/status``.
 
@@ -1630,6 +1678,9 @@ def routes(
     visit : callable, optional
         ``visit(n)`` returns a per-visit page's HTML; when given, it is served at
         ``/visit/<n>`` (a reserved route the night page links to).
+    night : callable, optional
+        ``night(date)`` returns a past night's page HTML (``date`` an HST evening date, ``YYYY-MM-DD``);
+        when given, it is served at ``/night/<date>`` (what the night page's dropdown and prev/next link to).
     residual : callable, optional
         ``residual(n, camera)`` returns a detector's residual plot as PNG bytes, or None when ``camera``
         is not one of the visit's detectors; when given, it is served at
@@ -1663,6 +1714,15 @@ def routes(
                 self.write(visit(int(number)))
 
         handlers.append((r"/visit/([0-9]+)", VisitHandler))
+    if night is not None:
+
+        class NightHandler(RequestHandler):
+            def get(self, date: str) -> None:
+                self.set_header("Content-Type", "text/html; charset=utf-8")
+                self.set_header("Cache-Control", "no-cache")
+                self.write(night(date))
+
+        handlers.append((r"/night/(\d{4}-\d{2}-\d{2})", NightHandler))
     if residual is not None:
         from concurrent.futures import ThreadPoolExecutor
 

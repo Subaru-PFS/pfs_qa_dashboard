@@ -320,9 +320,11 @@ def serve(args: argparse.Namespace) -> None:
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(message)s")
     logging.getLogger("tornado.access").setLevel(logging.INFO)
 
+    import pandas as pd
     from tornado.web import Application
 
     from pfs.qa.dashboard.live import QadbStore
+    from pfs.qa.dashboard.nightReport import buildNightReport
     from pfs.qa.dashboard.qadbSource import readSnapshot
     from pfs.qa.dashboard.runReport import ReportCache, infoFromTables, readVisitInfo, routes, sourceText
     from pfs.qa.dashboard.visitPage import buildVisitPage
@@ -346,18 +348,12 @@ def serve(args: argparse.Namespace) -> None:
         )
         # The set section needs the opdb listing, so without an opdb neither reader is used.
         readNormalValues = None if opdb is None else (lambda: readNormalValuesDb(qadb, args.collection))
+        source = sourceText(args.collection, opdb is not None)
         cache = ReportCache(
             store,
             readInfo,
             firstVisit=args.first_visit or None,
-            pages=pages(
-                args,
-                sourceText(args.collection, opdb is not None),
-                readTransparency,
-                readSeeing,
-                readListing,
-                readNormalValues,
-            ),
+            pages=pages(args, source, readTransparency, readSeeing, readListing, readNormalValues),
         )
         cache.update()
         # The databases are read on a thread of the cache's own from here on: a browser gets the last
@@ -367,9 +363,8 @@ def serve(args: argparse.Namespace) -> None:
         tables, provenance = readSnapshot(args.snapshot)
         store = QadbStore.fromTables(tables)
         print(f"{len(store.times)} visits in {args.snapshot}", flush=True)
-        cache = ReportCache(
-            store, info=infoFromTables(tables), pages=pages(args, snapshotSource(tables, provenance))
-        )
+        source = snapshotSource(tables, provenance)
+        cache = ReportCache(store, info=infoFromTables(tables), pages=pages(args, source))
         cache.update()
 
     def sliceStore(number: int) -> dict:
@@ -389,9 +384,28 @@ def serve(args: argparse.Namespace) -> None:
         """Build the per-visit page from the cached store (no database read)."""
         return buildVisitPage(sliceStore(number), cache.info, number, residuals=residualImages is not None)
 
+    def nightPage(date: str) -> str:
+        """Build a past night's page (``/night/<date>``) from the cached store, with no new database read.
+
+        The latest night is served pre-built at ``/``, with its AG conditions; a past night is built on the
+        request from the tables already in memory, so it reads nothing (no qadb while the refresh thread may
+        be reading it) and omits the conditions tile, which would need a read of its own.
+        """
+        raw = cache.store.raw
+        # Fixed names via get(), as sliceStore does: the refresh thread may add a table key concurrently.
+        tables = {
+            name: raw.get(name, pd.DataFrame(columns=["visit", "arm", "spectrograph"]))
+            for name in ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics", "qaGate")
+        }
+        return buildNightReport(
+            tables, info=cache.info, title=args.title, source=source, night=date, runUrl="/run"
+        ).html
+
     mounts = {"/": "night", "/run": "report"}
     print(
-        f"Serving the night page at http://{args.address}:{args.port}/ and the run report at /run", flush=True
+        f"Serving the night page at http://{args.address}:{args.port}/ (past nights at /night/<date>) "
+        "and the run report at /run",
+        flush=True,
     )
     listen(
         Application(
@@ -400,6 +414,7 @@ def serve(args: argparse.Namespace) -> None:
                 mounts,
                 visit=visitPage,
                 residual=residualImages.png if residualImages is not None else None,
+                night=nightPage,
             )
         ),
         args.address,

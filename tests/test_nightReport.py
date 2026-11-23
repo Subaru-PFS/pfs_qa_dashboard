@@ -1,5 +1,6 @@
 """Tests for the night page (``nightReport``): one night of a collection, scoped from the shared tables."""
 
+import json
 import re
 from datetime import datetime
 
@@ -9,7 +10,7 @@ import pandas as pd
 from test_runReport import _science, _tables, _taken
 
 from pfs.qa.dashboard import runReport
-from pfs.qa.dashboard.nightReport import activeNight, buildNightReport
+from pfs.qa.dashboard.nightReport import activeNight, buildNightReport, nightsOf
 
 
 def _info(visits, times, sequences=None):
@@ -230,3 +231,52 @@ def testAwaitingAndNoResultAreToldApart():
     status = made.visits.set_index("visit")["status"]
     assert status.loc[3] == "NO RESULT" and status.loc[7] == "AWAITING"
     assert "Awaiting QA (1)" in made.html and "Visits with no QA result tonight (1)" in made.html
+
+
+def testTheNightUsesTheSharedTimeMap():
+    tables = _tables((1, "r1", "science", _science(), {"gate": ("FAIL", "x offset +2.00 px >= fail 1")}))
+    page = buildNightReport(tables, info=_info([1], ["2026-11-04 21:00"])).html
+    # The night clock is now the run report's component: the layout toggle and the arm/spectrograph selectors.
+    assert 'data-group="layout"' in page and "In order taken" in page
+    assert 'data-group="arm"' in page and 'data-group="spec"' in page
+    # Its DATA is in the shared order: why at index 8, detectorsStatus at index 10.
+    row = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))[0]
+    assert row[10] == "r1F"  # detectorsStatus
+    # Negative control: the old layout put detectorsStatus at index 8 and the reason (why) at 10.
+    assert "px" in row[8] and row[8] != "r1F"
+
+
+def testTheNightFeedShowsTheSequenceGroup():
+    tables = _tables((1, "r1", "science", _science()))
+    info = _info([1], ["2026-11-04 21:00"])
+    info["groupId"] = [1223]
+    info["groupName"] = ["iisPersistCadence"]
+    page = buildNightReport(tables, info=info).html
+    assert ">Group<" in page and "1223 · iisPersistCadence" in page
+
+
+def testNightNavigationLinksEarlierLaterAndTheDropdown():
+    tables = _tables(
+        (1, "r1", "science", _science()),
+        (2, "r1", "science", _science()),
+        (3, "r1", "science", _science()),
+    )
+    info = _info([1, 2, 3], ["2026-11-04 23:00", "2026-11-05 23:00", "2026-11-06 23:00"])
+    assert nightsOf(runReport.visitTable(runReport.measure(tables), info)) == [
+        "2026-11-04",
+        "2026-11-05",
+        "2026-11-06",
+    ]
+    mid = buildNightReport(tables, info=info, night="2026-11-05").html
+    assert "class='nightnav'" in mid
+    # Earlier points at the dated page; later points at the latest night, which is the live page "/".
+    assert "href='/night/2026-11-04'" in mid and "rel='prev'" in mid
+    assert "rel='next'" in mid and "2026-11-06 &rsaquo;" in mid
+    # The dropdown lists every night (newest first), the current one selected and the latest marked.
+    assert "<option value='/night/2026-11-05' selected>2026-11-05</option>" in mid
+    assert "<option value='/'>2026-11-06 (latest)</option>" in mid
+    # The latest night has no "later"; a single-night run has no navigation at all.
+    latest = buildNightReport(tables, info=info).html
+    assert "later &rsaquo;</span>" in latest and "class='nav disabled'" in latest
+    one = buildNightReport(tables, info=_info([1], ["2026-11-04 23:00"])).html
+    assert "class='nightnav'" not in one
