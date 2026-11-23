@@ -8,8 +8,9 @@ verdict and the gate's reason beside each flagged detector, rather than
 re-deriving limits from the current registry (which may differ from the one a
 visit was judged with).
 
-The first version is the header, the per-detector verdicts, and a metric grid;
-line residuals by species and pipeline artefacts come later (PIPE2D-2023).
+The page shows the header, the per-detector verdicts, a metric grid and the
+sky-line residual by species, and — when served with the Butler — each
+detector's detector-map line-residual and extraction-QA plots.
 """
 
 import html
@@ -84,20 +85,27 @@ def _page(title: str, body: str) -> str:
         "  nav.visitnav .nolink { color: var(--fg-3); }\n"
         # The residual plots: each a full-width figure (the drawing is wide, two rows by three columns),
         # the image scaling to the column so it reads on a phone too.
-        "  .residuals { display: flex; flex-direction: column; gap: 20px; }\n"
-        "  .residuals figure { margin: 0; scroll-margin-top: 12px; }\n"
-        "  .residuals figcaption { font-weight: 600; margin: 0 0 4px; }\n"
+        "  .residuals, .extraction { display: flex; flex-direction: column; gap: 20px; }\n"
+        "  .residuals figure, .extraction figure { margin: 0; scroll-margin-top: 12px; }\n"
+        "  .residuals figcaption, .extraction figcaption { font-weight: 600; margin: 0 0 4px; }\n"
+        "  .extraction figcaption .pdf { font-weight: 400; font-size: 0.85rem; margin-left: 8px; }\n"
         # A 15:8 box (the figure's own shape) reserves the image's height before it loads, so a lazily
         # fetched plot does not shift the page; a spinner sits in the box until the opaque PNG covers it.
-        "  .residuals .imgwrap { position: relative; aspect-ratio: 15 / 8; overflow: hidden; cursor: zoom-in;"
+        "  .residuals .imgwrap, .extraction .imgwrap { position: relative; overflow: hidden; cursor: zoom-in;"
         " border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); }\n"
-        "  .residuals .imgwrap::before { content: ''; position: absolute; top: 50%; left: 50%; width: 34px;"
+        # The box reserves the image's height before it loads, so a lazily fetched plot does not shift the
+        # page: a 15:8 box for the wide residual drawing, a 3:2 box for the square-ish extraction summary.
+        "  .residuals .imgwrap { aspect-ratio: 15 / 8; }\n"
+        "  .extraction .imgwrap { aspect-ratio: 3 / 2; }\n"
+        "  .residuals .imgwrap::before, .extraction .imgwrap::before { content: ''; position: absolute;"
+        " top: 50%; left: 50%; width: 34px;"
         " height: 34px; margin: -17px 0 0 -17px; border: 3px solid var(--rule); border-top-color: var(--fg-3);"
         " border-radius: 50%; animation: residual-spin 0.8s linear infinite; }\n"
-        "  .residuals .imgwrap img { display: block; width: 100%; height: 100%; object-fit: contain;"
-        " position: relative; z-index: 1; }\n"
+        "  .residuals .imgwrap img, .extraction .imgwrap img { display: block; width: 100%; height: 100%;"
+        " object-fit: contain; position: relative; z-index: 1; }\n"
         "  @keyframes residual-spin { to { transform: rotate(360deg); } }\n"
-        "  @media (prefers-reduced-motion: reduce) { .residuals .imgwrap::before { animation: none; } }\n"
+        "  @media (prefers-reduced-motion: reduce) { .residuals .imgwrap::before,"
+        " .extraction .imgwrap::before { animation: none; } }\n"
         # Click a plot to enlarge it: a full-screen overlay, filled from the already-loaded image (no refetch).
         "  #lightbox { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center;"
         " justify-content: center; padding: 20px; background: rgba(0, 0, 0, 0.85); cursor: zoom-out; }\n"
@@ -151,13 +159,19 @@ def _header(visit: int, vrow: pd.Series | None, info: pd.Series | None) -> str:
     )
 
 
-def _links(residuals: bool = False) -> str:
-    notShown = "Pipeline PDFs are" if residuals else "Pipeline PDFs and the line-residual plots are"
+def _links(residuals: bool = False, extraction: bool = False) -> str:
+    # List what is not shown; extraction first, so the residual-only phrasing is unchanged.
+    notShown = []
+    if not extraction:
+        notShown.append("the extraction-QA plots")
+    if not residuals:
+        notShown.append("the line-residual plots")
+    tail = f" {' and '.join(notShown)} are not yet shown (served with the Butler)." if notShown else ""
     return (
         "<section class='text notes'><p class='meta'>Back to the "
         "<a href='/'>night page</a> or the <a href='/run'>run report</a>. "
-        "Every verdict here is the gate's, read back from qadb; this page judges nothing. "
-        f"{notShown} not yet shown.</p></section>"
+        "Every verdict here is the gate's, read back from qadb; this page judges nothing."
+        f"{tail}</p></section>"
     )
 
 
@@ -167,7 +181,7 @@ _LIGHTBOX_SCRIPT = (
     "<script>\n"
     "(function () {\n"
     "  var box = document.getElementById('lightbox'), big = box.querySelector('img');\n"
-    "  document.querySelectorAll('.residuals .imgwrap img').forEach(function (img) {\n"
+    "  document.querySelectorAll('.residuals .imgwrap img, .extraction .imgwrap img').forEach(function (img) {\n"
     "    img.addEventListener('click', function () {\n"
     "      big.src = img.currentSrc || img.src; big.alt = img.alt; box.hidden = false;\n"
     "    });\n"
@@ -203,9 +217,40 @@ def _residualSection(perCam: pd.DataFrame, visit: int) -> str:
         "columns, per fiber); Δy in km/s where the collection stored it (lamp and sky lines, per wavelength); "
         "the dashed bands are the gate's warn/fail limits in force now. Click a plot to enlarge it.</p>"
         f"<div class='residuals'>\n{chr(10).join(figures)}\n</div></section>"
-        "\n<div id='lightbox' hidden><img alt=''></div>"
-        f"\n{_LIGHTBOX_SCRIPT}"
     )
+
+
+def _extractionSection(perCam: pd.DataFrame, visit: int) -> str:
+    """Return the per-detector extraction-QA summary plots, in detector order.
+
+    One ``<img>`` per detector, served at ``/visit/<n>/extraction/<camera>.png`` and drawn on demand from
+    the stored ``extQaImage_pickle`` (`ExtractionImages`); beside each, a link to the task's ``extQaImage``
+    detail PDF (the 2-D image pages, which cannot be redrawn from the pickle). Extraction QA is not gated,
+    so there is no verdict chip. ``perCam`` is already in detector order (``_cameraKey``).
+    """
+    figures = []
+    for row in perCam.itertuples():
+        figures.append(
+            f"<figure id='extract-{row.camera}'><figcaption>{row.camera}"
+            f" <a class='pdf' href='/visit/{int(visit)}/extraction/{row.camera}.pdf'>detail (PDF)</a>"
+            "</figcaption>"
+            f"<div class='imgwrap'><img loading='lazy' src='/visit/{int(visit)}/extraction/{row.camera}.png' "
+            f"alt='Extraction QA summary for {row.camera}, visit {int(visit)}'></div></figure>"
+        )
+    return (
+        "<section class='block'><h2>Extraction QA</h2>"
+        "<p>Per detector, the fiber-extraction residual summary from the stored per-fiber statistics: the "
+        "chi of (image − reconstruction) / √variance — its median, spread and value at the profile peak — "
+        "and the residual fraction, per GOOD fiber against fiberId, coloured by mean extracted flux. "
+        "Extraction QA carries no gate verdict. The ‘detail (PDF)’ link opens the task's full image pages "
+        "(2-D calexp, residual and chi images). Click a plot to enlarge it.</p>"
+        f"<div class='extraction'>\n{chr(10).join(figures)}\n</div></section>"
+    )
+
+
+def _lightbox() -> str:
+    """Return the shared click-to-enlarge overlay and its script, added once for either plot section."""
+    return f"<div id='lightbox' hidden><img alt=''></div>\n{_LIGHTBOX_SCRIPT}"
 
 
 def _nav(visit: int) -> str:
@@ -328,6 +373,7 @@ def buildVisitPage(
     visit: int,
     now: datetime | None = None,
     residuals: bool = False,
+    extraction: bool = False,
 ) -> str:
     """Return the per-visit page for ``visit`` as one stand-alone HTML document.
 
@@ -349,6 +395,11 @@ def buildVisitPage(
         live ``--butler`` mode): when so, the page shows an ``<img>`` per detector
         pointing at ``/visit/<n>/residual/<camera>.png``. Off by default, so a
         snapshot or a server without the Butler shows no plot.
+    extraction : `bool`, optional
+        Whether extraction-QA plots are served (`ExtractionImages`, the live
+        ``--butler`` mode): when so, the page shows an ``<img>`` per detector
+        pointing at ``/visit/<n>/extraction/<camera>.png``, with a link to the
+        detector's detail PDF. Off by default.
     """
     now = datetime.now(HST) if now is None else now
     # Normalise to the tables `measure` needs, so a slice missing one (before the first read) still renders.
@@ -381,7 +432,7 @@ def buildVisitPage(
             + "\n"
             + note
             + "\n"
-            + _links(residuals)
+            + _links(residuals, extraction)
         )
         return _page(f"Visit {visit}", body)
 
@@ -401,6 +452,11 @@ def buildVisitPage(
     )
 
     # vrow["status"] is already the worst of the visit's detectors (visitTable), so it is the overall verdict.
+    plots = []
+    if residuals:
+        plots.append(_residualSection(perCam, int(visit)))
+    if extraction:
+        plots.append(_extractionSection(perCam, int(visit)))
     body = "\n".join(
         [
             _nav(int(visit)),
@@ -408,8 +464,9 @@ def buildVisitPage(
             _detectorTable(perCam, residuals),
             _grid(perCam),
             _speciesSection(tables),
-            *([_residualSection(perCam, int(visit))] if residuals else []),
-            _links(residuals),
+            *plots,
+            *([_lightbox()] if (residuals or extraction) else []),
+            _links(residuals, extraction),
         ]
     )
     title = f"Visit {visit}"
