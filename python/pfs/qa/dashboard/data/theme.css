@@ -30,9 +30,9 @@
     padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
   }
   main { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
-  header, section.text { max-width: 68ch; display: flex; flex-direction: column; gap: 10px; }
+  header, section.text { display: flex; flex-direction: column; gap: 10px; }
   section.block { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-  section.block > p { max-width: 68ch; color: var(--fg-2); margin: 0; }
+  section.block > p { color: var(--fg-2); margin: 0; }
   h1 { font-family: var(--display); font-weight: 600; font-size: 2.6rem; line-height: 1.15; margin: 0; text-wrap: balance; }
   h2 { font-family: var(--display); font-weight: 600; font-size: 1.8rem; line-height: 1.2; margin: 0; }
   p { margin: 0; }

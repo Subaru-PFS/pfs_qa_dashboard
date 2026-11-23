@@ -123,7 +123,9 @@ def testTheNightFlipsToTheLatestExposureAwaitingQa():
     # The page flips to the newer night and shows the exposure awaiting QA.
     assert made.visits["night"].unique().tolist() == ["2026-11-05"]
     assert made.visits.set_index("visit").loc[2, "status"] == "AWAITING"
-    assert "Awaiting QA (1)" in made.html and "awaiting QA" in made.html
+    # The "Latest visits" feed marks it; there is no separate Awaiting QA section (removed as redundant).
+    assert "awaiting QA" in made.html
+    assert "Awaiting QA (" not in made.html
     # The latest tile is that exposure.
     assert "<span class='big'>2</span>" in made.html[: made.html.index("The night on the clock")]
     # Negative control: the run report never shows a visit newer than the latest judged.
@@ -230,7 +232,7 @@ def testAwaitingAndNoResultAreToldApart():
     made = buildNightReport(tables, info=info)
     status = made.visits.set_index("visit")["status"]
     assert status.loc[3] == "NO RESULT" and status.loc[7] == "AWAITING"
-    assert "Awaiting QA (1)" in made.html and "Visits with no QA result tonight (1)" in made.html
+    assert "Visits with no QA result tonight (1)" in made.html
     # In the "Latest visits" feed, only the still-pending visit reads "awaiting QA" in the Detectors
     # column; a no-result visit (QA passed over, none coming) reads "–", not "awaiting QA".
     feed = made.html.split("Latest visits", 1)[1].split("<section", 1)[0]

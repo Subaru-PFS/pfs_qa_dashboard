@@ -24,6 +24,12 @@ or the Python API.
   taken under the one command), read by `readVisitInfo` in its one opdb query; blank for a visit outside any
   sequence.
 
+### Changed
+
+- The night page drops its separate "Awaiting QA" section — the "Latest visits" table already marks those
+  visits, so it was redundant. Section explanation paragraphs now span the full content width (were capped near
+  half), which trims vertical space on both the night page and the run report.
+
 ### Fixed
 
 - The night page's "Latest visits" table labelled a NO RESULT visit "awaiting QA" in its Detectors column, the

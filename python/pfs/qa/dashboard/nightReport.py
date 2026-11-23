@@ -266,28 +266,6 @@ def _noResultSection(visits: pd.DataFrame) -> str:
     )
 
 
-def _awaitingSection(visits: pd.DataFrame) -> str:
-    awaiting = visits[visits["status"] == AWAITING]
-    if awaiting.empty:
-        return ""
-    order = awaiting.sort_values(["time", "visit"], ascending=[False, False], na_position="last")
-    rows = "\n".join(
-        f"<tr><th scope='row'><a href='/visit/{row.visit}'>{row.visit}</a></th>"
-        f"<td class='l'>{html.escape(row.hst)}</td><td class='l'>{html.escape(row.label)}</td>"
-        f"<td class='l'>{row.slit}</td><td>{_fmtExp(row.exptime)}</td><td class='l'>{row.arms}</td></tr>"
-        for row in order.itertuples()
-    )
-    return (
-        f"<section class='block' id='awaiting'><h2>Awaiting QA ({len(awaiting)})</h2>"
-        "<p>Taken after the latest visit judged, with no QA result yet — most recent first. Their verdicts "
-        "appear here as the pipeline catches up.</p>"
-        "<div class='tablewrap tall'><table><thead><tr><th scope='col' class='l'>Visit</th>"
-        "<th scope='col' class='l'>HST</th><th scope='col' class='l'>Kind</th><th scope='col' class='l'>Lit through</th>"
-        "<th scope='col'>Exp (s)</th><th scope='col' class='l'>Arms</th></tr></thead>"
-        f"<tbody>\n{rows}\n</tbody></table></div></section>"
-    )
-
-
 def renderNight(
     visits: pd.DataFrame,
     images: pd.DataFrame,
@@ -352,7 +330,6 @@ def renderNight(
         "{{TILES}}": tiles,
         "{{LEAD}}": lead,
         "{{CONDITIONS_MODAL}}": condModal,
-        "{{AWAITING_SECTION}}": _awaitingSection(visits),
         "{{FEED}}": _feedRows(visits),
         "{{CALIB_DRIFT_SM}}": calibDriftSm,
         "{{CALIB_DRIFT_ARM}}": calibDriftArm,
