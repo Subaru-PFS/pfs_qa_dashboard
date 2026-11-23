@@ -246,13 +246,12 @@ def testTheNightUsesTheSharedTimeMap():
     assert "px" in row[8] and row[8] != "r1F"
 
 
-def testTheNightFeedShowsTheSequenceGroup():
+def testTheNightFeedShowsTheSequenceId():
     tables = _tables((1, "r1", "science", _science()))
     info = _info([1], ["2026-11-04 21:00"])
-    info["groupId"] = [1223]
-    info["groupName"] = ["iisPersistCadence"]
+    info["sequenceId"] = [70127]
     page = buildNightReport(tables, info=info).html
-    assert ">Group<" in page and "1223 · iisPersistCadence" in page
+    assert ">Sequence<" in page and ">70127<" in page
 
 
 def testNightNavigationLinksEarlierLaterAndTheDropdown():

@@ -19,10 +19,10 @@ or the Python API.
   the cached tables with no new database read. The night page gains earlier/later navigation and a dropdown of
   the run's nights; `/` stays the latest night. The AG conditions tile, which needs a read of its own, is shown
   only on the live `/` (a past night falls back to the science verdict counts).
-- **Sequence group on the visit tables** (PIPE2D-2032): the run report's "Every visit" table and the night
-  page's "Latest visits" table show each visit's sequence group as `id · name` (`iic_sequence.group_id` and
-  `sequence_group.group_name`), read by `readVisitInfo` in its one opdb query (the id alone when the group has
-  no name, blank for a visit outside any sequence).
+- **Sequence id on the visit tables** (PIPE2D-2032): the run report's "Every visit" table and the night page's
+  "Latest visits" table show each visit's IIC sequence id (`visit_set.iic_sequence_id`, shared by every visit
+  taken under the one command), read by `readVisitInfo` in its one opdb query; blank for a visit outside any
+  sequence.
 
 ### Fixed
 

@@ -145,8 +145,7 @@ _INFO = [
     "exptime",
     "sequenceType",
     "sequenceName",
-    "groupId",
-    "groupName",
+    "sequenceId",
     "expType",
     "cameras",
     "iis",
@@ -167,7 +166,7 @@ SELECT v.pfs_visit_id AS visit, v.issued_at AS time, sv.exp_type,
     (SELECT string_agg(c.arm || c.sps_module_id::text, ' ' ORDER BY c.arm, c.sps_module_id)
         FROM sps_exposure e JOIN sps_camera c ON c.sps_camera_id = e.sps_camera_id
         WHERE e.pfs_visit_id = v.pfs_visit_id) AS cameras,
-    s.sequence_type, s.name AS sequence_name, s.group_id, g.group_name,
+    vs.iic_sequence_id, s.sequence_type, s.name AS sequence_name,
     position('iis' IN lower(s.cmd_str)) > 0 AS iis, st.status_flag, st.cmd_output,
     CASE WHEN d.design_name ~* 'mod[0-9].*group[0-9]' THEN d.design_name END AS design_name
 FROM pfs_visit v
@@ -175,7 +174,6 @@ JOIN sps_visit sv ON sv.pfs_visit_id = v.pfs_visit_id
 LEFT JOIN visit_set vs ON vs.pfs_visit_id = v.pfs_visit_id
 LEFT JOIN iic_sequence s ON s.iic_sequence_id = vs.iic_sequence_id
 LEFT JOIN iic_sequence_status st ON st.iic_sequence_id = s.iic_sequence_id
-LEFT JOIN sequence_group g ON g.group_id = s.group_id
 LEFT JOIN pfs_design d ON d.pfs_design_id = v.pfs_design_id
 WHERE v.pfs_visit_id BETWEEN :first AND :last
 """
@@ -383,11 +381,10 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
         ``exptime`` (the longest SpS exposure, seconds); ``expType`` (the SpS
         exposure type); ``cameras`` (those that exposed, ``b1 n1 r1``);
         ``sequenceType`` and ``sequenceName`` (the IIC sequence's type and name,
-        e.g. ``Arc: Neon``, both missing outside any sequence); ``groupId`` and
-        ``groupName`` (the sequence group the sequence belongs to —
-        ``iic_sequence.group_id`` and ``sequence_group.group_name`` — both
-        missing outside any sequence or group); ``iis`` (whether
-        the sequence's command lit the engineering fibers);
+        e.g. ``Arc: Neon``, both missing outside any sequence); ``sequenceId``
+        (``visit_set.iic_sequence_id`` — the IIC sequence the visit belongs to,
+        shared by every visit taken under the one command, missing outside any
+        sequence); ``iis`` (whether the sequence's command lit the engineering fibers);
         ``sequenceEnd``, how the sequence ended (``completed``, or what it
         reported when it did not); and ``shaka``, its shaka label
         (``shaka MOD4 group2``) when it was taken on a one-fiber-group design,
@@ -402,8 +399,7 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
         "cameras",
         "sequence_type",
         "sequence_name",
-        "group_id",
-        "group_name",
+        "iic_sequence_id",
         "iis",
         "status_flag",
         "cmd_output",
@@ -422,8 +418,7 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
         columns={
             "sequence_type": "sequenceType",
             "sequence_name": "sequenceName",
-            "group_id": "groupId",
-            "group_name": "groupName",
+            "iic_sequence_id": "sequenceId",
             "exp_type": "expType",
         }
     )
@@ -491,17 +486,9 @@ def _first(values: pd.Series) -> str:
     return str(known.iloc[0]) if len(known) else ""
 
 
-def _groupLabel(groupId: Any, groupName: Any) -> str:
-    """Return a visit's sequence group as ``id · name``, the id alone, or ``""`` when it has none.
-
-    ``groupId`` is ``iic_sequence.group_id`` and ``groupName`` ``sequence_group.group_name``; both are
-    missing for a visit outside any sequence, and ``groupName`` alone for a group with no name.
-    """
-    if pd.isna(groupId):
-        return ""
-    gid = str(int(groupId))
-    name = str(groupName).strip() if not pd.isna(groupName) else ""
-    return f"{gid} · {name}" if name else gid
+def _sequenceLabel(sequenceId: Any) -> str:
+    """Return a visit's IIC sequence id (``visit_set.iic_sequence_id``) as text, or ``""`` when it has none."""
+    return "" if pd.isna(sequenceId) else str(int(sequenceId))
 
 
 def _takenRow(row: Any, status: str, letter: str, why: str) -> dict:
@@ -580,8 +567,8 @@ def visitTable(
         ``illumination``, ``slit``, ``arms``, ``detectors``, ``status``, ``flagged`` (``b1 W n3 F``),
         ``detectorsStatus`` (``b1P b2W ...``), ``why``, ``time``, ``hst``,
         ``night`` (the HST date of the evening), ``exptime``,
-        ``sequenceType``, and ``groupId``/``groupName`` (the sequence group,
-        from ``info``). A `NO_RESULT` row has the cameras that exposed for its
+        ``sequenceType``, and ``sequenceId`` (the IIC sequence id, from
+        ``info``). A `NO_RESULT` row has the cameras that exposed for its
         detectors (``b1N b2N ...``) and how its sequence ended for ``why``.
     """
     rows = []
@@ -1214,7 +1201,7 @@ def renderPage(
             r.why,
             r.night,
             r.detectorsStatus,
-            _groupLabel(r.groupId, r.groupName),
+            _sequenceLabel(r.sequenceId),
         ]
         for r in everyVisit.itertuples()
     ]

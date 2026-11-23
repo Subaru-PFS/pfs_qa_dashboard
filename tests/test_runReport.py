@@ -846,7 +846,7 @@ def testVisitTableTagsShakaInLabel():
     assert visits.loc[2, "label"] == "arc, Neon"  # negative control: the fully lit arc carries no tag
 
 
-def testReadVisitInfoCarriesTheSequenceGroup():
+def testReadVisitInfoCarriesTheSequenceId():
     raw = pd.DataFrame(
         {
             "visit": [1, 2],
@@ -856,8 +856,7 @@ def testReadVisitInfoCarriesTheSequenceGroup():
             "cameras": ["b1 r1", "b1 r1"],
             "sequence_type": ["scienceArc", None],
             "sequence_name": ["Arc: Neon", None],
-            "group_id": [1223, None],
-            "group_name": ["iisPersistCadence", None],
+            "iic_sequence_id": [70127, None],
             "iis": [False, False],
             "status_flag": [0, None],
             "cmd_output": ["complete", None],
@@ -867,38 +866,36 @@ def testReadVisitInfoCarriesTheSequenceGroup():
 
     class Opdb:
         def query_dataframe(self, sql, params):
-            assert "sequence_group" in sql and "group_id" in sql  # the group is read in the one query
+            assert "iic_sequence_id" in sql  # the sequence id is read in the one query
             return raw
 
     info = runReport.readVisitInfo(Opdb(), 1, 2).set_index("visit")
-    assert info.loc[1, "groupId"] == 1223 and info.loc[1, "groupName"] == "iisPersistCadence"
-    # Negative control: a visit outside any sequence carries no group.
-    assert pd.isna(info.loc[2, "groupId"]) and pd.isna(info.loc[2, "groupName"])
+    assert info.loc[1, "sequenceId"] == 70127
+    # Negative control: a visit outside any sequence carries no sequence id.
+    assert pd.isna(info.loc[2, "sequenceId"])
 
 
-def testGroupLabelFormatsIdAndName():
-    assert runReport._groupLabel(1223, "iisPersistCadence") == "1223 · iisPersistCadence"
-    # Id alone when the group has no name, and empty when the visit has no group at all.
-    assert runReport._groupLabel(1223.0, None) == "1223"  # a float id (as pandas carries a nullable int)
-    assert runReport._groupLabel(1223, "   ") == "1223"  # negative control: a blank name is not shown
-    assert runReport._groupLabel(None, "iisPersistCadence") == ""
+def testSequenceLabelFormatsTheId():
+    assert runReport._sequenceLabel(70127) == "70127"
+    assert runReport._sequenceLabel(70127.0) == "70127"  # a float id (as pandas carries a nullable int)
+    # Negative control: a visit with no sequence shows nothing.
+    assert runReport._sequenceLabel(None) == ""
 
 
-def testTheEveryVisitTableShowsTheSequenceGroup():
+def testTheEveryVisitTableShowsTheSequenceId():
     tables = _tables((1, "r1", "science", _science()), (2, "r1", "science", _science()))
     info = _taken(
         (1, "object", "scienceObject", False, "completed"),
         (2, "object", "scienceObject", False, "completed"),
     )
-    info["groupId"] = [1223, None]
-    info["groupName"] = ["iisPersistCadence", None]
+    info["sequenceId"] = [70127, None]
     page = buildReport(tables, info=info).html
-    assert ">Group<" in page  # the column header
+    assert ">Sequence<" in page  # the column header
     data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
-    groups = {row[0]: row[11] for row in data}
-    assert groups[1] == "1223 · iisPersistCadence"
-    # Negative control: a visit with no sequence group shows an empty cell.
-    assert groups[2] == ""
+    sequences = {row[0]: row[11] for row in data}
+    assert sequences[1] == "70127"
+    # Negative control: a visit with no sequence shows an empty cell.
+    assert sequences[2] == ""
 
 
 def _twoNightSnapshot(directory):
