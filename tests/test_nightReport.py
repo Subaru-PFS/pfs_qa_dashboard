@@ -231,6 +231,13 @@ def testAwaitingAndNoResultAreToldApart():
     status = made.visits.set_index("visit")["status"]
     assert status.loc[3] == "NO RESULT" and status.loc[7] == "AWAITING"
     assert "Awaiting QA (1)" in made.html and "Visits with no QA result tonight (1)" in made.html
+    # In the "Latest visits" feed, only the still-pending visit reads "awaiting QA" in the Detectors
+    # column; a no-result visit (QA passed over, none coming) reads "–", not "awaiting QA".
+    feed = made.html.split("Latest visits", 1)[1].split("<section", 1)[0]
+    row3 = feed.split("/visit/3'>3</a>", 1)[1].split("</tr>", 1)[0]
+    row7 = feed.split("/visit/7'>7</a>", 1)[1].split("</tr>", 1)[0]
+    assert "awaiting QA" not in row3 and "–" in row3
+    assert "awaiting QA" in row7
 
 
 def testTheNightUsesTheSharedTimeMap():

@@ -205,9 +205,12 @@ def _feedRows(visits: pd.DataFrame) -> str:
     out = []
     for row in order.itertuples():
         when = html.escape(row.hst) if row.hst else "<span class='awaiting'>—</span>"
-        if row.status in _PENDING:
+        if row.status == AWAITING:
+            # Taken after the latest judged visit, so its QA may still be on the way.
             detectors = "<span class='awaiting'>awaiting QA</span>"
         else:
+            # A judged visit shows its flagged detectors; a NO_RESULT one (passed over, no QA coming)
+            # has none, so it reads "–" like a visit with nothing flagged.
             detectors = html.escape(_flaggedText(row.flagged)) or "–"
         out.append(
             f"<tr><th scope='row'><a href='/visit/{row.visit}'>{row.visit}</a></th>"
