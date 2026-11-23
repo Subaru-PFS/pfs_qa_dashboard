@@ -164,6 +164,8 @@
   const DATA = {{DATA}};
   const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", UNKNOWN: "unknown", AWAITING: "awaiting", "NO RESULT": "none" };
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  // The night page opens the time map in order taken, with engineering-fiber frames shown.
+  const CLOCK_DEFAULTS = { layout: "order", eng: true };
 {{CLOCK_SCRIPT}}
 
   // The night dropdown jumps to the chosen night's page (the latest night's option points at "/").

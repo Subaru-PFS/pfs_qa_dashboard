@@ -288,3 +288,28 @@ def testNightNavigationLinksEarlierLaterAndTheDropdown():
     assert "later &rsaquo;</span>" in latest and "class='nav disabled'" in latest
     one = buildNightReport(tables, info=_info([1], ["2026-11-04 23:00"])).html
     assert "class='nightnav'" not in one
+
+
+def testTheSummaryTilePillsSumToTheTotal():
+    from pfs.qa.dashboard.nightReport import _summaryTile
+
+    # One visit of every status a night can hold; the big number counts them all.
+    visits = pd.DataFrame({"status": ["PASS", "PASS", "WARN", "FAIL", "UNKNOWN", "NO RESULT", "AWAITING"]})
+    tile = _summaryTile("Tonight", visits)
+    big = int(re.search(r"class='big'>(\d+)<", tile).group(1))
+    pills = [int(n) for n in re.findall(r"class='chip [a-z ]+'>(\d+) ", tile)]
+    assert big == len(visits) == 7
+    # Every status is represented, so the chips add up to the big number.
+    assert sum(pills) == big
+    # Negative control: the UNKNOWN visit now has its own chip (the bug left it out of the chips).
+    assert "1 UNKNOWN" in tile
+
+
+def testTheNightTimeMapDefaultsToOrderTakenWithEngineering():
+    tables = _tables((1, "r1", "science", _science()))
+    night = buildNightReport(tables, info=_info([1], ["2026-11-04 21:00"])).html
+    assert 'const CLOCK_DEFAULTS = { layout: "order", eng: true }' in night
+    # Negative control: the run report defines no override (the clock script only reads it), so it keeps
+    # By time with engineering off.
+    run = runReport.buildReport(tables, info=_info([1], ["2026-11-04 21:00"])).html
+    assert "const CLOCK_DEFAULTS" not in run and 'layout: "order"' not in run

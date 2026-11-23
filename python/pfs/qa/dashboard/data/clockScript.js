@@ -8,7 +8,13 @@
 (function () {
   const cal = document.getElementById("cal"), tip = document.getElementById("tip");
   if (!cal) return;
-  const sel = { show: new Set(["science", "cal"]), arm: "", spec: "", layout: "time", night: true };
+  // Per-page starting state, if the page sets CLOCK_DEFAULTS: `layout` ("time" or "order") and `eng`
+  // (whether Engineering fibers start shown). Absent (the run report) means By time with engineering off.
+  const defaults = typeof CLOCK_DEFAULTS !== "undefined" ? CLOCK_DEFAULTS : {};
+  const sel = {
+    show: new Set(["science", "cal"]), arm: "", spec: "",
+    layout: defaults.layout === "order" ? "order" : "time", night: true,
+  };
   // Detector letters: N no QA result, A taken but not yet judged (night page), U judged but unknown.
   const WORD = { P: "PASS", W: "WARN", F: "FAIL", U: "UNKNOWN", N: "NO RESULT", A: "AWAITING" };
   const RANK = { A: -2, N: -1, U: 0, P: 1, W: 2, F: 3 };
@@ -92,13 +98,19 @@
     renderCal();
   }));
   const fNight = document.getElementById("f-night");
+  // Apply the per-page defaults to the controls before reading them: show Engineering fibers if asked, and
+  // reflect the chosen layout in the toggle and the night-only switch (which only applies to By time).
+  if (defaults.eng) { const eng = document.getElementById("f-show-eng"); if (eng) eng.checked = true; }
+  document.querySelectorAll('.seg[data-group="layout"] button').forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.value === sel.layout)));
+  fNight.disabled = sel.layout !== "time";
   document.querySelectorAll("input[data-show]").forEach((box) => box.addEventListener("change", () => {
     if (box.checked) sel.show.add(box.dataset.show); else sel.show.delete(box.dataset.show);
     renderCal();
   }));
   fNight.addEventListener("change", () => { sel.night = fNight.checked; renderCal(); });
   document.querySelector('.seg[data-group="layout"]').addEventListener("click", () => { fNight.disabled = sel.layout !== "time"; });
-  // A reload can keep the boxes as they were left: start from what they show.
+  // Start from what the controls now show (the per-page defaults above, kept across a reload).
   sel.show = new Set([...document.querySelectorAll("input[data-show]")].filter((box) => box.checked).map((box) => box.dataset.show));
   sel.night = fNight.checked;
   renderCal();

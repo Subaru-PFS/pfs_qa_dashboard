@@ -182,9 +182,11 @@ def _latestTile(visits: pd.DataFrame, images: pd.DataFrame) -> str:
 
 def _summaryTile(label: str, visits: pd.DataFrame) -> str:
     counts = visits["status"].value_counts()
+    # Every status a visit can carry gets a chip, so the chips add up to the big number (all visits taken):
+    # the gate's verdicts, UNKNOWN (judged but nothing decidable, or no stored verdict), then NO RESULT / AWAITING.
     chips = "".join(
         f"<span class='chip {k.lower()}'>{int(counts.get(k, 0))} {k}</span>"
-        for k in ("PASS", "WARN", "FAIL")
+        for k in ("PASS", "WARN", "FAIL", "UNKNOWN")
         if counts.get(k, 0)
     )
     for status in _PENDING:
