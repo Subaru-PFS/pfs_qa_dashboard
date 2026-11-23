@@ -8,6 +8,38 @@ or the Python API.
 
 ## [Unreleased]
 
+### Added
+
+- **The night page's time map is the run report's** (PIPE2D-2032): "The night on the clock" is now the same
+  component as the run report's "Every visit at a glance" — the By time / In order taken toggle, the
+  night-only (18:00–07:00) switch, and the arm and spectrograph selectors — scoped to the single night. The
+  clock's markup and script live in one shared partial (`data/clockControls.html`, `data/clockScript.js`) that
+  both pages render, so the two cannot drift; the night page's `AWAITING` state is carried into it.
+- **Past-night pages** (PIPE2D-2032): a `/night/<date>` page for any night of the run, built on demand from
+  the cached tables with no new database read. The night page gains earlier/later navigation and a dropdown of
+  the run's nights; `/` stays the latest night. The AG conditions tile, which needs a read of its own, is shown
+  only on the live `/` (a past night falls back to the science verdict counts).
+- **Sequence id on the visit tables** (PIPE2D-2032): the run report's "Every visit" table and the night page's
+  "Latest visits" table show each visit's IIC sequence id (`visit_set.iic_sequence_id`, shared by every visit
+  taken under the one command), read by `readVisitInfo` in its one opdb query; blank for a visit outside any
+  sequence.
+
+### Changed
+
+- The night page drops its separate "Awaiting QA" section — the "Latest visits" table already marks those
+  visits, so it was redundant. Section explanation paragraphs now span the full content width (were capped near
+  half), which trims vertical space on both the night page and the run report.
+
+### Fixed
+
+- The night page's "Latest visits" table labelled a NO RESULT visit "awaiting QA" in its Detectors column, the
+  same as a genuinely pending AWAITING visit. A NO RESULT visit was passed over (its QA never ran, e.g.
+  reduceExposure errored) so none is coming; it now reads "–", and only an AWAITING visit reads "awaiting QA".
+- The night clock's tooltip read the wrong column (0.13.0): the night page emitted its per-visit rows with
+  `detectorsStatus` and `why` swapped against the indices the clock script read, so a no-result or passed-over
+  visit's tooltip showed the detectors string in place of the reason. Unifying on the run report's column order
+  fixes it.
+
 ## [0.14.0] - 2026-11-22
 
 ### Added

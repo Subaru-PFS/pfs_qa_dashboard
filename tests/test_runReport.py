@@ -844,3 +844,93 @@ def testVisitTableTagsShakaInLabel():
     visits = runReport.visitTable(measure(tables), info).set_index("visit")
     assert visits.loc[1, "label"] == "arc, Neon · shaka MOD4 group2"
     assert visits.loc[2, "label"] == "arc, Neon"  # negative control: the fully lit arc carries no tag
+
+
+def testReadVisitInfoCarriesTheSequenceId():
+    raw = pd.DataFrame(
+        {
+            "visit": [1, 2],
+            "time": [pd.Timestamp("2026-11-21 19:14"), pd.Timestamp("2026-11-21 19:20")],
+            "exp_type": ["arc", "object"],
+            "exptime": [120.0, 300.0],
+            "cameras": ["b1 r1", "b1 r1"],
+            "sequence_type": ["scienceArc", None],
+            "sequence_name": ["Arc: Neon", None],
+            "iic_sequence_id": [70127, None],
+            "iis": [False, False],
+            "status_flag": [0, None],
+            "cmd_output": ["complete", None],
+            "design_name": [None, None],
+        }
+    )
+
+    class Opdb:
+        def query_dataframe(self, sql, params):
+            assert "iic_sequence_id" in sql  # the sequence id is read in the one query
+            return raw
+
+    info = runReport.readVisitInfo(Opdb(), 1, 2).set_index("visit")
+    assert info.loc[1, "sequenceId"] == 70127
+    # Negative control: a visit outside any sequence carries no sequence id.
+    assert pd.isna(info.loc[2, "sequenceId"])
+
+
+def testSequenceLabelFormatsTheId():
+    assert runReport._sequenceLabel(70127) == "70127"
+    assert runReport._sequenceLabel(70127.0) == "70127"  # a float id (as pandas carries a nullable int)
+    # Negative control: a visit with no sequence shows nothing.
+    assert runReport._sequenceLabel(None) == ""
+
+
+def testTheEveryVisitTableShowsTheSequenceId():
+    tables = _tables((1, "r1", "science", _science()), (2, "r1", "science", _science()))
+    info = _taken(
+        (1, "object", "scienceObject", False, "completed"),
+        (2, "object", "scienceObject", False, "completed"),
+    )
+    info["sequenceId"] = [70127, None]
+    page = buildReport(tables, info=info).html
+    assert ">Sequence<" in page  # the column header
+    data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
+    sequences = {row[0]: row[11] for row in data}
+    assert sequences[1] == "70127"
+    # Negative control: a visit with no sequence shows an empty cell.
+    assert sequences[2] == ""
+
+
+def _twoNightSnapshot(directory):
+    """Return a snapshot with one judged visit on each of two nights (2026-11-04, then 2026-11-05)."""
+    tables = _tables(
+        (1, "r1", "science", _science(), {"gate": ("PASS", "")}),
+        (2, "r1", "science", _science(), {"gate": ("FAIL", "x offset +2.00 px >= fail 1")}),
+    )
+    times = pd.DataFrame(
+        {"pfs_visit_id": [1, 2], "time_exp_start": pd.to_datetime(["2026-11-04 23:00", "2026-11-05 23:00"])}
+    )
+    provenance = {"collection": "u/test/run (qadb snapshot)", "builtAt": "2026-11-06T08:00:00-10:00"}
+    tables = {
+        name: frame.assign(decidedAt=pd.Timestamp("2026-11-05 22:00")) for name, frame in tables.items()
+    }
+    return writeSnapshot({**tables, "visitTimes": times}, directory, provenance)
+
+
+def testNightRouteServesAPastNight(tmp_path, monkeypatch):
+    """``serve`` gives each run night its own page at ``/night/<date>``, built from the cached store."""
+    cli = _cli()
+    served = {}
+    monkeypatch.setattr(
+        cli,
+        "listen",
+        lambda application, address, port, show, debug=False: served.update(locals()),
+        raising=True,
+    )
+    cli.main(["serve", "--snapshot", str(_twoNightSnapshot(tmp_path / "snap")), "--port", "5123"])
+    # The index is the latest night (2026-11-05, visit 2), and its navigation points to the earlier one.
+    latest = _fetch(served["application"], "/").body.decode()
+    assert "Night of 2026-11-05" in latest and "const DATA = [[2," in latest
+    assert "class='nightnav'" in latest and "href='/night/2026-11-04'" in latest
+    # The dated route builds the earlier night (visit 1) on demand, with no new database read.
+    earlier = _fetch(served["application"], "/night/2026-11-04").body.decode()
+    assert "Night of 2026-11-04" in earlier and "const DATA = [[1," in earlier
+    # Negative control: the earlier night's page holds its own visit only, not the later night's.
+    assert "[[2," not in earlier and "2026-11-05 23:00" not in earlier

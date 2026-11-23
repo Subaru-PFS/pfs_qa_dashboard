@@ -26,7 +26,10 @@ from pfs.qa.dashboard.runReport import (
     NO_RESULT,
     Report,
     _calibrationOffsets,
+    _clockControls,
+    _clockScript,
     _fontFaces,
+    _sequenceLabel,
     _tally,
     _theme,
     calibDriftSection,
@@ -37,7 +40,7 @@ from pfs.qa.dashboard.runReport import (
     visitTable,
 )
 
-__all__ = ["DATA_COLUMNS", "activeNight", "buildNightReport", "renderNight"]
+__all__ = ["DATA_COLUMNS", "activeNight", "buildNightReport", "nightsOf", "renderNight"]
 
 _log = logging.getLogger(__name__)
 
@@ -56,17 +59,63 @@ _CLASS = {
     AWAITING: "awaiting",
 }
 
-#: The per-visit row the night clock reads, in this order (as `runReport`'s page uses).
+#: The per-visit row the shared time map reads, in the order `runReport`'s page emits (so one clock
+#: script serves both): ``[visit, hst, label, slit, exptime, arms, status, flagged, why, night,
+#: detectorsStatus]``.
 DATA_COLUMNS = [
     *("visit", "hst", "label", "slit", "exptime", "arms"),
-    *("status", "flagged", "detectorsStatus", "night", "why"),
+    *("status", "flagged", "why", "night", "detectorsStatus"),
 ]
 
 
 def activeNight(visits: pd.DataFrame) -> str:
     """Return the most recent night (HST evening date) with a visit, or ``""`` when none has a time."""
-    nights = sorted(night for night in visits["night"].unique() if night)
-    return nights[-1] if nights else ""
+    return nightsOf(visits)[-1] if len(nightsOf(visits)) else ""
+
+
+def nightsOf(visits: pd.DataFrame) -> list[str]:
+    """Return the nights (HST evening dates) with a visit, oldest first."""
+    return sorted(night for night in visits["night"].unique() if night)
+
+
+def _nightHref(night: str, latest: str) -> str:
+    """Return a night's URL: the live page (``/``) for the latest night, else its dated page."""
+    return "/" if night and night == latest else f"/night/{night}"
+
+
+def _nightNav(night: str, nights: list[str]) -> str:
+    """Return the night-to-night navigation (earlier / later links and a dropdown), or ``""`` with no choice.
+
+    Links point at ``/night/<date>``; the latest night points at ``/`` so the live page stays canonical.
+    """
+    nights = [n for n in nights if n]
+    if not night or len(nights) < 2:
+        return ""
+    latest = nights[-1]
+    here = nights.index(night) if night in nights else None
+    earlier = nights[here - 1] if here not in (None, 0) else None
+    later = nights[here + 1] if here is not None and here < len(nights) - 1 else None
+    options = "".join(
+        f"<option value='{_nightHref(n, latest)}'{' selected' if n == night else ''}>"
+        f"{html.escape(n)}{' (latest)' if n == latest else ''}</option>"
+        for n in reversed(nights)
+    )
+    earlierLink = (
+        f"<a class='nav' href='{_nightHref(earlier, latest)}' rel='prev'>&lsaquo; {html.escape(earlier)}</a>"
+        if earlier
+        else "<span class='nav disabled'>&lsaquo; earlier</span>"
+    )
+    laterLink = (
+        f"<a class='nav' href='{_nightHref(later, latest)}' rel='next'>{html.escape(later)} &rsaquo;</a>"
+        if later
+        else "<span class='nav disabled'>later &rsaquo;</span>"
+    )
+    return (
+        "<nav class='nightnav' aria-label='Night'>"
+        f"{earlierLink}"
+        f"<select id='night-pick' aria-label='Jump to a night'>{options}</select>"
+        f"{laterLink}</nav>"
+    )
 
 
 def _fmtExp(exptime: Any) -> str:
@@ -74,7 +123,7 @@ def _fmtExp(exptime: Any) -> str:
 
 
 def _dataRows(visits: pd.DataFrame) -> list[list]:
-    """Return the night clock's rows, newest-last is irrelevant: the clock places by time."""
+    """Return the clock's rows in `DATA_COLUMNS` order; order is irrelevant, the clock places by time."""
     rows = []
     for row in visits.itertuples():
         rows.append(
@@ -87,9 +136,9 @@ def _dataRows(visits: pd.DataFrame) -> list[list]:
                 row.arms,
                 row.status,
                 row.flagged,
-                row.detectorsStatus,
-                row.night,
                 row.why,
+                row.night,
+                row.detectorsStatus,
             ]
         )
     return rows
@@ -133,9 +182,11 @@ def _latestTile(visits: pd.DataFrame, images: pd.DataFrame) -> str:
 
 def _summaryTile(label: str, visits: pd.DataFrame) -> str:
     counts = visits["status"].value_counts()
+    # Every status a visit can carry gets a chip, so the chips add up to the big number (all visits taken):
+    # the gate's verdicts, UNKNOWN (judged but nothing decidable, or no stored verdict), then NO RESULT / AWAITING.
     chips = "".join(
         f"<span class='chip {k.lower()}'>{int(counts.get(k, 0))} {k}</span>"
-        for k in ("PASS", "WARN", "FAIL")
+        for k in ("PASS", "WARN", "FAIL", "UNKNOWN")
         if counts.get(k, 0)
     )
     for status in _PENDING:
@@ -156,12 +207,16 @@ def _feedRows(visits: pd.DataFrame) -> str:
     out = []
     for row in order.itertuples():
         when = html.escape(row.hst) if row.hst else "<span class='awaiting'>—</span>"
-        if row.status in _PENDING:
+        if row.status == AWAITING:
+            # Taken after the latest judged visit, so its QA may still be on the way.
             detectors = "<span class='awaiting'>awaiting QA</span>"
         else:
+            # A judged visit shows its flagged detectors; a NO_RESULT one (passed over, no QA coming)
+            # has none, so it reads "–" like a visit with nothing flagged.
             detectors = html.escape(_flaggedText(row.flagged)) or "–"
         out.append(
             f"<tr><th scope='row'><a href='/visit/{row.visit}'>{row.visit}</a></th>"
+            f"<td class='l'>{html.escape(_sequenceLabel(row.sequenceId))}</td>"
             f"<td class='l'>{when}</td><td class='l'>{html.escape(row.label)}</td>"
             f"<td>{_fmtExp(row.exptime)}</td><td class='l'>{row.arms}</td>"
             f"<td class='l'>{_chip(row.status)}</td><td class='l'>{detectors}</td>"
@@ -213,28 +268,6 @@ def _noResultSection(visits: pd.DataFrame) -> str:
     )
 
 
-def _awaitingSection(visits: pd.DataFrame) -> str:
-    awaiting = visits[visits["status"] == AWAITING]
-    if awaiting.empty:
-        return ""
-    order = awaiting.sort_values(["time", "visit"], ascending=[False, False], na_position="last")
-    rows = "\n".join(
-        f"<tr><th scope='row'><a href='/visit/{row.visit}'>{row.visit}</a></th>"
-        f"<td class='l'>{html.escape(row.hst)}</td><td class='l'>{html.escape(row.label)}</td>"
-        f"<td class='l'>{row.slit}</td><td>{_fmtExp(row.exptime)}</td><td class='l'>{row.arms}</td></tr>"
-        for row in order.itertuples()
-    )
-    return (
-        f"<section class='block' id='awaiting'><h2>Awaiting QA ({len(awaiting)})</h2>"
-        "<p>Taken after the latest visit judged, with no QA result yet — most recent first. Their verdicts "
-        "appear here as the pipeline catches up.</p>"
-        "<div class='tablewrap tall'><table><thead><tr><th scope='col' class='l'>Visit</th>"
-        "<th scope='col' class='l'>HST</th><th scope='col' class='l'>Kind</th><th scope='col' class='l'>Lit through</th>"
-        "<th scope='col'>Exp (s)</th><th scope='col' class='l'>Arms</th></tr></thead>"
-        f"<tbody>\n{rows}\n</tbody></table></div></section>"
-    )
-
-
 def renderNight(
     visits: pd.DataFrame,
     images: pd.DataFrame,
@@ -247,6 +280,7 @@ def renderNight(
     calibDriftArm: str = "",
     transparency: pd.DataFrame | None = None,
     seeing: pd.DataFrame | None = None,
+    nights: list[str] | None = None,
 ) -> str:
     """Return the night page as one stand-alone HTML document.
 
@@ -261,6 +295,9 @@ def renderNight(
     transparency, seeing : `pandas.DataFrame`, optional
         The night's AG transparency and seeing (`agConditions.readTransparency` / `readSeeing`); the Conditions
         tile and its modal are built from whichever has data, and omitted when neither does.
+    nights : `list` of `str`, optional
+        Every night (HST evening date) of the run, for the earlier/later navigation and the night dropdown;
+        the latest links to ``/`` and the rest to ``/night/<date>``. No navigation when there is one night or none.
     """
     now = datetime.now(HST) if now is None else now
     judged = visits[~visits["status"].isin(_PENDING)]
@@ -289,10 +326,12 @@ def renderNight(
         "{{META}}": f"Night of {nightText} (HST, evening date) · {len(judged):,} visits judged, "
         f"{len(images):,} detector images · the whole run is in the run report",
         "{{NIGHT}}": nightText,
+        "{{NIGHT_NAV}}": _nightNav(night, nightsOf(visits) if nights is None else nights),
+        "{{CLOCK_CONTROLS}}": _clockControls(),
+        "{{CLOCK_SCRIPT}}": _clockScript(),
         "{{TILES}}": tiles,
         "{{LEAD}}": lead,
         "{{CONDITIONS_MODAL}}": condModal,
-        "{{AWAITING_SECTION}}": _awaitingSection(visits),
         "{{FEED}}": _feedRows(visits),
         "{{CALIB_DRIFT_SM}}": calibDriftSm,
         "{{CALIB_DRIFT_ARM}}": calibDriftArm,
@@ -335,7 +374,9 @@ def buildNightReport(
     title, source, runUrl, now
         As `renderNight` takes them.
     night : `str`, optional
-        The night (HST evening date) to show; the most recent with a visit when None.
+        The night (HST evening date) to show; the most recent with a visit when None. Any night of the
+        run may be asked for (the past-night ``/night/<date>`` pages); the earlier/later navigation and
+        the dropdown cover every night the tables hold.
     readTransparency, readSeeing : callable, optional
         ``read(first, last)`` returning a visit range's AG transparency / seeing (`agConditions.readTransparency`
         / `readSeeing` over qadb). Read for the night's visits to build the Conditions tile and modal; a read
@@ -344,7 +385,8 @@ def buildNightReport(
     offsets = _calibrationOffsets(tables)  # shared by measure (science) and calibrationDrift (calibs)
     allImages = measure(tables, offsets=offsets)
     allVisits = visitTable(allImages, infoFromTables(tables) if info is None else info, awaiting=True)
-    night = activeNight(allVisits) if night is None else night
+    nights = nightsOf(allVisits)
+    night = (nights[-1] if nights else "") if night is None else night
     visits = allVisits[allVisits["night"] == night] if night else allVisits
     images = allImages[allImages["visit"].isin(set(visits["visit"]))]
     # The drift trend is the whole run's daily calibrations, with tonight's points marked; both
@@ -372,5 +414,6 @@ def buildNightReport(
         calibDriftArm=calibDriftSection(drift, activeNight=night, by="arm"),
         transparency=read(readTransparency, "transparency"),
         seeing=read(readSeeing, "seeing"),
+        nights=nights,
     )
     return Report(images, visits, page)

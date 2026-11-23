@@ -1,5 +1,6 @@
 """Tests for the night page (``nightReport``): one night of a collection, scoped from the shared tables."""
 
+import json
 import re
 from datetime import datetime
 
@@ -9,7 +10,7 @@ import pandas as pd
 from test_runReport import _science, _tables, _taken
 
 from pfs.qa.dashboard import runReport
-from pfs.qa.dashboard.nightReport import activeNight, buildNightReport
+from pfs.qa.dashboard.nightReport import activeNight, buildNightReport, nightsOf
 
 
 def _info(visits, times, sequences=None):
@@ -122,7 +123,9 @@ def testTheNightFlipsToTheLatestExposureAwaitingQa():
     # The page flips to the newer night and shows the exposure awaiting QA.
     assert made.visits["night"].unique().tolist() == ["2026-11-05"]
     assert made.visits.set_index("visit").loc[2, "status"] == "AWAITING"
-    assert "Awaiting QA (1)" in made.html and "awaiting QA" in made.html
+    # The "Latest visits" feed marks it; there is no separate Awaiting QA section (removed as redundant).
+    assert "awaiting QA" in made.html
+    assert "Awaiting QA (" not in made.html
     # The latest tile is that exposure.
     assert "<span class='big'>2</span>" in made.html[: made.html.index("The night on the clock")]
     # Negative control: the run report never shows a visit newer than the latest judged.
@@ -229,4 +232,84 @@ def testAwaitingAndNoResultAreToldApart():
     made = buildNightReport(tables, info=info)
     status = made.visits.set_index("visit")["status"]
     assert status.loc[3] == "NO RESULT" and status.loc[7] == "AWAITING"
-    assert "Awaiting QA (1)" in made.html and "Visits with no QA result tonight (1)" in made.html
+    assert "Visits with no QA result tonight (1)" in made.html
+    # In the "Latest visits" feed, only the still-pending visit reads "awaiting QA" in the Detectors
+    # column; a no-result visit (QA passed over, none coming) reads "–", not "awaiting QA".
+    feed = made.html.split("Latest visits", 1)[1].split("<section", 1)[0]
+    row3 = feed.split("/visit/3'>3</a>", 1)[1].split("</tr>", 1)[0]
+    row7 = feed.split("/visit/7'>7</a>", 1)[1].split("</tr>", 1)[0]
+    assert "awaiting QA" not in row3 and "–" in row3
+    assert "awaiting QA" in row7
+
+
+def testTheNightUsesTheSharedTimeMap():
+    tables = _tables((1, "r1", "science", _science(), {"gate": ("FAIL", "x offset +2.00 px >= fail 1")}))
+    page = buildNightReport(tables, info=_info([1], ["2026-11-04 21:00"])).html
+    # The night clock is now the run report's component: the layout toggle and the arm/spectrograph selectors.
+    assert 'data-group="layout"' in page and "In order taken" in page
+    assert 'data-group="arm"' in page and 'data-group="spec"' in page
+    # Its DATA is in the shared order: why at index 8, detectorsStatus at index 10.
+    row = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))[0]
+    assert row[10] == "r1F"  # detectorsStatus
+    # Negative control: the old layout put detectorsStatus at index 8 and the reason (why) at 10.
+    assert "px" in row[8] and row[8] != "r1F"
+
+
+def testTheNightFeedShowsTheSequenceId():
+    tables = _tables((1, "r1", "science", _science()))
+    info = _info([1], ["2026-11-04 21:00"])
+    info["sequenceId"] = [70127]
+    page = buildNightReport(tables, info=info).html
+    assert ">Sequence<" in page and ">70127<" in page
+
+
+def testNightNavigationLinksEarlierLaterAndTheDropdown():
+    tables = _tables(
+        (1, "r1", "science", _science()),
+        (2, "r1", "science", _science()),
+        (3, "r1", "science", _science()),
+    )
+    info = _info([1, 2, 3], ["2026-11-04 23:00", "2026-11-05 23:00", "2026-11-06 23:00"])
+    assert nightsOf(runReport.visitTable(runReport.measure(tables), info)) == [
+        "2026-11-04",
+        "2026-11-05",
+        "2026-11-06",
+    ]
+    mid = buildNightReport(tables, info=info, night="2026-11-05").html
+    assert "class='nightnav'" in mid
+    # Earlier points at the dated page; later points at the latest night, which is the live page "/".
+    assert "href='/night/2026-11-04'" in mid and "rel='prev'" in mid
+    assert "rel='next'" in mid and "2026-11-06 &rsaquo;" in mid
+    # The dropdown lists every night (newest first), the current one selected and the latest marked.
+    assert "<option value='/night/2026-11-05' selected>2026-11-05</option>" in mid
+    assert "<option value='/'>2026-11-06 (latest)</option>" in mid
+    # The latest night has no "later"; a single-night run has no navigation at all.
+    latest = buildNightReport(tables, info=info).html
+    assert "later &rsaquo;</span>" in latest and "class='nav disabled'" in latest
+    one = buildNightReport(tables, info=_info([1], ["2026-11-04 23:00"])).html
+    assert "class='nightnav'" not in one
+
+
+def testTheSummaryTilePillsSumToTheTotal():
+    from pfs.qa.dashboard.nightReport import _summaryTile
+
+    # One visit of every status a night can hold; the big number counts them all.
+    visits = pd.DataFrame({"status": ["PASS", "PASS", "WARN", "FAIL", "UNKNOWN", "NO RESULT", "AWAITING"]})
+    tile = _summaryTile("Tonight", visits)
+    big = int(re.search(r"class='big'>(\d+)<", tile).group(1))
+    pills = [int(n) for n in re.findall(r"class='chip [a-z ]+'>(\d+) ", tile)]
+    assert big == len(visits) == 7
+    # Every status is represented, so the chips add up to the big number.
+    assert sum(pills) == big
+    # Negative control: the UNKNOWN visit now has its own chip (the bug left it out of the chips).
+    assert "1 UNKNOWN" in tile
+
+
+def testTheNightTimeMapDefaultsToOrderTakenWithEngineering():
+    tables = _tables((1, "r1", "science", _science()))
+    night = buildNightReport(tables, info=_info([1], ["2026-11-04 21:00"])).html
+    assert 'const CLOCK_DEFAULTS = { layout: "order", eng: true }' in night
+    # Negative control: the run report defines no override (the clock script only reads it), so it keeps
+    # By time with engineering off.
+    run = runReport.buildReport(tables, info=_info([1], ["2026-11-04 21:00"])).html
+    assert "const CLOCK_DEFAULTS" not in run and 'layout: "order"' not in run

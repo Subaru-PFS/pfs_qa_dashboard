@@ -1,0 +1,39 @@
+<!-- Shared time-map controls for the run report and the night page: rendered the same on both, the night
+  page feeds it one night's visits. Paired with clockScript.js, which reads the page's DATA, CLS and esc. -->
+<div class="controls">
+  <div class="checks" role="group" aria-label="Frames shown">
+    <label for="f-show-science"><input type="checkbox" id="f-show-science" data-show="science" checked><span>Science</span></label>
+    <label for="f-show-cal"><input type="checkbox" id="f-show-cal" data-show="cal" checked><span>Arcs, quartz and sky, full slit</span></label>
+    <label for="f-show-eng"><input type="checkbox" id="f-show-eng" data-show="eng"><span>Engineering fibers</span></label>
+  </div>
+  <div class="legend">
+    <span><span class="sq pass"></span>PASS</span><span><span class="sq warn"></span>WARN</span><span><span class="sq fail"></span>FAIL</span><span><span class="sq unknown"></span>UNKNOWN</span><span><span class="sq awaiting"></span>AWAITING</span><span><span class="sq none"></span>NO RESULT</span>
+  </div>
+</div>
+<div class="controls">
+  <div class="seg" role="group" aria-label="Layout" data-group="layout">
+    <button type="button" data-value="time" aria-pressed="true">By time (HST)</button>
+    <button type="button" data-value="order" aria-pressed="false">In order taken</button>
+  </div>
+  <div class="checks">
+    <label for="f-night"><input type="checkbox" id="f-night" checked><span>Night only, 18:00 to 07:00</span></label>
+  </div>
+  <span class="ctl">Arm</span>
+  <div class="seg" role="group" aria-label="Arm" data-group="arm">
+    <button type="button" data-value="" aria-pressed="true">All</button>
+    <button type="button" data-value="b" aria-pressed="false">b</button>
+    <button type="button" data-value="r" aria-pressed="false">r</button>
+    <button type="button" data-value="n" aria-pressed="false">n</button>
+    <button type="button" data-value="m" aria-pressed="false">m</button>
+  </div>
+  <span class="ctl">Spectrograph</span>
+  <div class="seg" role="group" aria-label="Spectrograph" data-group="spec">
+    <button type="button" data-value="" aria-pressed="true">All</button>
+    <button type="button" data-value="1" aria-pressed="false">1</button>
+    <button type="button" data-value="2" aria-pressed="false">2</button>
+    <button type="button" data-value="3" aria-pressed="false">3</button>
+    <button type="button" data-value="4" aria-pressed="false">4</button>
+  </div>
+</div>
+<div class="cal" id="cal"></div>
+<div class="tip" id="tip" hidden></div>
