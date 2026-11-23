@@ -25,6 +25,11 @@ from typing import Any
 
 import matplotlib
 
+# matplotlib is process-global and not thread-safe, so both render modules serialise on one lock rather
+# than each taking its own (which would let an extraction and a residual render run at once). visitResiduals
+# owns it and sets the Agg backend on import; we reuse both.
+from pfs.qa.dashboard.visitResiduals import _RENDER_LOCK
+
 # No display on the server; set before any figure is drawn. Imported only in the
 # ``--butler`` path, so the rest of the dashboard needs no matplotlib.
 matplotlib.use("Agg")
@@ -33,10 +38,6 @@ __all__ = ["ExtractionImages", "renderExtraction"]
 
 #: Dots per inch for the rendered PNG: a 12x8 in figure is ~1152x768 px.
 _DPI = 96
-
-#: Serialises matplotlib rendering across the server's threads (matplotlib is not thread-safe); the
-#: Butler read (its own lock) and the event loop stay parallel. Shared shape with ``visitResiduals``.
-_RENDER_LOCK = threading.Lock()
 
 
 def renderExtraction(qaStats: Mapping[str, Any]) -> bytes:

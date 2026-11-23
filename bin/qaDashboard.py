@@ -354,7 +354,8 @@ def butlerExtraction(args: argparse.Namespace, sliceStore):
         with lock:
             try:
                 uri = butler.getURI("extQaImage", dataId(visit, arm, spectrograph))
-            except (LookupError, FileNotFoundError):
+            except (LookupError, FileNotFoundError, ValueError):
+                # LookupError/FileNotFoundError: not stored; ValueError: a disassembled/multi-URI dataset.
                 return None
         # The file read needs no butler, so it runs outside the lock; a missing file is a 404, not a 500.
         try:
