@@ -71,3 +71,21 @@ def testVisitPageShowsTheReduceFailedVerdict():
     # The visit verdict and each detector read REDUCE FAILED with the redfail class.
     assert "chip verdict redfail" in page and page.count("chip redfail") >= 1
     assert "REDUCE FAILED" in page
+
+
+def testVisitPageShowsAnErrorBannerAndNoEmptyPlots():
+    tables = _tables(
+        (7, "r1", "science", _science(), {"gate": _FAILED}),
+        (7, "b1", "science", _science(), {"gate": _FAILED}),
+    )
+    # Even with the Butler serving plots, a failed reduction shows the error, not empty plot placeholders.
+    page = buildVisitPage(tables, _info([7], ["2026-11-04 22:00"]), 7, residuals=True, extraction=True)
+    assert "<section class='block error'>" in page and "Reduction failed" in page
+    assert "reduceExposure failed (returnCode 1: FAILED)" in page
+    # Negative control: the (empty) plot sections and metric grid are suppressed for a failed reduction.
+    assert "class='residuals'" not in page and "class='extraction'" not in page
+
+    # A visit that reduced normally still shows its plot sections (the banner is only for a failure).
+    ok = _tables((8, "r1", "science", _science(), {"gate": ("PASS", "")}))
+    okPage = buildVisitPage(ok, _info([8], ["2026-11-04 22:00"]), 8, residuals=True, extraction=True)
+    assert "block error" not in okPage and "class='residuals'" in okPage

@@ -314,7 +314,7 @@ def imageTable(tables: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     images["illumination"] = images["illumination"].where(images["illumination"].notna(), lit).fillna("full")
     images["lamp"] = images["seqName"].where(images["kind"].isin(["arc", "quartz"]))
     images["status"] = images["status"].where(images["status"].isin(list(STATUS_RANK)), "UNKNOWN")
-    flagged = images["status"].isin(["WARN", "FAIL"])
+    flagged = images["status"].isin(["WARN", "FAIL", REDUCE_FAILED])
     images["reason"] = images["reason"].where(flagged & images["reason"].notna(), "").astype(str)
     images["decidedBy"] = images["decidedBy"].fillna("").astype(str)
     withM = set(images.loc[images["arm"] == "m", "visit"])

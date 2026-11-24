@@ -85,6 +85,11 @@ def _page(title: str, body: str) -> str:
         "  nav.visitnav { display: flex; justify-content: space-between; gap: 12px;"
         " margin: 0 0 14px; font-size: 0.95rem; }\n"
         "  nav.visitnav .nolink { color: var(--fg-3); }\n"
+        # The reduction-failed banner: a red-edged block so a failed reduction reads as an error at a glance.
+        "  section.block.error { border-left: 4px solid var(--fail); padding-left: 14px; }\n"
+        "  section.block.error h2 { color: var(--fail); margin-top: 0; }\n"
+        "  section.block.error code { background: var(--fail-bg); color: var(--fail);"
+        " padding: 1px 6px; border-radius: 4px; }\n"
         # The residual plots: each a full-width figure (the drawing is wide, two rows by three columns),
         # the image scaling to the column so it reads on a phone too.
         "  .residuals, .extraction { display: flex; flex-direction: column; gap: 20px; }\n"
@@ -287,6 +292,23 @@ def _nav(visit: int, night: str = "") -> str:
     return f"<nav class='visitnav'>{prev}{middle}{nxt}</nav>"
 
 
+def _reduceFailedBanner(perCam: pd.DataFrame) -> str:
+    """Return the reduction-failed error banner for a visit whose reduceExposure crashed.
+
+    Shown in place of the (empty) metric grid and plot sections, so the page says plainly why there is
+    nothing to measure; the detector table still lists each detector's REDUCE FAILED verdict and reason.
+    """
+    reasons = [str(reason) for reason in perCam["reason"].dropna().unique() if str(reason)]
+    detail = f" The reduction reported: <code>{html.escape(reasons[0])}</code>." if reasons else ""
+    return (
+        "<section class='block error'>"
+        "<h2>Reduction failed</h2>"
+        "<p>reduceExposure failed for this visit, so no spectra were produced and QA never ran — there are "
+        f"no measurements or plots below. Every detector is marked REDUCE FAILED.{detail}</p>"
+        "</section>"
+    )
+
+
 def _detectorTable(perCam: pd.DataFrame, residuals: bool = False) -> str:
     """Return the per-detector verdicts and the gate's reason.
 
@@ -471,20 +493,24 @@ def buildVisitPage(
     )
 
     # vrow["status"] is already the worst of the visit's detectors (visitTable), so it is the overall verdict.
+    # A reduceExposure failure left no spectra, so there is nothing to measure or plot: show the error, not
+    # empty metric cells and plot placeholders.
+    reduceFailed = vrow.get("status") == REDUCE_FAILED
     plots = []
-    if residuals:
-        plots.append(_residualSection(perCam, int(visit)))
-    if extraction:
-        plots.append(_extractionSection(perCam, int(visit)))
+    if not reduceFailed:
+        if residuals:
+            plots.append(_residualSection(perCam, int(visit)))
+        if extraction:
+            plots.append(_extractionSection(perCam, int(visit)))
     body = "\n".join(
         [
             _nav(int(visit), str(vrow.get("night", "") or "")),
             _header(int(visit), vrow, infoRow),
-            _detectorTable(perCam, residuals),
-            _grid(perCam),
-            _speciesSection(tables),
+            *([_reduceFailedBanner(perCam)] if reduceFailed else []),
+            _detectorTable(perCam, residuals and not reduceFailed),
+            *([_grid(perCam), _speciesSection(tables)] if not reduceFailed else []),
             *plots,
-            *([_lightbox()] if (residuals or extraction) else []),
+            *([_lightbox()] if (not reduceFailed and (residuals or extraction)) else []),
             _links(residuals, extraction),
         ]
     )
