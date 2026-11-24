@@ -8,6 +8,8 @@ or the Python API.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-23
+
 ### Added
 
 - **`REDUCE FAILED` verdict** (PIPE2D-2036): a visit whose reduceExposure crashed — written to `qa_gate` by
