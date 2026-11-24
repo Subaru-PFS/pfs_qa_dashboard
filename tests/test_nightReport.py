@@ -212,10 +212,14 @@ def testTheNightShowsAgConditionsWhenReadersGiveThem():
     assert "id='conditions'" in made.html and "AG sky conditions tonight" in made.html
     assert "<h3>Seeing</h3>" in made.html and "<h3>Sky transparency</h3>" in made.html
     assert "<span class='lab'>Science</span>" not in made.html
-    # Negative control: without readers there is no Conditions tile or modal; the Science tile stays.
+    # Without readers the Conditions tile stays but shows its no-data state — no modal, and never the
+    # Science tile.
     plain = buildNightReport(tables, info=info).html
     assert "AG sky conditions tonight" not in plain and "id='conditions'" not in plain
-    assert "class='tile cond'" not in plain and "<span class='lab'>Science</span>" in plain
+    assert "class='tile cond empty'" in plain and "no AG seeing or transparency" in plain
+    assert "<span class='lab'>Science</span>" not in plain
+    # Negative control: a data tile is a button opening the modal; the no-data tile is neither.
+    assert "aria-controls='conditions'" not in plain
 
 
 def testAConditionsReadThatFailsDropsOnlyThatMetric():
@@ -232,9 +236,10 @@ def testAConditionsReadThatFailsDropsOnlyThatMetric():
     assert made.html.startswith("<!doctype html>") and "The night on the clock" in made.html
     assert "AG sky conditions tonight" in made.html and "<h3>Seeing</h3>" in made.html
     assert "<h3>Sky transparency</h3>" not in made.html
-    # Both failing: no Conditions tile or modal, the Science tile stays.
+    # Both failing: no modal, the Conditions tile shows its no-data state, and never the Science tile.
     both = buildNightReport(tables, info=info, readTransparency=boom, readSeeing=boom).html
-    assert "id='conditions'" not in both and "<span class='lab'>Science</span>" in both
+    assert "id='conditions'" not in both and "<span class='lab'>Science</span>" not in both
+    assert "class='tile cond empty'" in both
 
 
 def testAwaitingAndNoResultAreToldApart():
@@ -296,17 +301,20 @@ def testNightNavigationLinksEarlierLaterAndTheDropdown():
     ]
     mid = buildNightReport(tables, info=info, night="2026-11-05").html
     assert "class='nightnav'" in mid
+    # The run-report link is always in the nav, ahead of the night-to-night controls.
+    assert "href='/run'>Run report</a>" in mid
     # Earlier points at the dated page; later points at the latest night, which is the live page "/".
     assert "href='/night/2026-11-04'" in mid and "rel='prev'" in mid
     assert "rel='next'" in mid and "2026-11-06 &rsaquo;" in mid
     # The dropdown lists every night (newest first), the current one selected and the latest marked.
     assert "<option value='/night/2026-11-05' selected>2026-11-05</option>" in mid
     assert "<option value='/'>2026-11-06 (latest)</option>" in mid
-    # The latest night has no "later"; a single-night run has no navigation at all.
+    # The latest night has no "later"; a single-night run keeps the run-report link but drops the controls.
     latest = buildNightReport(tables, info=info).html
     assert "later &rsaquo;</span>" in latest and "class='nav disabled'" in latest
     one = buildNightReport(tables, info=_info([1], ["2026-11-04 23:00"])).html
-    assert "class='nightnav'" not in one
+    assert "class='nightnav'" in one and "href='/run'>Run report</a>" in one
+    assert "<select id='night-pick'" not in one and "rel='prev'" not in one
 
 
 def testTheSummaryTilePillsSumToTheTotal():

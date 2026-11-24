@@ -8,6 +8,22 @@ or the Python API.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-23
+
+### Changed
+
+- **Run-report link always on the night page**: the night page's navigation now always carries a "Run
+  report" link, ahead of the night-to-night controls. It previously appeared only as part of the
+  night-to-night nav, which is hidden on a single-night run — so early in a run the night page had no link
+  to `/run` except in the footer.
+- **"Every visit" table sorted newest first**: the run report's "Every visit" table now lists the most
+  recent visit first. The underlying time-map data keeps its taken order, so "Every visit at a glance" is
+  unchanged.
+- **Night page Conditions tile no longer falls back to the Science tile**: when a night has no AG seeing or
+  transparency, the Conditions tile now shows its own no-data state in place, rather than reverting to the
+  science verdict counts. (Missing conditions data is a separate, upstream matter — the writer must be
+  populating qadb's `seeing_agc_exposure` / `transparency_agc_exposure`.)
+
 ## [0.16.0] - 2026-11-23
 
 ### Added

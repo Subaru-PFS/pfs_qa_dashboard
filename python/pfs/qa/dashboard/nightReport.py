@@ -86,14 +86,18 @@ def _nightHref(night: str, latest: str) -> str:
     return "/" if night and night == latest else f"/night/{night}"
 
 
-def _nightNav(night: str, nights: list[str]) -> str:
-    """Return the night-to-night navigation (earlier / later links and a dropdown), or ``""`` with no choice.
+def _nightNav(night: str, nights: list[str], runUrl: str = "/run") -> str:
+    """Return the night navigation: a run-report link, then the night-to-night controls when there is a choice.
 
-    Links point at ``/night/<date>``; the latest night points at ``/`` so the live page stays canonical.
+    The run-report link always shows, so the night page reaches the whole-run report even on a
+    single-night run (the common case early in a run). When the run spans more than one night,
+    earlier / later links and a dropdown follow; links point at ``/night/<date>``, and the latest
+    night points at ``/`` so the live page stays canonical.
     """
+    runLink = f"<a class='nav' href='{html.escape(runUrl)}'>Run report</a>"
     nights = [n for n in nights if n]
     if not night or len(nights) < 2:
-        return ""
+        return f"<nav class='nightnav' aria-label='Night'>{runLink}</nav>"
     latest = nights[-1]
     here = nights.index(night) if night in nights else None
     earlier = nights[here - 1] if here not in (None, 0) else None
@@ -115,6 +119,7 @@ def _nightNav(night: str, nights: list[str]) -> str:
     )
     return (
         "<nav class='nightnav' aria-label='Night'>"
+        f"{runLink}"
         f"{earlierLink}"
         f"<select id='night-pick' aria-label='Jump to a night'>{options}</select>"
         f"{laterLink}</nav>"
@@ -322,13 +327,13 @@ def renderNight(
             f"<li><span class='k'>No QA</span><span class='n'>{len(noQa):,} visits</span>"
             f"<span class='chip noqa'><b>{len(noQa):,}</b> NO QA</span></li>"
         )
-    # The third tile is the night's AG conditions (seeing and transparency, opening a modal) when there is any
-    # to show; otherwise the science verdict counts, as before.
+    # The third tile is always the night's AG conditions (seeing and transparency, opening a modal); with no
+    # conditions data it shows its own no-data state rather than falling back to another metric.
     condTile, condModal = conditions(transparency, seeing, night)
     tiles = (
         _latestTile(visits, images)
         + _summaryTile("Tonight", visits)
-        + (condTile or _summaryTile("Science", visits[visits["kind"] == "science"]))
+        + condTile  # always the Conditions tile (its own no-data state when there is nothing to show)
     )
     offsetsHtml, offsetAxis, residualsHtml = scienceSections(images[images["kind"] == "science"])
     nightText = html.escape(night) if night else "the latest night"
@@ -341,7 +346,7 @@ def renderNight(
         "{{META}}": f"Night of {nightText} (HST, evening date) · {len(judged):,} visits judged, "
         f"{len(images):,} detector images · the whole run is in the run report",
         "{{NIGHT}}": nightText,
-        "{{NIGHT_NAV}}": _nightNav(night, nightsOf(visits) if nights is None else nights),
+        "{{NIGHT_NAV}}": _nightNav(night, nightsOf(visits) if nights is None else nights, runUrl),
         "{{CLOCK_CONTROLS}}": _clockControls(),
         "{{CLOCK_SCRIPT}}": _clockScript(),
         "{{TILES}}": tiles,
