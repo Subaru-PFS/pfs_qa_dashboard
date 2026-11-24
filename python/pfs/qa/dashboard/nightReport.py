@@ -25,6 +25,7 @@ from pfs.qa.dashboard.runReport import (
     AWAITING,
     NO_QA,
     NO_RESULT,
+    REDUCE_FAILED,
     Report,
     _calibrationOffsets,
     _clockControls,
@@ -57,6 +58,7 @@ _CLASS = {
     "WARN": "warn",
     "FAIL": "fail",
     "UNKNOWN": "unknown",
+    REDUCE_FAILED: "redfail",
     NO_RESULT: "none",
     AWAITING: "awaiting",
     NO_QA: "noqa",
@@ -171,6 +173,8 @@ def _latestTile(visits: pd.DataFrame, images: pd.DataFrame) -> str:
         standing = "no QA result"
     elif row["status"] == NO_QA:
         standing = "no QA method"
+    elif row["status"] == REDUCE_FAILED:
+        standing = "reduceExposure failed"
     elif detectors:
         standing = f"{judged} of {detectors} detectors judged"
     else:
@@ -191,7 +195,9 @@ def _latestTile(visits: pd.DataFrame, images: pd.DataFrame) -> str:
 
 
 def _summaryTile(label: str, visits: pd.DataFrame) -> str:
-    counts = visits["status"].value_counts()
+    # REDUCE FAILED folds into FAIL for the tile's counts (the per-visit feed carries the distinct verdict),
+    # so the chips still add up to the big number.
+    counts = visits["status"].replace(REDUCE_FAILED, "FAIL").value_counts()
     # Every status a visit can carry gets a chip, so the chips add up to the big number (all visits taken):
     # the gate's verdicts, UNKNOWN (judged but nothing decidable, or no stored verdict), then NO RESULT / AWAITING.
     chips = "".join(

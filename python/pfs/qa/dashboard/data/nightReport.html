@@ -166,7 +166,7 @@
 
 <script>
   const DATA = {{DATA}};
-  const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", UNKNOWN: "unknown", AWAITING: "awaiting", "NO RESULT": "none", "NO QA": "noqa" };
+  const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", "REDUCE FAILED": "redfail", UNKNOWN: "unknown", AWAITING: "awaiting", "NO RESULT": "none", "NO QA": "noqa" };
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   // The night page opens the time map in order taken, with engineering-fiber frames shown.
   const CLOCK_DEFAULTS = { layout: "order", eng: true };

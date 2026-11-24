@@ -8,6 +8,17 @@ or the Python API.
 
 ## [Unreleased]
 
+### Added
+
+- **`REDUCE FAILED` verdict** (PIPE2D-2036): a visit whose reduceExposure crashed — written to `qa_gate` by
+  drp_qa's `markReduceFailed` — now reads as a distinct red `REDUCE FAILED` chip across the dashboard (the
+  run report's "Every visit" and "Visits that do not pass" tables and verdict filter, the night page's
+  latest-visit tile and feed, and the per-visit page's verdict and detector chips), instead of sitting in
+  AWAITING / NO RESULT as if its QA were still on the way. Ranked the worst verdict (reduceExposure left no
+  data to judge); in the aggregate tallies and the "By night" / "Visits by kind" counts it folds into FAIL,
+  so every total still reconciles while the per-visit rows carry the precise cause. The per-visit page adds a
+  red "Reduction failed" banner (with the returnCode) in place of the empty metric grid and plot sections.
+
 ## [0.17.0] - 2026-11-23
 
 ### Changed

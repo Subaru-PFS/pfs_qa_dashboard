@@ -16,8 +16,8 @@
     layout: defaults.layout === "order" ? "order" : "time", night: true,
   };
   // Detector letters: Q no QA method, N no QA result, A taken but not yet judged (night page), U unknown.
-  const WORD = { P: "PASS", W: "WARN", F: "FAIL", U: "UNKNOWN", N: "NO RESULT", A: "AWAITING", Q: "NO QA" };
-  const RANK = { Q: -3, A: -2, N: -1, U: 0, P: 1, W: 2, F: 3 };
+  const WORD = { P: "PASS", W: "WARN", F: "FAIL", R: "REDUCE FAILED", U: "UNKNOWN", N: "NO RESULT", A: "AWAITING", Q: "NO QA" };
+  const RANK = { Q: -3, A: -2, N: -1, U: 0, P: 1, W: 2, F: 3, R: 4 };
   // A no-QA frame (dark, bias, ...) is its own group; else science, engineering fibers, or calibration.
   const groupOf = (r) => r[6] === "NO QA" ? "noqa" : r[2] === "science" ? "science" : r[3] === "engineering fibers" ? "eng" : "cal";
   // the detectors of a visit that the arm and spectrograph selection keeps, as [name, letter]
@@ -87,7 +87,7 @@
   }
   function showTip(sq, x, y) {
     const r = DATA[+sq.dataset.i], list = chosen(r), status = WORD[worstOf(list)];
-    const bad = list.filter(([, s]) => s === "W" || s === "F").map(([cam, s]) => `${cam} ${WORD[s]}`);
+    const bad = list.filter(([, s]) => s === "W" || s === "F" || s === "R").map(([cam, s]) => `${cam} ${WORD[s]}`);
     const which = sel.arm || sel.spec ? `detectors ${list.map(([cam]) => cam).join(" ")}` : `${list.length} detectors`;
     const detail = status === "NO RESULT" || status === "AWAITING"
       ? esc(r[8]) || (status === "AWAITING" ? "awaiting QA" : "")

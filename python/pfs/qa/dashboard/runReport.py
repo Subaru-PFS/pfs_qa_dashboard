@@ -69,8 +69,23 @@ __all__ = [
     "worst",
 ]
 
-#: Verdicts, worst last.
-STATUS_RANK = {"UNKNOWN": 0, "PASS": 1, "WARN": 2, "FAIL": 3}
+#: A visit whose reduceExposure failed, so QA never ran (drp_qa's ``markReduceFailed`` wrote this verdict to
+#: ``qa_gate`` for each exposed detector). A judged verdict, not an awaiting/no-result state, so such a visit
+#: reads as a failure rather than as still on its way.
+REDUCE_FAILED = "REDUCE FAILED"
+
+#: Verdicts, worst last. REDUCE FAILED (reduceExposure crashed) outranks a QA FAIL: there is no data to judge.
+STATUS_RANK = {"UNKNOWN": 0, "PASS": 1, "WARN": 2, "FAIL": 3, REDUCE_FAILED: 4}
+
+#: The CSS chip class per verdict. The multi-word REDUCE FAILED cannot be the lower-cased status (it has a
+#: space), so every chip of a verdict goes through this rather than ``status.lower()``.
+STATUS_CLASS = {
+    "PASS": "pass",
+    "WARN": "warn",
+    "FAIL": "fail",
+    "UNKNOWN": "unknown",
+    REDUCE_FAILED: "redfail",
+}
 
 #: The arms, in the order shown.
 ARMS = "brnm"
@@ -299,7 +314,7 @@ def imageTable(tables: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     images["illumination"] = images["illumination"].where(images["illumination"].notna(), lit).fillna("full")
     images["lamp"] = images["seqName"].where(images["kind"].isin(["arc", "quartz"]))
     images["status"] = images["status"].where(images["status"].isin(list(STATUS_RANK)), "UNKNOWN")
-    flagged = images["status"].isin(["WARN", "FAIL"])
+    flagged = images["status"].isin(["WARN", "FAIL", REDUCE_FAILED])
     images["reason"] = images["reason"].where(flagged & images["reason"].notna(), "").astype(str)
     images["decidedBy"] = images["decidedBy"].fillna("").astype(str)
     withM = set(images.loc[images["arm"] == "m", "visit"])
@@ -593,7 +608,9 @@ def visitTable(
     """
     rows = []
     for visit, group in images.sort_values("camera").groupby("visit"):
-        bad = group[group["status"].isin(["WARN", "FAIL"])]
+        # REDUCE FAILED carries a reason (the returnCode) too, so it belongs with WARN/FAIL here: the
+        # reason reaches the tables' "why" column and the flagged-detectors list, as on the visit page.
+        bad = group[group["status"].isin(["WARN", "FAIL", REDUCE_FAILED])]
         reasons = (
             f"{camera}: {reason}"
             for camera, reason in zip(bad["camera"], bad["reason"], strict=True)
@@ -730,13 +747,23 @@ def _strip(group, column, statusColumn, unit, scale, y, cls, tall) -> str:
     return "".join(parts)
 
 
+def _foldedCounts(visits: pd.DataFrame) -> pd.Series:
+    """Status counts with REDUCE FAILED folded into FAIL.
+
+    The fixed PASS/WARN/FAIL/UNKNOWN columns and the tile chips total only over those verdicts, so a
+    reduceExposure failure counts as a failure in the aggregates; the per-visit rows still carry the
+    distinct REDUCE FAILED verdict.
+    """
+    return visits["status"].replace(REDUCE_FAILED, "FAIL").value_counts()
+
+
 def _counts(visits: pd.DataFrame) -> str:
-    counts = visits["status"].value_counts()
+    counts = _foldedCounts(visits)
     return "".join(f"<td>{int(counts.get(k, 0)) or '–'}</td>" for k in ("PASS", "WARN", "FAIL", "UNKNOWN"))
 
 
 def _tally(name: str, visits: pd.DataFrame, noResult: int = 0) -> str:
-    counts = visits["status"].value_counts()
+    counts = _foldedCounts(visits)
     chips = "".join(
         f"<span class='chip {k.lower()}{'' if counts.get(k, 0) else ' zero'}'><b>{int(counts.get(k, 0)):,}</b> {k}</span>"
         for k in ("PASS", "WARN", "FAIL")
@@ -751,7 +778,8 @@ def _tally(name: str, visits: pd.DataFrame, noResult: int = 0) -> str:
 def _nightCell(visits: pd.DataFrame) -> str:
     if not (visits["status"] != "PASS").any():
         return f"{len(visits)}"
-    warn, fail = int((visits["status"] == "WARN").sum()), int((visits["status"] == "FAIL").sum())
+    warn = int((visits["status"] == "WARN").sum())
+    fail = int(visits["status"].isin(("FAIL", REDUCE_FAILED)).sum())  # a reduce failure counts as a failure
     return f"{len(visits)} <span class='sub'>({warn} WARN, {fail} FAIL)</span>"
 
 
@@ -1181,7 +1209,7 @@ def renderPage(
     ]
 
     def flaggedDetectors(flagged: str) -> str:
-        names = {"W": "WARN", "F": "FAIL"}
+        names = {"W": "WARN", "F": "FAIL", "R": "REDUCE FAILED"}
         pairs = flagged.split()
         return ", ".join(
             f"{camera} {names[letter]}" for camera, letter in zip(pairs[::2], pairs[1::2], strict=True)
@@ -1190,7 +1218,7 @@ def renderPage(
     notPassing = visits[(visits["status"] != "PASS") & (visits["illumination"] != "iis")]
     flagged = "\n".join(
         f"<tr><th scope='row'>{_visitLink(r.visit)}</th><td class='l'>{r.hst}</td><td class='l'>{html.escape(r.label)}</td>"
-        f"<td class='l'><span class='chip {r.status.lower()}'>{r.status}</span></td>"
+        f"<td class='l'><span class='chip {STATUS_CLASS.get(r.status, 'unknown')}'>{r.status}</span></td>"
         f"<td class='l'>{flaggedDetectors(r.flagged)}</td><td class='l why'>{html.escape(r.why)}</td></tr>"
         for r in notPassing.itertuples()
     )
