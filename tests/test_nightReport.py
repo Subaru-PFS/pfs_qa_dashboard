@@ -70,7 +70,9 @@ def testTheNightPageStandsAloneAndLinks():
     )
     page = made.html
     assert not re.findall(r"\{\{[A-Z_]+\}\}", page)
-    assert page.startswith("<!doctype html>") and "<title>Run99 &lt;x&gt;</title>" in page
+    # The title carries the night shown (the visit was on the evening of 2026-11-04).
+    assert page.startswith("<!doctype html>") and "<title>Run99 &lt;x&gt; · 2026-11-04</title>" in page
+    assert "<h1>Run99 &lt;x&gt; · 2026-11-04</h1>" in page
     # Its fonts travel inside it and nothing is fetched.
     assert page.count("@font-face") == 2 and "url(data:font/woff2;base64," in page
     assert not re.findall(r"""(?:src|href)=["'](?:https?:)?//""", page) and "url(http" not in page

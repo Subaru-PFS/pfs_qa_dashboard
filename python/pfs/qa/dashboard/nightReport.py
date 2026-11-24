@@ -332,9 +332,11 @@ def renderNight(
     )
     offsetsHtml, offsetAxis, residualsHtml = scienceSections(images[images["kind"] == "science"])
     nightText = html.escape(night) if night else "the latest night"
+    # The page title (heading and browser tab) names the night shown, so one night reads apart from another.
+    pageTitle = f"{title} · {night}" if night else title
     fields = {
         "{{THEME}}": _theme(),
-        "{{TITLE}}": html.escape(title),
+        "{{TITLE}}": html.escape(pageTitle),
         "{{FONT_FACES}}": _fontFaces(),
         "{{META}}": f"Night of {nightText} (HST, evening date) · {len(judged):,} visits judged, "
         f"{len(images):,} detector images · the whole run is in the run report",

@@ -607,7 +607,8 @@ def testServeMountsTheNightPageAndTheRunReport(tmp_path, monkeypatch):
     )
 
     night = _fetch(served["application"], "/").body.decode()
-    assert "The night on the clock" in night and "Latest visits" in night and "<h1>Run99</h1>" in night
+    # The night page's title carries the night's date; the run report's stays the plain run name.
+    assert "The night on the clock" in night and "Latest visits" in night and "<h1>Run99 · " in night
     # The night page links to the run report and to the per-visit route.
     assert 'href="/run"' in night and "visit/1" in night
     run = _fetch(served["application"], "/run").body.decode()

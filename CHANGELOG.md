@@ -31,6 +31,9 @@ or the Python API.
 
 ### Changed
 
+- **Night-page title carries the night's date**: the night page's heading and browser-tab title now read
+  `<title> · <YYYY-MM-DD>` (e.g. "Visit verdicts · 2026-11-04") rather than just the run title, so one
+  night's page reads apart from another at a glance and in a tab. The run report's title is unchanged.
 - **Visit-page nav links to the run report and the visit's own night**: the top/bottom navigation on each
   visit page (`/visit/<n>`) now links to the run report (`/run`), the current night (`/`), and — for a
   visit taken on a past night — that night's page (`/night/<date>`). It previously linked only to the
