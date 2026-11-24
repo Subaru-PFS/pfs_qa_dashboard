@@ -266,10 +266,11 @@ def testThePageStandsAlone():
     # The calendar can be laid out in the order taken or by time.
     assert 'data-group="layout"' in page and "const minutesOf" in page
     # The kinds of frame shown are boxes ticked on their own, with no control for all of them at once.
-    assert page.count("data-show=") == 3 and 'data-group="show"' not in page
-    # Engineering-fiber frames start unticked; science and the full-slit calibrations start ticked.
+    assert page.count("data-show=") == 4 and 'data-group="show"' not in page
+    # Engineering fibers and darks/biases start unticked; science and the full-slit calibrations start ticked.
     assert (
         'data-show="eng">' in page
+        and 'data-show="noqa">' in page
         and 'data-show="science" checked>' in page
         and 'data-show="cal" checked>' in page
     )
@@ -783,14 +784,19 @@ def testAVisitTakenAndNeverJudgedShowsAsNoResult():
         "full slit",
         "sequence ended: abortRequested",
     ]
-    # Negative control: a dark has no QA method, and a visit newer than the latest judged may still be on its way.
+    # By default a dark is left out (no QA method); a visit newer than the latest judged may still be on its way.
     assert 4 not in visits.index and 6 not in visits.index
+    # With includeNoQa the dark is listed as NO QA, by its exposure type; the visit newer than the latest is not.
+    withNoQa = runReport.visitTable(measure(tables), info, includeNoQa=True).set_index("visit")
+    assert withNoQa.loc[4, "status"] == "NO QA" and withNoQa.loc[4, "kind"] == "dark"
+    assert 6 not in withNoQa.index  # negative control: a no-QA frame is listed, but not an unjudged newer one
     # Negative control: without the opdb's listing nothing is known to be missing.
     plain = runReport.visitTable(measure(tables), info[["visit", "time"]])
     assert plain["visit"].tolist() == [2, 5]
 
     page = buildReport(tables, info=info).html
     assert "2 visits judged" in page and ", 2 more with no QA result" in page
+    assert ", 1 with no QA method" in page  # the run report lists the dark as NO QA
     assert "Visits with no QA result (2)" in page and "<b>1</b> NO RESULT" in page
     assert "sequence ended: abortRequested" in page
     data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
@@ -798,6 +804,7 @@ def testAVisitTakenAndNeverJudgedShowsAsNoResult():
         (1, "NO RESULT"),
         (2, "PASS"),
         (3, "NO RESULT"),
+        (4, "NO QA"),
         (5, "PASS"),
     ]
     # Negative control: a page whose visits all have results has no such section or note.
@@ -863,6 +870,28 @@ def testTheEveryVisitTableSurfacesTheDesign():
     data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
     designs = {row[0]: row[12] for row in data}
     assert designs == {1: "cobraHome-MOD4_group1", 2: "blackDots-moveAll"}
+
+
+def testNoQaFramesAreListedAndTallied():
+    tables = _tables((10, "r1", "science", _science()))
+    info = _taken(
+        (10, "object", "scienceObject", False, "completed"),
+        (11, "dark", "darks", False, "completed"),
+        (12, "dark", "darks", False, "completed"),
+        (13, "bias", "masterBiases", False, "completed"),
+    )
+    page = buildReport(tables, info=info).html
+    # The by-kind and by-night tables gain a No QA column; the lead and a per-type row tally the frames.
+    assert page.count(">No QA</th>") == 2 and "chip noqa" in page and "<b>3</b> NO QA" in page
+    assert ">Darks</th>" in page and ">Biases</th>" in page
+    # The darks/biases are in the page data with the NO QA verdict, by their exposure type as the kind.
+    data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
+    byVisit = {row[0]: (row[2], row[6]) for row in data}
+    assert byVisit[11] == ("dark", "NO QA") and byVisit[13] == ("bias", "NO QA")
+    assert byVisit[10][1] == "PASS"  # the judged science visit is not a no-QA frame
+    # Negative control: with no such frames, there is no No QA lead chip and no per-type row.
+    clean = buildReport(tables, info=info[info["expType"] == "object"]).html
+    assert "chip noqa" not in clean and ">Darks</th>" not in clean
 
 
 def testReadVisitInfoCarriesTheSequenceId():

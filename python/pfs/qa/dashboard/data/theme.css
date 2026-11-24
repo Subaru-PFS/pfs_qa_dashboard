@@ -169,6 +169,7 @@
   .chip.fail { color: var(--fail); background: var(--fail-bg); }
   .chip.unknown { color: var(--unk); background: var(--unk-bg); }
   .chip.none { color: var(--fg-2); background: transparent; box-shadow: inset 0 0 0 1px var(--fg-3); }
+  .chip.noqa { color: var(--fg-3); background: var(--band); }
   .controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; }
   .controls label { display: flex; flex-direction: column; gap: 3px; font-size: 0.78rem; color: var(--fg-2); }
   .controls select, .controls input { font: inherit; font-size: 0.9rem; padding: 5px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--fg); }
@@ -194,6 +195,8 @@
   .sq.awaiting, .cal .cells.time .sq.awaiting { background: var(--series-1-soft); box-shadow: inset 0 0 0 1px var(--series-1); }
   /* No QA result: an outline, nothing inside. */
   .sq.none, .cal .cells.time .sq.none { background: transparent; box-shadow: inset 0 0 0 1px var(--fg-2); }
+  /* No QA method (darks, biases): a faint filled square, present but unjudged. */
+  .sq.noqa, .cal .cells.time .sq.noqa { background: var(--band); box-shadow: inset 0 0 0 1px var(--fg-3); }
   .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--fg-2); font-size: 0.85rem; align-items: center; }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   .tip { position: fixed; z-index: 20; pointer-events: none; background: var(--surface); color: var(--fg); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; font-size: 0.82rem; line-height: 1.45; box-shadow: 0 4px 14px rgb(0 0 0 / 0.18); max-width: 300px; }

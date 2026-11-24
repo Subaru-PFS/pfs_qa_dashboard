@@ -27,7 +27,7 @@
     <div class="controls">
       <label for="f-kind">Kind<select id="f-kind"><option value="">All kinds</option><option>science</option><option>all-sky</option><option>twilight</option><option>arc</option><option>quartz</option><option>unclassified</option></select></label>
       <label for="f-slit">Lit through<select id="f-slit"><option value="">Either</option><option>full slit</option><option>engineering fibers</option></select></label>
-      <label for="f-status">Verdict<select id="f-status"><option value="">All verdicts</option><option value="notpass">Not PASS</option><option>PASS</option><option>WARN</option><option>FAIL</option><option>UNKNOWN</option><option>NO RESULT</option></select></label>
+      <label for="f-status">Verdict<select id="f-status"><option value="">All verdicts</option><option value="notpass">Not PASS</option><option>PASS</option><option>WARN</option><option>FAIL</option><option>UNKNOWN</option><option>NO RESULT</option><option>NO QA</option></select></label>
       <label for="f-visit">Visit<input id="f-visit" type="search" inputmode="numeric" placeholder="first digits" size="10"></label>
       <label for="f-design">Design<input id="f-design" type="search" placeholder="e.g. shaka, SSP, blackDots" size="18"></label>
       <span class="count" id="count" aria-live="polite"></span>
@@ -42,10 +42,10 @@
 
   <details class="block">
     <summary><h2>Visits by kind</h2></summary>
-    <p>A visit takes the worst verdict among its detectors; the last column counts visits that were taken and have no QA result. Unclassified frames are those the QA did not recognise as an arc, quartz, science or twilight frame: darks, dot-roach, fiber-profile and flat sequences.</p>
+    <p>A visit takes the worst verdict among its detectors; the last two columns count visits taken with no QA result and frames with no QA method (darks, biases). Unclassified frames are those the QA did not recognise as an arc, quartz, science or twilight frame: dot-roach, fiber-profile and flat sequences.</p>
     <div class="tablewrap">
       <table>
-        <thead><tr><th scope="col" class="l">Kind</th><th scope="col">Visits</th><th scope="col">PASS</th><th scope="col">WARN</th><th scope="col">FAIL</th><th scope="col">UNKNOWN</th><th scope="col">No result</th></tr></thead>
+        <thead><tr><th scope="col" class="l">Kind</th><th scope="col">Visits</th><th scope="col">PASS</th><th scope="col">WARN</th><th scope="col">FAIL</th><th scope="col">UNKNOWN</th><th scope="col">No result</th><th scope="col">No QA</th></tr></thead>
         <tbody>
 {{SUMMARY}}
         </tbody>
@@ -123,7 +123,7 @@
     <p>Counts are visits judged; the brackets give how many of them are WARN or FAIL. The last column counts visits with no QA result.</p>
     <div class="tablewrap">
       <table>
-        <thead><tr><th scope="col" class="l">Night (HST, evening date)</th><th scope="col">Visits</th><th scope="col">Science</th><th scope="col">Twilight and all-sky</th><th scope="col">Arcs and quartz, full slit</th><th scope="col">Engineering-fiber frames</th><th scope="col">No result</th></tr></thead>
+        <thead><tr><th scope="col" class="l">Night (HST, evening date)</th><th scope="col">Visits</th><th scope="col">Science</th><th scope="col">Twilight and all-sky</th><th scope="col">Arcs and quartz, full slit</th><th scope="col">Engineering-fiber frames</th><th scope="col">No result</th><th scope="col">No QA</th></tr></thead>
         <tbody>
 {{NIGHTS}}
         </tbody>
@@ -152,7 +152,8 @@
       {{CHECKS}}
       <li><strong>A visit</strong> takes the worst verdict among its detectors. UNKNOWN means the QA ran and nothing could be judged, or qadb holds no verdict for the image. A verdict stored before a check was changed is as it was judged then.</li>
       {{NO_RESULT_NOTE}}
-      <li><strong>Not covered:</strong> visits after the latest one judged, whose results may be on their way; and darks, biases and master frames, which have no QA method. Whether a flagged frame is truly faulty has not been checked.</li>
+      <li><strong>NO QA:</strong> a dark, bias, master or test exposure — it was taken, but has no QA method, so it is listed without a verdict.</li>
+      <li><strong>Not covered:</strong> visits after the latest one judged, whose results may be on their way. Whether a flagged frame is truly faulty has not been checked.</li>
       <li><strong>Source:</strong> {{SOURCE}}</li>
     </ul>
   </details>

@@ -15,15 +15,16 @@
     show: new Set(["science", "cal"]), arm: "", spec: "",
     layout: defaults.layout === "order" ? "order" : "time", night: true,
   };
-  // Detector letters: N no QA result, A taken but not yet judged (night page), U judged but unknown.
-  const WORD = { P: "PASS", W: "WARN", F: "FAIL", U: "UNKNOWN", N: "NO RESULT", A: "AWAITING" };
-  const RANK = { A: -2, N: -1, U: 0, P: 1, W: 2, F: 3 };
-  const groupOf = (r) => r[2] === "science" ? "science" : r[3] === "engineering fibers" ? "eng" : "cal";
+  // Detector letters: Q no QA method, N no QA result, A taken but not yet judged (night page), U unknown.
+  const WORD = { P: "PASS", W: "WARN", F: "FAIL", U: "UNKNOWN", N: "NO RESULT", A: "AWAITING", Q: "NO QA" };
+  const RANK = { Q: -3, A: -2, N: -1, U: 0, P: 1, W: 2, F: 3 };
+  // A no-QA frame (dark, bias, ...) is its own group; else science, engineering fibers, or calibration.
+  const groupOf = (r) => r[6] === "NO QA" ? "noqa" : r[2] === "science" ? "science" : r[3] === "engineering fibers" ? "eng" : "cal";
   // the detectors of a visit that the arm and spectrograph selection keeps, as [name, letter]
   const chosen = (r) => r[10].split(" ").filter(Boolean).map((d) => [d.slice(0, 2), d[2]])
     .filter(([cam]) => (!sel.arm || cam[0] === sel.arm) && (!sel.spec || cam[1] === sel.spec));
-  // "A" is the floor rank, so an all-awaiting or all-no-result visit keeps its own letter.
-  const worstOf = (list) => list.reduce((w, [, s]) => RANK[s] > RANK[w] ? s : w, "A");
+  // The worst keeps the list's own letters, so an all-awaiting, all-no-result or all-no-QA visit shows it.
+  const worstOf = (list) => list.reduce((w, [, s]) => RANK[s] > RANK[w] ? s : w, list.length ? list[0][1] : "A");
   // Minutes from noon (HST) of the night's date to the visit's start: every night shares that clock.
   const minutesOf = (r) => {
     if (!r[1] || !r[9]) return null;
@@ -111,6 +112,9 @@
   // Apply the per-page defaults to the controls before reading them: show Engineering fibers if asked, and
   // reflect the chosen layout in the toggle and the night-only switch (which only applies to By time).
   if (defaults.eng) { const eng = document.getElementById("f-show-eng"); if (eng) eng.checked = true; }
+  // The "Darks & biases" toggle appears only when the page has such frames (the run report, not the night page).
+  const noqaBox = document.getElementById("f-show-noqa");
+  if (noqaBox && !DATA.some((r) => r[6] === "NO QA")) { const l = noqaBox.closest("label"); if (l) l.hidden = true; }
   document.querySelectorAll('.seg[data-group="layout"] button').forEach((b) =>
     b.setAttribute("aria-pressed", String(b.dataset.value === sel.layout)));
   fNight.disabled = sel.layout !== "time";

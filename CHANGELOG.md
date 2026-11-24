@@ -10,6 +10,13 @@ or the Python API.
 
 ### Added
 
+- **Every visit is listed, darks and biases included**: the run report's "Every visit" table now lists
+  every SpS exposure in the run, not only the kinds with a QA method. A frame with no QA method (a dark,
+  bias, master or test exposure) is shown by its exposure type with a muted "NO QA" verdict — distinct from
+  "NO RESULT" (a judged kind passed over). These are tallied in a new "No QA" lead line, a "No QA" column
+  and per-type rows in "Visits by kind", and a "No QA" column in "By night"; on the time map they are a
+  "Darks & biases" toggle (off by default) and a faint square, and the verdict filter gains a "NO QA"
+  option. The night page is unchanged.
 - **Design name surfaced on the run report and visit pages**: the opdb's full `pfs_design.design_name` is
   now read and shown — a "Design" column in the "Every visit" table with a free-text filter (type `shaka`,
   `SSP`, `blackDots`, a field name, …), and a "Design: …" line on each visit page. The query previously

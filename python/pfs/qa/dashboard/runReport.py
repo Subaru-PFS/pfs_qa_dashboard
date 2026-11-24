@@ -125,6 +125,9 @@ NO_RESULT = "NO RESULT"
 #: A visit taken after the latest one judged, with no QA result yet: its result may still be on its way.
 AWAITING = "AWAITING"
 
+#: A frame with no QA method (a dark, bias, master or test exposure): taken, and never judged.
+NO_QA = "NO QA"
+
 #: The SpS exposure types the QA tasks judge: a visit of one of these should have a result.
 JUDGED_EXP_TYPES = ("object", "arc", "flat")
 
@@ -501,7 +504,10 @@ def _takenRow(row: Any, status: str, letter: str, why: str) -> dict:
     arms = "".join(
         sorted({camera[0] for camera in cameras}, key=lambda arm: ARMS.find(arm) % (len(ARMS) + 1))
     )
-    kind = SEQUENCE_KINDS.get(row.sequenceType, "other")
+    if status == NO_QA and isinstance(row.expType, str) and row.expType:
+        kind = row.expType  # a no-QA frame (dark, bias, ...) is shown by its exposure type
+    else:
+        kind = SEQUENCE_KINDS.get(row.sequenceType, "other")
     # The arc lamp (and quartz) from the opdb's sequence name, so an arc shows its lamp before QA runs.
     sequenceName = getattr(row, "sequenceName", None)
     lamp = sequenceName if kind in ("arc", "quartz") and isinstance(sequenceName, str) else ""
@@ -519,33 +525,43 @@ def _takenRow(row: Any, status: str, letter: str, why: str) -> dict:
     }
 
 
-def _noResultRows(info: pd.DataFrame, judgedVisits: set[int], awaiting: bool = False) -> list[dict]:
-    """Return a row for each visit the opdb says was taken, and should have been judged, that was not.
+def _noResultRows(
+    info: pd.DataFrame, judgedVisits: set[int], awaiting: bool = False, includeNoQa: bool = False
+) -> list[dict]:
+    """Return a row for each taken visit that was not judged: passed over, awaiting, or with no QA method.
 
-    Live results arrive in visit order, so a visit older than the latest one judged was passed over
-    (`NO_RESULT`); a newer one may still be on its way. With ``awaiting``, each newer one gets a row too
-    (`AWAITING`), for the night page's "what is being observed now"; without it they are left out, as on
-    the run report.
+    A visit of a judged kind (`JUDGED_EXP_TYPES`) that has no result is either older than the latest one
+    judged, so passed over (`NO_RESULT`), or newer, so maybe still on its way (`AWAITING`, only with
+    ``awaiting`` — the night page's "what is being observed now"). With ``includeNoQa``, a frame of any
+    other kind (a dark, bias, master or test exposure) gets a `NO_QA` row: it was taken and has no QA
+    method, so it is complete, whatever the latest visit judged.
     """
-    if not judgedVisits or "expType" not in info.columns:
+    if "expType" not in info.columns:
         return []
-    latest = max(judgedVisits)
-    taken = info[info["expType"].isin(JUDGED_EXP_TYPES) & ~info["visit"].isin(judgedVisits)]
+    notJudged = info[~info["visit"].isin(judgedVisits)]
     rows = []
-    for row in taken.itertuples():
-        if row.visit < latest:
-            ended = row.sequenceEnd if isinstance(row.sequenceEnd, str) and row.sequenceEnd else None
-            why = {None: "not in a sequence", "completed": "sequence completed"}.get(
-                ended, f"sequence ended: {ended}"
-            )
-            rows.append(_takenRow(row, NO_RESULT, "N", why))
-        elif awaiting and row.visit > latest:
-            rows.append(_takenRow(row, AWAITING, "A", "taken; QA not in yet"))
+    if includeNoQa:
+        for row in notJudged[~notJudged["expType"].isin(JUDGED_EXP_TYPES)].itertuples():
+            rows.append(_takenRow(row, NO_QA, "Q", "no QA method"))
+    if judgedVisits:
+        latest = max(judgedVisits)
+        for row in notJudged[notJudged["expType"].isin(JUDGED_EXP_TYPES)].itertuples():
+            if row.visit < latest:
+                ended = row.sequenceEnd if isinstance(row.sequenceEnd, str) and row.sequenceEnd else None
+                why = {None: "not in a sequence", "completed": "sequence completed"}.get(
+                    ended, f"sequence ended: {ended}"
+                )
+                rows.append(_takenRow(row, NO_RESULT, "N", why))
+            elif awaiting and row.visit > latest:
+                rows.append(_takenRow(row, AWAITING, "A", "taken; QA not in yet"))
     return rows
 
 
 def visitTable(
-    images: pd.DataFrame, info: pd.DataFrame | None = None, awaiting: bool = False
+    images: pd.DataFrame,
+    info: pd.DataFrame | None = None,
+    awaiting: bool = False,
+    includeNoQa: bool = False,
 ) -> pd.DataFrame:
     """Return one row per visit: its worst verdict, the detectors behind it, and when it was taken.
 
@@ -606,7 +622,7 @@ def visitTable(
     ]
     hasSequences = info is not None and "sequenceType" in info.columns
     info = pd.DataFrame(columns=["visit"]) if info is None else info
-    rows += _noResultRows(info, {row["visit"] for row in rows}, awaiting=awaiting)
+    rows += _noResultRows(info, {row["visit"] for row in rows}, awaiting=awaiting, includeNoQa=includeNoQa)
     visits = pd.DataFrame(rows, columns=columns).astype({"visit": "int64"})
     info = info.reindex(columns=_INFO).drop_duplicates("visit").astype({"visit": "int64"})
     visits = visits.merge(info.drop(columns=["expType", "cameras", "iis"]), on="visit", how="left")
@@ -1108,10 +1124,11 @@ def renderPage(
     now : `datetime.datetime`, optional
         When the page was made; the current time (HST) by default.
     """
-    # The visits judged, and those the opdb says were taken that have no QA result.
+    # The visits judged, those taken with no QA result yet, and those with no QA method (darks, biases, ...).
     everyVisit = visits
     noResult = everyVisit[everyVisit["status"] == NO_RESULT]
-    visits = everyVisit[everyVisit["status"] != NO_RESULT]
+    noQa = everyVisit[everyVisit["status"] == NO_QA]
+    visits = everyVisit[~everyVisit["status"].isin([NO_RESULT, NO_QA])]
 
     def unjudged(frame: pd.DataFrame, slit: str | None = None) -> str:
         """Return how many of ``frame``'s kinds of visit have no result, lit through ``slit``; a dash for none."""
@@ -1134,12 +1151,20 @@ def renderPage(
     ]
     summary = [
         f"<tr><th scope='row'>{name}</th><td>{int(mask.sum())}</td>{_counts(visits[mask])}"
-        f"{unjudged(of, slit)}</tr>"
+        f"{unjudged(of, slit)}<td>–</td></tr>"
         for name, mask, of, slit in kinds
     ]
+    # A row per kind of no-QA frame present (darks, biases, ...): shown by exposure type, with no verdict.
+    noQaLabels = {"dark": "Darks", "bias": "Biases", "test": "Test frames", "master": "Masters"}
+    for nqKind, nqGroup in noQa.groupby("kind"):
+        label = noQaLabels.get(str(nqKind), str(nqKind).capitalize())
+        summary.append(
+            f"<tr><th scope='row'>{html.escape(label)}</th><td>{len(nqGroup)}</td>"
+            f"{_counts(nqGroup)}<td>–</td><td>{len(nqGroup)}</td></tr>"
+        )
     summary.append(
-        f"<tr class='total'><th scope='row'>All</th><td>{len(visits)}</td>{_counts(visits)}"
-        f"<td>{len(noResult) or '–'}</td></tr>"
+        f"<tr class='total'><th scope='row'>All</th><td>{len(visits) + len(noQa)}</td>{_counts(visits)}"
+        f"<td>{len(noResult) or '–'}</td><td>{len(noQa) or '–'}</td></tr>"
     )
 
     offsetsHtml, offsetAxis, residualsHtml = scienceSections(images[images["kind"] == "science"])
@@ -1150,7 +1175,8 @@ def renderPage(
         f"<td>{_nightCell(group[group['kind'].isin(['twilight', 'all-sky'])])}</td>"
         f"<td>{_nightCell(group[group['kind'].isin(['arc', 'quartz']) & (group['illumination'] == 'full')])}</td>"
         f"<td>{_nightCell(group[group['illumination'] == 'iis'])}</td>"
-        f"<td>{int((noResult['night'] == night).sum()) or '–'}</td></tr>"
+        f"<td>{int((noResult['night'] == night).sum()) or '–'}</td>"
+        f"<td>{int((noQa['night'] == night).sum()) or '–'}</td></tr>"
         for night, group in visits[visits["night"] != ""].groupby("night")
     ]
 
@@ -1219,6 +1245,12 @@ def renderPage(
         + _tally("Calibs", calibs, int(unjudgedCalibs.sum()))
         + _tally("Engineering", visits[engineering], int((noResult["illumination"] == "iis").sum()))
     )
+    if len(noQa):
+        # Frames with no QA method (darks, biases, ...): a count only, since they carry no verdict.
+        lead += (
+            f"<li><span class='k'>No QA</span><span class='n'>{len(noQa):,} visits</span>"
+            f"<span class='chip noqa'><b>{len(noQa):,}</b> NO QA</span></li>"
+        )
     when = everyVisit["time"].dropna()
     dates = ""
     if len(when):
@@ -1243,7 +1275,11 @@ def renderPage(
         "{{NIGHTS}}": "\n".join(nights),
         "{{FLAGGED}}": flagged,
         "{{NVISITS}}": f"{len(visits):,}",
-        "{{NO_RESULT_META}}": f", {len(noResult):,} more with no QA result" if len(noResult) else "",
+        "{{NO_RESULT_META}}": "".join(
+            f", {n:,} {label}"
+            for n, label in ((len(noResult), "more with no QA result"), (len(noQa), "with no QA method"))
+            if n
+        ),
         "{{NO_RESULT_SECTION}}": missingSection,
         "{{NO_RESULT_NOTE}}": noResultNote,
         "{{NIMAGES}}": f"{len(images):,}",
@@ -1311,7 +1347,8 @@ def buildReport(
     """
     offsets = _calibrationOffsets(tables)  # shared by measure (science) and calibrationDrift (calibs)
     images = measure(tables, offsets=offsets)
-    visits = visitTable(images, infoFromTables(tables) if info is None else info)
+    # The run report lists every taken visit, no-QA frames (darks, biases, ...) included.
+    visits = visitTable(images, infoFromTables(tables) if info is None else info, includeNoQa=True)
     # The daily-calibration drift over the whole run, the last night with a calibration marked; both
     # groupings, toggled.
     drift = calibrationDrift(tables, visits, offsets=offsets)
