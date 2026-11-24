@@ -327,13 +327,13 @@ def renderNight(
             f"<li><span class='k'>No QA</span><span class='n'>{len(noQa):,} visits</span>"
             f"<span class='chip noqa'><b>{len(noQa):,}</b> NO QA</span></li>"
         )
-    # The third tile is the night's AG conditions (seeing and transparency, opening a modal) when there is any
-    # to show; otherwise the science verdict counts, as before.
+    # The third tile is always the night's AG conditions (seeing and transparency, opening a modal); with no
+    # conditions data it shows its own no-data state rather than falling back to another metric.
     condTile, condModal = conditions(transparency, seeing, night)
     tiles = (
         _latestTile(visits, images)
         + _summaryTile("Tonight", visits)
-        + (condTile or _summaryTile("Science", visits[visits["kind"] == "science"]))
+        + condTile  # always the Conditions tile (its own no-data state when there is nothing to show)
     )
     offsetsHtml, offsetAxis, residualsHtml = scienceSections(images[images["kind"] == "science"])
     nightText = html.escape(night) if night else "the latest night"

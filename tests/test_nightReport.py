@@ -212,10 +212,14 @@ def testTheNightShowsAgConditionsWhenReadersGiveThem():
     assert "id='conditions'" in made.html and "AG sky conditions tonight" in made.html
     assert "<h3>Seeing</h3>" in made.html and "<h3>Sky transparency</h3>" in made.html
     assert "<span class='lab'>Science</span>" not in made.html
-    # Negative control: without readers there is no Conditions tile or modal; the Science tile stays.
+    # Without readers the Conditions tile stays but shows its no-data state — no modal, and never the
+    # Science tile.
     plain = buildNightReport(tables, info=info).html
     assert "AG sky conditions tonight" not in plain and "id='conditions'" not in plain
-    assert "class='tile cond'" not in plain and "<span class='lab'>Science</span>" in plain
+    assert "class='tile cond empty'" in plain and "no AG seeing or transparency" in plain
+    assert "<span class='lab'>Science</span>" not in plain
+    # Negative control: a data tile is a button opening the modal; the no-data tile is neither.
+    assert "aria-controls='conditions'" not in plain
 
 
 def testAConditionsReadThatFailsDropsOnlyThatMetric():
@@ -232,9 +236,10 @@ def testAConditionsReadThatFailsDropsOnlyThatMetric():
     assert made.html.startswith("<!doctype html>") and "The night on the clock" in made.html
     assert "AG sky conditions tonight" in made.html and "<h3>Seeing</h3>" in made.html
     assert "<h3>Sky transparency</h3>" not in made.html
-    # Both failing: no Conditions tile or modal, the Science tile stays.
+    # Both failing: no modal, the Conditions tile shows its no-data state, and never the Science tile.
     both = buildNightReport(tables, info=info, readTransparency=boom, readSeeing=boom).html
-    assert "id='conditions'" not in both and "<span class='lab'>Science</span>" in both
+    assert "id='conditions'" not in both and "<span class='lab'>Science</span>" not in both
+    assert "class='tile cond empty'" in both
 
 
 def testAwaitingAndNoResultAreToldApart():

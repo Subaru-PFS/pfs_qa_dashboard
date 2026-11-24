@@ -113,10 +113,18 @@ def testSeeingOnlyLeadsWithSeeing():
 
 def testNeitherMetricGivesNothing():
     good = _exposures(["2026-11-04 20:00", "2026-11-04 20:05"], [0.8, 0.8])
-    assert conditions(None, None, "2026-11-04") == ("", "")
-    assert conditions(good.iloc[:0], good.iloc[:0], "2026-11-04") == ("", "")
-    assert conditions(good, good, "") == ("", "")
-    assert conditions(good, good, "not-a-date") == ("", "")
+    # With nothing to show, the Conditions tile holds its place in its no-data state, and there is no modal.
+    for tile, modal in (
+        conditions(None, None, "2026-11-04"),
+        conditions(good.iloc[:0], good.iloc[:0], "2026-11-04"),
+        conditions(good, good, ""),
+        conditions(good, good, "not-a-date"),
+    ):
+        assert "class='tile cond empty'" in tile and "no AG seeing or transparency" in tile
+        assert modal == ""
+    # Negative control: the no-data tile is not the interactive data tile (no modal to open).
+    noData, _ = conditions(None, None, "2026-11-04")
+    assert "aria-haspopup" not in noData
 
 
 def testExposuresOutsideTheNightWindowAreCountedNotDrawn():

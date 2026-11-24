@@ -17,6 +17,10 @@ or the Python API.
 - **"Every visit" table sorted newest first**: the run report's "Every visit" table now lists the most
   recent visit first. The underlying time-map data keeps its taken order, so "Every visit at a glance" is
   unchanged.
+- **Night page Conditions tile no longer falls back to the Science tile**: when a night has no AG seeing or
+  transparency, the Conditions tile now shows its own no-data state in place, rather than reverting to the
+  science verdict counts. (Missing conditions data is a separate, upstream matter — the writer must be
+  populating qadb's `seeing_agc_exposure` / `transparency_agc_exposure`.)
 
 ## [0.16.0] - 2026-11-23
 

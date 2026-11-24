@@ -129,11 +129,13 @@ def readSeeing(qadb: Any, first: int, last: int) -> pd.DataFrame:
 
 
 def conditions(transparency: pd.DataFrame, seeing: pd.DataFrame, night: str) -> tuple[str, str]:
-    """Return the night's AG ``(tile, modal)`` HTML, or ``("", "")`` when neither metric has data.
+    """Return the night's AG ``(tile, modal)`` HTML; a no-data tile and ``""`` when neither metric has data.
 
     The tile leads with the night's median seeing and carries transparency, with a sparkline, and opens the
     modal; the modal holds a full time series for each metric that has data. A metric with no measured value
-    is simply left out, so a night with only one still gets a tile and a one-chart modal.
+    is simply left out, so a night with only one still gets a tile and a one-chart modal. With neither metric,
+    the tile shows its no-data state (and there is no modal) rather than being dropped, so the night page
+    always carries a Conditions tile in that slot — it never falls back to another metric.
 
     Parameters
     ----------
@@ -149,8 +151,23 @@ def conditions(transparency: pd.DataFrame, seeing: pd.DataFrame, night: str) -> 
         if agg is not None:
             available.append((metric, agg))
     if not available:
-        return "", ""
+        return _emptyTile(), ""
     return _tile(available), _modal(available)
+
+
+def _emptyTile() -> str:
+    """Return the Conditions tile's no-data state: the label and a muted note, with no modal to open.
+
+    Shown when neither seeing nor transparency has a value for the night, so the tile holds its place
+    rather than the page falling back to another metric. A plain ``div`` (not a button): there is nothing
+    to open.
+    """
+    return (
+        "<div class='tile cond empty'>"
+        "<span class='lab'>Conditions</span>"
+        "<span class='big'>&ndash;</span>"
+        "<span class='sub'>no AG seeing or transparency for this night</span></div>"
+    )
 
 
 def _aggregate(frame: pd.DataFrame | None, night: str) -> dict | None:
