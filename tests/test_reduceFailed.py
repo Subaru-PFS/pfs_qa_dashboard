@@ -1,5 +1,6 @@
 """A reduceExposure failure shows as a distinct REDUCE FAILED verdict, not AWAITING / NO RESULT."""
 
+import json
 import re
 
 from test_nightReport import _info
@@ -89,3 +90,32 @@ def testVisitPageShowsAnErrorBannerAndNoEmptyPlots():
     ok = _tables((8, "r1", "science", _science(), {"gate": ("PASS", "")}))
     okPage = buildVisitPage(ok, _info([8], ["2026-11-04 22:00"]), 8, residuals=True, extraction=True)
     assert "block error" not in okPage and "class='residuals'" in okPage
+
+
+def testTheReasonReachesThePerVisitTables():
+    # Regression (review finding): visitTable's bad filter must include REDUCE FAILED, or the returnCode
+    # reason is blank in every table row (it only survived on the visit page before).
+    tables = _tables((1, "r1", "science", _science(), {"gate": _FAILED}))
+    vrow = visitTable(imageTable(tables)).set_index("visit").loc[1]
+    assert "reduceExposure failed (returnCode 1: FAILED)" in vrow["why"]
+    assert vrow["flagged"] == "r1 R"
+    # It reaches the run report's "Visits that do not pass" table, not just the visit page.
+    page = buildReport(tables, info=_info([1], ["2026-11-04 22:00"])).html
+    assert "reduceExposure failed (returnCode 1: FAILED)" in page
+    assert "r1 REDUCE FAILED" in page  # flaggedDetectors expands the R letter
+
+
+def testTheClockKnowsTheReduceFailedLetter():
+    # Regression (review finding): the clock derives each visit's verdict from the per-detector letters;
+    # a REDUCE FAILED detector is the letter R. Without R in the clock's maps / CSS the square rendered
+    # "undefined", uncoloured.
+    tables = _tables((1, "r1", "science", _science(), {"gate": _FAILED}))
+    page = buildReport(tables, info=_info([1], ["2026-11-04 22:00"])).html
+    data = json.loads(re.search(r"const DATA = (\[.*?\]);\n", page).group(1))
+    # detectorsStatus (DATA idx 10) encodes the REDUCE FAILED detector as the letter R.
+    assert data[0][10] == "r1R"
+    # The inlined clock script resolves R to a verdict and a class; the CSS colours the square.
+    assert 'R: "REDUCE FAILED"' in page and "R: 4" in page
+    assert ".sq.redfail" in page
+    # Negative control: R outranks F in the clock too, so a mixed visit does not read as a plain FAIL.
+    assert re.search(r"RANK = \{[^}]*F: 3, R: 4", page)

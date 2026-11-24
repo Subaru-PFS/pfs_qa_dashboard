@@ -608,7 +608,9 @@ def visitTable(
     """
     rows = []
     for visit, group in images.sort_values("camera").groupby("visit"):
-        bad = group[group["status"].isin(["WARN", "FAIL"])]
+        # REDUCE FAILED carries a reason (the returnCode) too, so it belongs with WARN/FAIL here: the
+        # reason reaches the tables' "why" column and the flagged-detectors list, as on the visit page.
+        bad = group[group["status"].isin(["WARN", "FAIL", REDUCE_FAILED])]
         reasons = (
             f"{camera}: {reason}"
             for camera, reason in zip(bad["camera"], bad["reason"], strict=True)
@@ -1207,7 +1209,7 @@ def renderPage(
     ]
 
     def flaggedDetectors(flagged: str) -> str:
-        names = {"W": "WARN", "F": "FAIL"}
+        names = {"W": "WARN", "F": "FAIL", "R": "REDUCE FAILED"}
         pairs = flagged.split()
         return ", ".join(
             f"{camera} {names[letter]}" for camera, letter in zip(pairs[::2], pairs[1::2], strict=True)
