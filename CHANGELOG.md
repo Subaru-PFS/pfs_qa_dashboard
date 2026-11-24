@@ -15,6 +15,13 @@ or the Python API.
   640 px with a vertical scrollbar and a sticky header — as the "Every visit" table already does, so they
   no longer push the rest of the page far down.
 
+### Fixed
+
+- **`FutureWarning` from the visit-times concat** in `QadbStore`: the first read concatenated an empty
+  `_times` frame, which pandas warns it will stop excluding when resolving concat dtypes. The empty part
+  is now dropped before the concat, which also keeps `time_exp_start` as `datetime64` on pandas 3 (the old
+  code let the empty object column make the result `object`).
+
 ## [0.15.0] - 2026-11-23
 
 ### Added

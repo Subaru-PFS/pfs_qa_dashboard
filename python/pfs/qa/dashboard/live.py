@@ -179,7 +179,10 @@ class QadbStore:
             self.raw[name] = pd.concat(parts, ignore_index=True) if parts else held.iloc[:0]
         read = tables.get("visitTimes")
         if read is not None:
-            times = pd.concat([self._times, read.reindex(columns=_TIMES)], ignore_index=True)
+            # Exclude an empty part (the first read's empty ``self._times``) before the concat: pandas
+            # drops empty/all-NA entries when resolving the result dtypes, which it warns is going away.
+            parts = [part for part in (self._times, read.reindex(columns=_TIMES)) if len(part)]
+            times = pd.concat(parts, ignore_index=True) if parts else self._times
             self._times = times.drop_duplicates("pfs_visit_id", keep="last").sort_values(
                 "pfs_visit_id", ignore_index=True
             )
