@@ -8,6 +8,13 @@ or the Python API.
 
 ## [Unreleased]
 
+### Changed
+
+- **Scrollbars on the run report's long tables**: the "Visits that do not pass" and "Visits with no QA
+  result" tables, which can each run to hundreds of rows, now use the shared `.tall` wrapper — capped at
+  640 px with a vertical scrollbar and a sticky header — as the "Every visit" table already does, so they
+  no longer push the rest of the page far down.
+
 ## [0.15.0] - 2026-11-23
 
 ### Added

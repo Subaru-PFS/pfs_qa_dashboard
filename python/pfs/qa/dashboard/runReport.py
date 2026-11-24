@@ -1182,7 +1182,7 @@ def renderPage(
             "<p>These visits exposed the spectrograph and are older than the latest visit judged, yet have no QA "
             "result. The last column is how the instrument's sequence ended; why a completed visit has no result "
             "is not recorded here.</p>"
-            "<div class='tablewrap'><table><thead><tr><th scope='col' class='l'>Visit</th>"
+            "<div class='tablewrap tall'><table><thead><tr><th scope='col' class='l'>Visit</th>"
             "<th scope='col' class='l'>HST</th><th scope='col' class='l'>Kind</th>"
             "<th scope='col' class='l'>Lit through</th><th scope='col'>Exposure (s)</th>"
             "<th scope='col' class='l'>Arms</th><th scope='col' class='l'>Sequence</th></tr></thead>"
