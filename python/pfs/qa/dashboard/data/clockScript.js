@@ -68,8 +68,18 @@
       axis = `<div class="night"></div><div class="axis">${ticks.join("")}</div>`;
     }
     cal.style.setProperty("--hours", hours);
-    cal.innerHTML = (axis + [...nights.entries()].sort().map(([night, list]) =>
-      `<div class="night">${night}</div><div class="cells${byTime ? " time" : ""}">` + list.map(square).join("") + "</div>").join("")
+    // Each night's date label links to that night's page: the latest to "/" (the canonical live night),
+    // the rest to /night/<date>. Only when more than one night is shown (the run report), so the
+    // single-night night page keeps a plain label.
+    const entries = [...nights.entries()].sort();
+    const latestNight = entries.length ? entries[entries.length - 1][0] : null;
+    const linkNights = entries.length > 1;
+    const nightLabel = (night) =>
+      linkNights && /^\d{4}-\d{2}-\d{2}$/.test(night)
+        ? `<a href="${night === latestNight ? "/" : "/night/" + night}">${night}</a>`
+        : night;
+    cal.innerHTML = (axis + entries.map(([night, list]) =>
+      `<div class="night">${nightLabel(night)}</div><div class="cells${byTime ? " time" : ""}">` + list.map(square).join("") + "</div>").join("")
       + notes.map((note) => `<div class="night"></div><div class="night">${note}</div>`).join(""))
       || `<div class="night">${sel.show.size ? "No visit has the selected detectors." : "No kind of frame is selected."}</div>`;
     tip.hidden = true;

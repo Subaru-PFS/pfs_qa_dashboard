@@ -8,6 +8,13 @@ or the Python API.
 
 ## [Unreleased]
 
+### Added
+
+- **Night dates on the run report's time map link to their night page**: in "Every visit at a glance" on
+  `/run`, each y-axis night date is now a link — the latest night to `/`, the rest to `/night/<date>` — so
+  you can jump from a night on the clock straight to that night's page. Shown only when more than one night
+  is on the clock, so the single-night night page keeps a plain label.
+
 ### Changed
 
 - **Collapsible run-report sections**: every section of the run report (`/run`) is now a

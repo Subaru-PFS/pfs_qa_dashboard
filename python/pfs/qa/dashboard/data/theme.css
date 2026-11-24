@@ -176,6 +176,8 @@
   .count { color: var(--fg-3); font-size: 0.85rem; }
   .cal { display: grid; grid-template-columns: max-content 1fr; gap: 5px 12px; align-items: start; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; }
   .cal .night { font-size: 0.78rem; color: var(--fg-2); font-variant-numeric: tabular-nums; line-height: 12px; padding-top: 1px; white-space: nowrap; }
+  .cal .night a { color: inherit; text-decoration: none; }
+  .cal .night a:hover { color: var(--fg); text-decoration: underline; }
   .cal .cells { display: flex; flex-wrap: wrap; gap: 2px; min-width: 0; }
   .sq { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
   /* By time: each row is one night on a shared clock, a visit drawn from its start for as long as it exposed. */
