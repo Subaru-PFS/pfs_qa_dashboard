@@ -29,6 +29,8 @@ or the Python API.
 
 ### Changed
 
+- **Run report link in the visit-page nav**: the top/bottom navigation on each visit page (`/visit/<n>`)
+  now links to the run report (`/run`) beside the night-page link, not only in the body text.
 - **Collapsible run-report sections**: every section of the run report (`/run`) is now a
   `<details>` with a click-to-toggle heading. All start collapsed except "Every visit at a glance" and
   "Every visit", and "Every visit" moves to the top (just below the at-a-glance clock) so the full,

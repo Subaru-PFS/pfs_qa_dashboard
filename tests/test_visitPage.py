@@ -53,10 +53,12 @@ def testVisitPageHasPrevNextNav():
     page = buildVisitPage(tables, None, 7)
     # Dumb nav: the neighbours are visit ± 1 with no existence check.
     assert "href='/visit/6' rel='prev'" in page and "href='/visit/8' rel='next'" in page
-    # The night page sits between prev and next, in that order.
+    # The night page and the run report sit between prev and next, in that order.
     nav = re.search(r"<nav class='visitnav'>(.*?)</nav>", page).group(1)
     order = [nav.index("rel='prev'"), nav.index("href='/'"), nav.index("rel='next'")]
     assert order == sorted(order) and "Night page" in nav
+    # The nav links to the run report, not only the body text.
+    assert "href='/run'>Run report</a>" in nav
     # Below visit 1 there is no previous link (it never points at visit 0).
     first = buildVisitPage(_tables((1, "b1", "science", _science(), {"gate": ("PASS", "")})), None, 1)
     assert "rel='prev'" not in first and "href='/visit/2' rel='next'" in first

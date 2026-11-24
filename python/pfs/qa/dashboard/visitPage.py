@@ -261,7 +261,7 @@ def _lightbox() -> str:
 
 
 def _nav(visit: int) -> str:
-    """Navigation row: the previous visit left, the night page centre, the next visit right.
+    """Navigation row: the previous visit left, the night page and run report centre, the next visit right.
 
     The previous/next links are deliberately dumb: the neighbours are ``visit - 1``
     and ``visit + 1`` with no check that either exists, so a gap in the numbering
@@ -273,9 +273,9 @@ def _nav(visit: int) -> str:
         if visit > 1
         else "<span class='nolink'>&larr; Visit</span>"
     )
-    night = "<a href='/'>Night page</a>"
+    middle = "<span class='mid'><a href='/'>Night page</a> · <a href='/run'>Run report</a></span>"
     nxt = f"<a href='/visit/{visit + 1}' rel='next'>Visit {visit + 1} &rarr;</a>"
-    return f"<nav class='visitnav'>{prev}{night}{nxt}</nav>"
+    return f"<nav class='visitnav'>{prev}{middle}{nxt}</nav>"
 
 
 def _detectorTable(perCam: pd.DataFrame, residuals: bool = False) -> str:
