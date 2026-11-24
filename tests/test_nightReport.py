@@ -296,17 +296,20 @@ def testNightNavigationLinksEarlierLaterAndTheDropdown():
     ]
     mid = buildNightReport(tables, info=info, night="2026-11-05").html
     assert "class='nightnav'" in mid
+    # The run-report link is always in the nav, ahead of the night-to-night controls.
+    assert "href='/run'>Run report</a>" in mid
     # Earlier points at the dated page; later points at the latest night, which is the live page "/".
     assert "href='/night/2026-11-04'" in mid and "rel='prev'" in mid
     assert "rel='next'" in mid and "2026-11-06 &rsaquo;" in mid
     # The dropdown lists every night (newest first), the current one selected and the latest marked.
     assert "<option value='/night/2026-11-05' selected>2026-11-05</option>" in mid
     assert "<option value='/'>2026-11-06 (latest)</option>" in mid
-    # The latest night has no "later"; a single-night run has no navigation at all.
+    # The latest night has no "later"; a single-night run keeps the run-report link but drops the controls.
     latest = buildNightReport(tables, info=info).html
     assert "later &rsaquo;</span>" in latest and "class='nav disabled'" in latest
     one = buildNightReport(tables, info=_info([1], ["2026-11-04 23:00"])).html
-    assert "class='nightnav'" not in one
+    assert "class='nightnav'" in one and "href='/run'>Run report</a>" in one
+    assert "<select id='night-pick'" not in one and "rel='prev'" not in one
 
 
 def testTheSummaryTilePillsSumToTheTotal():
