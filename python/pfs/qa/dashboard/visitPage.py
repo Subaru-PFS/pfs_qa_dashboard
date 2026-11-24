@@ -23,6 +23,7 @@ from pfs.qa.dashboard.live import HST
 from pfs.qa.dashboard.runReport import (
     ARMS,
     NO_RESULT,
+    REDUCE_FAILED,
     SPECIES_LABEL,
     _calibrationOffsets,
     _fontFaces,
@@ -40,6 +41,7 @@ _CLASS = {
     "WARN": "warn",
     "FAIL": "fail",
     "UNKNOWN": "unknown",
+    REDUCE_FAILED: "redfail",
     NO_RESULT: "none",
     "AWAITING": "awaiting",
 }

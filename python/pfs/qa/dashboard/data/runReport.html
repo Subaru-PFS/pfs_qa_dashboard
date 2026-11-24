@@ -27,7 +27,7 @@
     <div class="controls">
       <label for="f-kind">Kind<select id="f-kind"><option value="">All kinds</option><option>science</option><option>all-sky</option><option>twilight</option><option>arc</option><option>quartz</option><option>unclassified</option></select></label>
       <label for="f-slit">Lit through<select id="f-slit"><option value="">Either</option><option>full slit</option><option>engineering fibers</option></select></label>
-      <label for="f-status">Verdict<select id="f-status"><option value="">All verdicts</option><option value="notpass">Not PASS</option><option>PASS</option><option>WARN</option><option>FAIL</option><option>UNKNOWN</option><option>NO RESULT</option><option>NO QA</option></select></label>
+      <label for="f-status">Verdict<select id="f-status"><option value="">All verdicts</option><option value="notpass">Not PASS</option><option>PASS</option><option>WARN</option><option>FAIL</option><option>REDUCE FAILED</option><option>UNKNOWN</option><option>NO RESULT</option><option>NO QA</option></select></label>
       <label for="f-visit">Visit<input id="f-visit" type="search" inputmode="numeric" placeholder="first digits" size="10"></label>
       <label for="f-design">Design<input id="f-design" type="search" placeholder="e.g. shaka, SSP, blackDots" size="18"></label>
       <span class="count" id="count" aria-live="polite"></span>
@@ -151,6 +151,7 @@
     <ul>
       {{CHECKS}}
       <li><strong>A visit</strong> takes the worst verdict among its detectors. UNKNOWN means the QA ran and nothing could be judged, or qadb holds no verdict for the image. A verdict stored before a check was changed is as it was judged then.</li>
+      <li><strong>REDUCE FAILED:</strong> reduceExposure crashed on the visit, so QA never ran; every detector carries this in place of a verdict, with the returnCode in the reason. It counts as a failure in the tallies.</li>
       {{NO_RESULT_NOTE}}
       <li><strong>NO QA:</strong> a dark, bias, master or test exposure — it was taken, but has no QA method, so it is listed without a verdict.</li>
       <li><strong>Not covered:</strong> visits after the latest one judged, whose results may be on their way. Whether a flagged frame is truly faulty has not been checked.</li>
@@ -164,7 +165,7 @@
   const DATA = {{DATA}};
   const rows = document.getElementById("rows"), count = document.getElementById("count");
   const fKind = document.getElementById("f-kind"), fSlit = document.getElementById("f-slit"), fStatus = document.getElementById("f-status"), fVisit = document.getElementById("f-visit"), fDesign = document.getElementById("f-design");
-  const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", UNKNOWN: "unknown", AWAITING: "awaiting", "NO RESULT": "none", "NO QA": "noqa" };
+  const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", "REDUCE FAILED": "redfail", UNKNOWN: "unknown", AWAITING: "awaiting", "NO RESULT": "none", "NO QA": "noqa" };
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   function render() {
     const kind = fKind.value, slit = fSlit.value, status = fStatus.value, visit = fVisit.value.trim(), design = fDesign.value.trim().toLowerCase();

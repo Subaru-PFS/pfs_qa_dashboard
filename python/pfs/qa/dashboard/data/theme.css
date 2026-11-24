@@ -167,6 +167,7 @@
   .chip.pass { color: var(--pass); background: var(--pass-bg); }
   .chip.warn { color: var(--warn); background: var(--warn-bg); }
   .chip.fail { color: var(--fail); background: var(--fail-bg); }
+  .chip.redfail { color: #fff; background: var(--fail-fill); }
   .chip.unknown { color: var(--unk); background: var(--unk-bg); }
   .chip.none { color: var(--fg-2); background: transparent; box-shadow: inset 0 0 0 1px var(--fg-3); }
   .chip.noqa { color: var(--fg-3); background: var(--band); }
