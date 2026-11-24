@@ -8,6 +8,8 @@ or the Python API.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-23
+
 ### Changed
 
 - **Run-report link always on the night page**: the night page's navigation now always carries a "Run
