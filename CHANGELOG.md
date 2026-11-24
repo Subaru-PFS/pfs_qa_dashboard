@@ -8,6 +8,8 @@ or the Python API.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-23
+
 ### Added
 
 - **Every visit is listed, darks and biases included**: the run report's "Every visit" table now lists
