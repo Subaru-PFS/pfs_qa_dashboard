@@ -1178,7 +1178,7 @@ def renderPage(
             for r in noResult.itertuples()
         )
         missingSection = (
-            f"<section class='block' id='no-result'><h2>Visits with no QA result ({len(noResult)})</h2>"
+            f"<details class='block' id='no-result'><summary><h2>Visits with no QA result ({len(noResult)})</h2></summary>"
             "<p>These visits exposed the spectrograph and are older than the latest visit judged, yet have no QA "
             "result. The last column is how the instrument's sequence ended; why a completed visit has no result "
             "is not recorded here.</p>"
@@ -1186,7 +1186,7 @@ def renderPage(
             "<th scope='col' class='l'>HST</th><th scope='col' class='l'>Kind</th>"
             "<th scope='col' class='l'>Lit through</th><th scope='col'>Exposure (s)</th>"
             "<th scope='col' class='l'>Arms</th><th scope='col' class='l'>Sequence</th></tr></thead>"
-            f"<tbody>\n{missingRows}\n</tbody></table></div></section>"
+            f"<tbody>\n{missingRows}\n</tbody></table></div></details>"
         )
     data = [
         [

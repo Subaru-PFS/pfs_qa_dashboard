@@ -10,6 +10,10 @@ or the Python API.
 
 ### Changed
 
+- **Collapsible run-report sections**: every section of the run report (`/run`) is now a
+  `<details>` with a click-to-toggle heading. All start collapsed except "Every visit at a glance" and
+  "Every visit", and "Every visit" moves to the top (just below the at-a-glance clock) so the full,
+  filterable visit table is the first thing in reach; the rest expand on demand.
 - **Scrollbars on the run report's long tables**: the "Visits that do not pass" and "Visits with no QA
   result" tables, which can each run to hundreds of rows, now use the shared `.tall` wrapper — capped at
   640 px with a vertical scrollbar and a sticky header — as the "Every visit" table already does, so they

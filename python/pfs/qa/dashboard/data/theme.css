@@ -31,8 +31,23 @@
   }
   main { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
   header, section.text { display: flex; flex-direction: column; gap: 10px; }
-  section.block { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-  section.block > p { color: var(--fg-2); margin: 0; }
+  .block { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .block > p { color: var(--fg-2); margin: 0; }
+  /* Collapsible sections: each <details class="block"> keeps the flex spacing when open; its own children
+     are hidden when closed (a flex <details> otherwise leaves them shown). The two default-open sections
+     carry the `open` attribute in the markup. */
+  details.block > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; }
+  details.block > summary::-webkit-details-marker { display: none; }
+  details.block > summary::before {
+    content: ""; flex: none; width: 0; height: 0;
+    border-left: 7px solid var(--fg-3); border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+    transition: transform 0.15s ease;
+  }
+  details.block[open] > summary::before { transform: rotate(90deg); }
+  details.block > summary:hover::before { border-left-color: var(--fg); }
+  details.block > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+  details.block:not([open]) > :not(summary) { display: none; }
+  @media (prefers-reduced-motion: reduce) { details.block > summary::before { transition: none; } }
   h1 { font-family: var(--display); font-weight: 600; font-size: 2.6rem; line-height: 1.15; margin: 0; text-wrap: balance; }
   h2 { font-family: var(--display); font-weight: 600; font-size: 1.8rem; line-height: 1.2; margin: 0; }
   p { margin: 0; }

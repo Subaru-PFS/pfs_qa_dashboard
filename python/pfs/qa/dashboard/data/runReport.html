@@ -15,15 +15,32 @@
     <ul class="lead">{{LEAD}}</ul>
   </header>
 
-  <section class="block">
-    <h2>Every visit at a glance</h2>
+  <details class="block" open>
+    <summary><h2>Every visit at a glance</h2></summary>
     <p>One row per night (HST date of the evening). By time, each visit is drawn from its start for as long as it exposed, over the night (18:00 to 07:00) or the whole day from noon; in the order taken, each visit is one square. A visit takes the worst verdict among the detectors selected, and one that did not read any of them is left out. Hover or tap a visit for its number, time, kind and the detectors behind its verdict.</p>
     {{CLOCK_CONTROLS}}
 
-  </section>
+  </details>
 
-  <section class="block">
-    <h2>Visits by kind</h2>
+  <details class="block" open>
+    <summary><h2>Every visit</h2></summary>
+    <div class="controls">
+      <label for="f-kind">Kind<select id="f-kind"><option value="">All kinds</option><option>science</option><option>all-sky</option><option>twilight</option><option>arc</option><option>quartz</option><option>unclassified</option></select></label>
+      <label for="f-slit">Lit through<select id="f-slit"><option value="">Either</option><option>full slit</option><option>engineering fibers</option></select></label>
+      <label for="f-status">Verdict<select id="f-status"><option value="">All verdicts</option><option value="notpass">Not PASS</option><option>PASS</option><option>WARN</option><option>FAIL</option><option>UNKNOWN</option><option>NO RESULT</option></select></label>
+      <label for="f-visit">Visit<input id="f-visit" type="search" inputmode="numeric" placeholder="first digits" size="10"></label>
+      <span class="count" id="count" aria-live="polite"></span>
+    </div>
+    <div class="tablewrap tall">
+      <table>
+        <thead><tr><th scope="col" class="l">Visit</th><th scope="col" class="l">Sequence</th><th scope="col" class="l">HST</th><th scope="col" class="l">Kind</th><th scope="col" class="l">Lit through</th><th scope="col">Exposure (s)</th><th scope="col" class="l">Arms</th><th scope="col" class="l">Verdict</th><th scope="col" class="l">Detectors flagged</th><th scope="col" class="l">Why</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </details>
+
+  <details class="block">
+    <summary><h2>Visits by kind</h2></summary>
     <p>A visit takes the worst verdict among its detectors; the last column counts visits that were taken and have no QA result. Unclassified frames are those the QA did not recognise as an arc, quartz, science or twilight frame: darks, dot-roach, fiber-profile and flat sequences.</p>
     <div class="tablewrap">
       <table>
@@ -33,10 +50,10 @@
         </tbody>
       </table>
     </div>
-  </section>
+  </details>
 
-  <section class="block">
-    <h2>Daily calibration drift from the calibration in use</h2>
+  <details class="block">
+    <summary><h2>Daily calibration drift from the calibration in use</h2></summary>
     <p>Per detector, each daily calibration's offset from <code>detectorMap_calib</code> over the whole run: a quartz's trace offset in x, and the nightly Neon arc's line offset in y. The shaded band is the run's own 5th-to-95th percentile; the latest night's points are larger. A point is coloured when its own offset reaches the calibration-offset limit (WARN at 1.0 px, FAIL at 2.0 px). Each group is a column stacked on a shared time axis, so a drift common to a whole spectrograph, or one detector drifting alone, reads down the column.</p>
     <div class="legend">
       <span><svg width="46" height="14" aria-hidden="true"><rect x="1" y="3" width="44" height="8" rx="2" fill="var(--series-1-soft)"/><line x1="1" x2="45" y1="7" y2="7" stroke="var(--series-1)"/></svg>trace offset in x, run band and nightly trend</span>
@@ -50,12 +67,12 @@
       <div class="bysm">{{CALIB_DRIFT_SM}}</div>
       <div class="byarm">{{CALIB_DRIFT_ARM}}</div>
     </div>
-  </section>
+  </details>
 
 {{CALIB_SET}}
 
-  <section class="block">
-    <h2>Science frames: offsets from the calibration</h2>
+  <details class="block">
+    <summary><h2>Science frames: offsets from the calibration</h2></summary>
     <p>The x offset is the median offset of every fiber's trace from the calibration. The y offset is that of the sky lines, taking the species furthest off on each image. The km/s value converts each species' offset with the dispersion at its own lines. Values are as measured: on visits read with the m arm the gate first subtracts a standing offset (the b arm's in x, the n arm's in y) where qadb holds one, so a value drawn here may sit beyond a limit it passed.</p>
     <div class="legend">
       <span><svg width="34" height="14" aria-hidden="true"><rect x="1" y="4" width="32" height="6" rx="3" fill="var(--series-1-soft)" stroke="var(--series-1)"/><rect x="15" y="1" width="2" height="12" fill="var(--fg)"/></svg>x offset, every fiber's trace: 5th to 95th percentile with the median, and the full range as a line</span>
@@ -76,10 +93,10 @@
         </tbody>
       </table>
     </div>
-  </section>
+  </details>
 
-  <section class="block">
-    <h2>Science frames: sky-line residual after the visit's adjustment</h2>
+  <details class="block">
+    <summary><h2>Science frames: sky-line residual after the visit's adjustment</h2></summary>
     <p>The residual is the median offset of the held-back sky lines from the visit's own detectorMap, converted to km/s with the dispersion at those lines. Each bar is drawn on its arm's own scale, so the gate's limits sit in the same place in every row.</p>
     <div class="legend">
       <span><svg width="34" height="14" aria-hidden="true"><line x1="0" x2="34" y1="7" y2="7" stroke="var(--series-1)"/><rect x="6" y="3" width="22" height="8" rx="4" fill="var(--series-1-soft)" stroke="var(--series-1)"/><rect x="15" y="0" width="2" height="14" fill="var(--fg)"/></svg>5th to 95th percentile with the median; the line runs from the smallest to the largest</span>
@@ -98,10 +115,10 @@
         </tbody>
       </table>
     </div>
-  </section>
+  </details>
 
-  <section class="block">
-    <h2>By night</h2>
+  <details class="block">
+    <summary><h2>By night</h2></summary>
     <p>Counts are visits judged; the brackets give how many of them are WARN or FAIL. The last column counts visits with no QA result.</p>
     <div class="tablewrap">
       <table>
@@ -111,10 +128,10 @@
         </tbody>
       </table>
     </div>
-  </section>
+  </details>
 
-  <section class="block">
-    <h2>Visits that do not pass, engineering-fiber frames aside ({{NFLAGGED}})</h2>
+  <details class="block">
+    <summary><h2>Visits that do not pass, engineering-fiber frames aside ({{NFLAGGED}})</h2></summary>
     <div class="tablewrap tall">
       <table>
         <thead><tr><th scope="col" class="l">Visit</th><th scope="col" class="l">HST</th><th scope="col" class="l">Kind</th><th scope="col" class="l">Verdict</th><th scope="col" class="l">Detectors</th><th scope="col" class="l">Why</th></tr></thead>
@@ -123,29 +140,12 @@
         </tbody>
       </table>
     </div>
-  </section>
+  </details>
 
 {{NO_RESULT_SECTION}}
 
-  <section class="block">
-    <h2>Every visit</h2>
-    <div class="controls">
-      <label for="f-kind">Kind<select id="f-kind"><option value="">All kinds</option><option>science</option><option>all-sky</option><option>twilight</option><option>arc</option><option>quartz</option><option>unclassified</option></select></label>
-      <label for="f-slit">Lit through<select id="f-slit"><option value="">Either</option><option>full slit</option><option>engineering fibers</option></select></label>
-      <label for="f-status">Verdict<select id="f-status"><option value="">All verdicts</option><option value="notpass">Not PASS</option><option>PASS</option><option>WARN</option><option>FAIL</option><option>UNKNOWN</option><option>NO RESULT</option></select></label>
-      <label for="f-visit">Visit<input id="f-visit" type="search" inputmode="numeric" placeholder="first digits" size="10"></label>
-      <span class="count" id="count" aria-live="polite"></span>
-    </div>
-    <div class="tablewrap tall">
-      <table>
-        <thead><tr><th scope="col" class="l">Visit</th><th scope="col" class="l">Sequence</th><th scope="col" class="l">HST</th><th scope="col" class="l">Kind</th><th scope="col" class="l">Lit through</th><th scope="col">Exposure (s)</th><th scope="col" class="l">Arms</th><th scope="col" class="l">Verdict</th><th scope="col" class="l">Detectors flagged</th><th scope="col" class="l">Why</th></tr></thead>
-        <tbody id="rows"></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="text notes">
-    <h2>How each kind is judged</h2>
+  <details class="block notes">
+    <summary><h2>How each kind is judged</h2></summary>
     <p>Every verdict on this page is the one drp_qa's gate stored in qadb for the image; the page judges nothing itself. The gate's checks today, each WARN then FAIL (a value at a limit has crossed it):</p>
     <ul>
       {{CHECKS}}
@@ -154,7 +154,7 @@
       <li><strong>Not covered:</strong> visits after the latest one judged, whose results may be on their way; and darks, biases and master frames, which have no QA method. Whether a flagged frame is truly faulty has not been checked.</li>
       <li><strong>Source:</strong> {{SOURCE}}</li>
     </ul>
-  </section>
+  </details>
 
 </main>
 
