@@ -302,6 +302,26 @@ def butlerResiduals(args: argparse.Namespace, sliceStore):
                 # (FileNotFoundError): the plot shows a placeholder, not a 500.
                 return None
 
+    def readBBox(visit: int, arm: str, spectrograph: int):
+        """Return the detector's pixel bounds ``(x0, x1, y0, y1)`` from its detectorMap, or None.
+
+        `ResidualImages` holds the residual face maps to these bounds, and reads them once per camera, so
+        a detectorMap is fetched only the first time a detector's plot is drawn.
+        """
+        dataId = {
+            "instrument": args.instrument,
+            "visit": int(visit),
+            "arm": arm,
+            "spectrograph": int(spectrograph),
+        }
+        with lock:
+            try:
+                detectorMap = butler.get("detectorMap", dataId)
+            except (LookupError, FileNotFoundError):
+                return None
+        bbox = detectorMap.getBBox()
+        return (bbox.getBeginX(), bbox.getEndX(), bbox.getBeginY(), bbox.getEndY())
+
     def context(visit: int) -> dict:
         images = imageTable(sliceStore(int(visit)))
         images = images[images["visit"] == int(visit)]
@@ -311,7 +331,7 @@ def butlerResiduals(args: argparse.Namespace, sliceStore):
         f"Serving detector-map residual plots from the Butler at {args.butler} ({args.collection})",
         flush=True,
     )
-    return ResidualImages(readLineData, context)
+    return ResidualImages(readLineData, context, readBBox=readBBox)
 
 
 def butlerExtraction(args: argparse.Namespace, sliceStore):

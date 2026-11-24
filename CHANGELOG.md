@@ -31,6 +31,11 @@ or the Python API.
 
 ### Changed
 
+- **Detector residual maps share one frame**: on the visit page (`/visit/<n>`, with `serve --butler`), the
+  four 2D x–y residual face maps are now held to the full detector bounds (`detectorMap.getBBox()`) instead
+  of auto-scaling to each visit's line extent, so a detector's maps read the same from visit to visit and
+  across detectors. A detector's bounds are read once (cached per camera), so the NIR detector keeps its
+  own size; the 1D trend panels are unchanged.
 - **Night-page title carries the night's date**: the night page's heading and browser-tab title now read
   `<title> · <YYYY-MM-DD>` (e.g. "Visit verdicts · 2026-11-04") rather than just the run title, so one
   night's page reads apart from another at a glance and in a tab. The run report's title is unchanged.

@@ -115,6 +115,51 @@ def testImagesRenderCacheAndPlaceholder():
     assert ("m", 4) not in [(arm, sp) for _, arm, sp in reads]
 
 
+def testRenderResidualHoldsFaceMapsToTheDetectorBounds(monkeypatch):
+    from matplotlib.figure import Figure
+
+    import pfs.drp.qa.plotting.dmResiduals as dm
+
+    captured = {}
+
+    def fakePlot(data, *, title=None, limits=None):
+        fig = Figure()
+        mapAx = fig.add_subplot(2, 1, 1)
+        mapAx.set_xlabel("x (pix)")  # a face map, as plotDetectorResiduals labels its hexbins
+        trendAx = fig.add_subplot(2, 1, 2)
+        trendAx.set_xlabel("wavelength")  # a 1D trend panel
+        captured["map"], captured["trend"] = mapAx, trendAx
+        return fig
+
+    monkeypatch.setattr(dm, "plotDetectorResiduals", fakePlot)
+    renderResidual(_lineData(), title="r1 42", bbox=(0.0, 4096.0, 0.0, 4176.0))
+    # Every x-y face map is held to the detector bounds, so maps share one frame across visits.
+    assert captured["map"].get_xlim() == (0.0, 4096.0) and captured["map"].get_ylim() == (0.0, 4176.0)
+    # Negative control: a trend panel keeps its own scale, not the detector bounds.
+    assert captured["trend"].get_xlim() != (0.0, 4096.0)
+
+
+def testDetectorBoundsAreReadOncePerCamera():
+    reads = []
+
+    def readBBox(visit, arm, spectrograph):
+        reads.append((arm, spectrograph))
+        # The NIR (n) detector is a different size from the b/r/m CCDs, so each camera has its own bounds.
+        return (0.0, 4096.0, 0.0, 4096.0) if arm == "n" else (0.0, 4096.0, 0.0, 4176.0)
+
+    context = lambda visit: {"r1": SCIENCE, "n1": SCIENCE}  # noqa: E731
+    images = ResidualImages(lambda v, a, s: _lineData(), context, readBBox=readBBox)
+    images.png(10, "r1")
+    images.png(11, "r1")  # a different visit of the same detector: the bounds are the detector's
+    images.png(10, "n1")
+    # Each detector is read once (reused across its visits), and n is read separately from r — not shared.
+    assert reads == [("r", 1), ("n", 1)]
+    assert images._bounds["n1"][3] == 4096.0 and images._bounds["r1"][3] == 4176.0  # n shorter than r
+    # Negative control: without a reader, no bounds are read and the maps keep their auto scale.
+    plain = ResidualImages(lambda v, a, s: _lineData(), context)
+    assert plain.png(10, "r1")[:4] == b"\x89PNG" and plain._bounds == {}
+
+
 def testImagesCacheEvictsLeastRecentlyUsed():
     def readLineData(visit, arm, spectrograph):
         return _lineData()
