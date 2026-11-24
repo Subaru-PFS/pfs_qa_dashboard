@@ -151,15 +151,17 @@ _INFO = [
     "iis",
     "sequenceEnd",
     "shaka",
+    "design",
 ]
 _TABLES = ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics", GATE)
 
 _log = logging.getLogger(__name__)
 
 # Every visit that exposed the spectrograph in a range: one row each (a visit is in one sequence at most).
-# The design name is read only for the one-fiber-group (shaka) designs (a MOD<k> before a group<n>); a
-# science design's name can be a field or target name, which is proprietary, so the CASE returns NULL for it
-# and the proprietary names never leave the opdb. `pfs.drp.qa.comparison.classify.shakaOf` parses the rest.
+# The full design name is read and shown: the dashboard is internal (team access), so a science design's
+# field or target name may appear on the pages. It is proprietary, so it must stay out of public records
+# (commits, tickets, test fixtures). `pfs.drp.qa.comparison.classify.shakaOf` parses the one-fiber-group
+# (shaka) names (a MOD<k> before a group<n>) for the shaka label.
 _VISIT_INFO_SQL = """
 SELECT v.pfs_visit_id AS visit, v.issued_at AS time, sv.exp_type,
     (SELECT max(e.exptime) FROM sps_exposure e WHERE e.pfs_visit_id = v.pfs_visit_id) AS exptime,
@@ -168,7 +170,7 @@ SELECT v.pfs_visit_id AS visit, v.issued_at AS time, sv.exp_type,
         WHERE e.pfs_visit_id = v.pfs_visit_id) AS cameras,
     vs.iic_sequence_id, s.sequence_type, s.name AS sequence_name,
     position('iis' IN lower(s.cmd_str)) > 0 AS iis, st.status_flag, st.cmd_output,
-    CASE WHEN d.design_name ~* 'mod[0-9].*group[0-9]' THEN d.design_name END AS design_name
+    d.design_name AS design_name
 FROM pfs_visit v
 JOIN sps_visit sv ON sv.pfs_visit_id = v.pfs_visit_id
 LEFT JOIN visit_set vs ON vs.pfs_visit_id = v.pfs_visit_id
@@ -425,6 +427,8 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
     info["sequenceEnd"] = pd.Series(ended, index=info.index, dtype=object)
     # A shaka exposure (one fiber group lit) is labelled as such; a non-shaka design gives "".
     info["shaka"] = [shakaLabel(*shakaOf(name)) for name in info["design_name"]]
+    # The full design name, shown on the pages (the dashboard is internal); "" when the opdb has none.
+    info["design"] = [name if isinstance(name, str) else "" for name in info["design_name"]]
     info = info.reindex(columns=_INFO).drop_duplicates("visit")
     info["visit"] = info["visit"].astype("int64")
     info["time"] = pd.to_datetime(info["time"])
@@ -625,6 +629,7 @@ def visitTable(
     # A shaka exposure (one fiber group lit) is labelled apart from a fully lit one of the same kind.
     shaka = visits["shaka"].fillna("") if "shaka" in visits else pd.Series("", index=visits.index)
     visits["label"] = [f"{label} · {tag}" if tag else label for label, tag in zip(labels, shaka, strict=True)]
+    visits["design"] = visits["design"].fillna("").astype(str) if "design" in visits else ""
     visits["slit"] = visits["illumination"].map({"full": "full slit", "iis": "engineering fibers"}).fillna("")
     return visits.sort_values("visit", ignore_index=True)
 
@@ -1202,6 +1207,7 @@ def renderPage(
             r.night,
             r.detectorsStatus,
             _sequenceLabel(r.sequenceId),
+            r.design,
         ]
         for r in everyVisit.itertuples()
     ]

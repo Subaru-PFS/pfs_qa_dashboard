@@ -805,7 +805,7 @@ def testAVisitTakenAndNeverJudgedShowsAsNoResult():
     assert "Visits with no QA result" not in whole and "more with no QA result" not in whole
 
 
-def testReadVisitInfoLabelsShaka():
+def testReadVisitInfoReadsDesignNameAndLabelsShaka():
     raw = pd.DataFrame(
         {
             "visit": [1, 2],
@@ -818,20 +818,23 @@ def testReadVisitInfoLabelsShaka():
             "iis": [False, False],
             "status_flag": [0, 0],
             "cmd_output": ["complete", "complete"],
-            # The opdb returns a name only for a one-fiber-group design; a science field's name is NULL.
+            # The opdb now returns the full design name (the dashboard is internal); None when it has none.
             "design_name": ["cobraHome-MOD4_group2", None],
         }
     )
 
     class Opdb:
         def query_dataframe(self, sql, params):
-            assert "design_name" in sql and "~*" in sql  # the proprietary guard runs in the opdb
+            assert "design_name" in sql  # the full design name is read
+            assert "~*" not in sql  # negative control: no proprietary null-out guard in the query any more
             return raw
 
     info = runReport.readVisitInfo(Opdb(), 1, 2).set_index("visit")
-    assert "design_name" not in info.columns  # the raw name is not carried past the derived label
+    # The full design name is carried onto the pages, and the shaka label is still derived from it.
+    assert info.loc[1, "design"] == "cobraHome-MOD4_group2"
     assert info.loc[1, "shaka"] == "shaka MOD4 group2"
-    assert info.loc[2, "shaka"] == ""  # negative control: a fully lit / science design is not shaka
+    # Negative control: a design with no one-fiber-group name is carried but is not labelled shaka.
+    assert info.loc[2, "design"] == "" and info.loc[2, "shaka"] == ""
 
 
 def testVisitTableTagsShakaInLabel():
@@ -844,6 +847,22 @@ def testVisitTableTagsShakaInLabel():
     visits = runReport.visitTable(measure(tables), info).set_index("visit")
     assert visits.loc[1, "label"] == "arc, Neon · shaka MOD4 group2"
     assert visits.loc[2, "label"] == "arc, Neon"  # negative control: the fully lit arc carries no tag
+
+
+def testTheEveryVisitTableSurfacesTheDesign():
+    tables = _tables((1, "r1", "arc", {}), (2, "r1", "science", _science()))
+    info = _taken(
+        (1, "arc", "scienceArc", False, "completed"),
+        (2, "object", "scienceObject", False, "completed"),
+    )
+    info["design"] = ["cobraHome-MOD4_group1", "blackDots-moveAll"]
+    page = buildReport(tables, info=info).html
+    # The "Every visit" table gains a Design column and a free-text design filter.
+    assert ">Design</th>" in page and 'id="f-design"' in page
+    # Each visit's full design name is in the page data (column 12), to show and to filter on.
+    data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
+    designs = {row[0]: row[12] for row in data}
+    assert designs == {1: "cobraHome-MOD4_group1", 2: "blackDots-moveAll"}
 
 
 def testReadVisitInfoCarriesTheSequenceId():

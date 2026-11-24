@@ -137,7 +137,7 @@ def _header(visit: int, vrow: pd.Series | None, info: pd.Series | None) -> str:
             bits.append(f"{pd.to_datetime(info['time']):%Y-%m-%d %H:%M} HST")
         if isinstance(info.get("cameras"), str):
             bits.append(html.escape(info["cameras"]))
-    sequence = ""
+    meta = []
     if info is not None:
         name = info.get("sequenceName") or info.get("sequenceType")
         ended = info.get("sequenceEnd")
@@ -145,6 +145,13 @@ def _header(visit: int, vrow: pd.Series | None, info: pd.Series | None) -> str:
             sequence = f"Sequence: {html.escape(name)}"
             if isinstance(ended, str) and ended:
                 sequence += f" ({html.escape(ended)})"
+            meta.append(sequence)
+    # The design name (the full opdb name; the dashboard is internal). From the visit row, else the info.
+    design = (vrow.get("design") if vrow is not None else None) or (
+        info.get("design") if info is not None else None
+    )
+    if isinstance(design, str) and design:
+        meta.append(f"Design: {html.escape(design)}")
     verdict = ""
     if vrow is not None and vrow.get("status"):
         verdict = (
@@ -153,7 +160,7 @@ def _header(visit: int, vrow: pd.Series | None, info: pd.Series | None) -> str:
     title = " · ".join([f"Visit {visit}", *bits])
     return (
         f"<header>\n<h1>{title}</h1>\n"
-        + (f"<p class='meta'>{sequence}</p>\n" if sequence else "")
+        + (f"<p class='meta'>{' · '.join(meta)}</p>\n" if meta else "")
         + (f"<p>{verdict}</p>\n" if verdict else "")
         + "</header>"
     )

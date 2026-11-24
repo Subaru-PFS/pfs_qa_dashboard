@@ -10,6 +10,11 @@ or the Python API.
 
 ### Added
 
+- **Design name surfaced on the run report and visit pages**: the opdb's full `pfs_design.design_name` is
+  now read and shown — a "Design" column in the "Every visit" table with a free-text filter (type `shaka`,
+  `SSP`, `blackDots`, a field name, …), and a "Design: …" line on each visit page. The query previously
+  nulled every design name except the one-fiber-group (shaka) ones; the dashboard is internal, so the full
+  name is surfaced now (it still must be kept out of public records — commits, tickets, test fixtures).
 - **Night dates on the run report's time map link to their night page**: in "Every visit at a glance" on
   `/run`, each y-axis night date is now a link — the latest night to `/`, the rest to `/night/<date>` — so
   you can jump from a night on the clock straight to that night's page. Shown only when more than one night
