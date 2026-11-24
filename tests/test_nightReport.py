@@ -25,6 +25,23 @@ def _info(visits, times, sequences=None):
     )
 
 
+def testNightPageShowsDesignAndNoQaFrames():
+    tables = _tables((20, "r1", "science", _science()))
+    info = _taken(
+        (20, "object", "scienceObject", False, "completed"),
+        (21, "dark", "darks", False, "completed"),
+    )
+    info["design"] = ["cobraHome-MOD4_group1", "blackDots-moveAll"]
+    page = buildNightReport(tables, info=info).html
+    # The "Latest visits" table gains a Design column, and the night's design names are shown.
+    assert ">Design</th>" in page and "cobraHome-MOD4_group1" in page and "blackDots-moveAll" in page
+    # The dark is listed with a NO QA verdict, but it is not counted among the judged visits.
+    data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
+    byVisit = {row[0]: row[6] for row in data}
+    assert byVisit[21] == "NO QA" and byVisit[20] == "PASS"
+    assert "1 visits judged" in page  # the science visit is judged; the dark is not
+
+
 def testActiveNightIsTheMostRecentAndScopesToIt():
     tables = _tables(
         (1, "r1", "science", _science(x=0.1)),

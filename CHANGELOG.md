@@ -16,12 +16,14 @@ or the Python API.
   "NO RESULT" (a judged kind passed over). These are tallied in a new "No QA" lead line, a "No QA" column
   and per-type rows in "Visits by kind", and a "No QA" column in "By night"; on the time map they are a
   "Darks & biases" toggle (off by default) and a faint square, and the verdict filter gains a "NO QA"
-  option. The night page is unchanged.
-- **Design name surfaced on the run report and visit pages**: the opdb's full `pfs_design.design_name` is
-  now read and shown — a "Design" column in the "Every visit" table with a free-text filter (type `shaka`,
-  `SSP`, `blackDots`, a field name, …), and a "Design: …" line on each visit page. The query previously
-  nulled every design name except the one-fiber-group (shaka) ones; the dashboard is internal, so the full
-  name is surfaced now (it still must be kept out of public records — commits, tickets, test fixtures).
+  option. The night page lists them too — in its "Latest visits" feed, the Tonight tile, the lead, and the
+  clock toggle — kept out of the judged counts.
+- **Design name surfaced across the dashboard**: the opdb's full `pfs_design.design_name` is now read and
+  shown — a "Design" column in the run report's "Every visit" table (with a free-text filter: type `shaka`,
+  `SSP`, `blackDots`, a field name, …) and the night page's "Latest visits" table, and a "Design: …" line on
+  each visit page. The query previously nulled every design name except the one-fiber-group (shaka) ones;
+  the dashboard is internal, so the full name is surfaced now (it still must be kept out of public records —
+  commits, tickets, test fixtures).
 - **Night dates on the run report's time map link to their night page**: in "Every visit at a glance" on
   `/run`, each y-axis night date is now a link — the latest night to `/`, the rest to `/night/<date>` — so
   you can jump from a night on the clock straight to that night's page. Shown only when more than one night

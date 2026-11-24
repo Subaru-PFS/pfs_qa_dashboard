@@ -73,7 +73,7 @@
     <p>The night's visits, most recent first. A visit that exposed the spectrograph as a science, arc or flat frame and has no QA result yet is marked <span class="awaiting">awaiting QA</span>.</p>
     <div class="tablewrap tall">
       <table>
-        <thead><tr><th scope="col" class="l">Visit</th><th scope="col" class="l">Sequence</th><th scope="col" class="l">HST</th><th scope="col" class="l">Kind</th><th scope="col">Exp (s)</th><th scope="col" class="l">Arms</th><th scope="col" class="l">Verdict</th><th scope="col" class="l">Detectors</th><th scope="col" class="l">Why</th></tr></thead>
+        <thead><tr><th scope="col" class="l">Visit</th><th scope="col" class="l">Sequence</th><th scope="col" class="l">HST</th><th scope="col" class="l">Kind</th><th scope="col" class="l">Design</th><th scope="col">Exp (s)</th><th scope="col" class="l">Arms</th><th scope="col" class="l">Verdict</th><th scope="col" class="l">Detectors</th><th scope="col" class="l">Why</th></tr></thead>
         <tbody>
 {{FEED}}
         </tbody>
@@ -162,7 +162,7 @@
 
 <script>
   const DATA = {{DATA}};
-  const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", UNKNOWN: "unknown", AWAITING: "awaiting", "NO RESULT": "none" };
+  const CLS = { PASS: "pass", WARN: "warn", FAIL: "fail", UNKNOWN: "unknown", AWAITING: "awaiting", "NO RESULT": "none", "NO QA": "noqa" };
   const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   // The night page opens the time map in order taken, with engineering-fiber frames shown.
   const CLOCK_DEFAULTS = { layout: "order", eng: true };
