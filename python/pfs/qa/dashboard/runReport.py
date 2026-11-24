@@ -125,6 +125,9 @@ NO_RESULT = "NO RESULT"
 #: A visit taken after the latest one judged, with no QA result yet: its result may still be on its way.
 AWAITING = "AWAITING"
 
+#: A frame with no QA method (a dark, bias, master or test exposure): taken, and never judged.
+NO_QA = "NO QA"
+
 #: The SpS exposure types the QA tasks judge: a visit of one of these should have a result.
 JUDGED_EXP_TYPES = ("object", "arc", "flat")
 
@@ -151,15 +154,17 @@ _INFO = [
     "iis",
     "sequenceEnd",
     "shaka",
+    "design",
 ]
 _TABLES = ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics", GATE)
 
 _log = logging.getLogger(__name__)
 
 # Every visit that exposed the spectrograph in a range: one row each (a visit is in one sequence at most).
-# The design name is read only for the one-fiber-group (shaka) designs (a MOD<k> before a group<n>); a
-# science design's name can be a field or target name, which is proprietary, so the CASE returns NULL for it
-# and the proprietary names never leave the opdb. `pfs.drp.qa.comparison.classify.shakaOf` parses the rest.
+# The full design name is read and shown: the dashboard is internal (team access), so a science design's
+# field or target name may appear on the pages. It is proprietary, so it must stay out of public records
+# (commits, tickets, test fixtures). `pfs.drp.qa.comparison.classify.shakaOf` parses the one-fiber-group
+# (shaka) names (a MOD<k> before a group<n>) for the shaka label.
 _VISIT_INFO_SQL = """
 SELECT v.pfs_visit_id AS visit, v.issued_at AS time, sv.exp_type,
     (SELECT max(e.exptime) FROM sps_exposure e WHERE e.pfs_visit_id = v.pfs_visit_id) AS exptime,
@@ -168,7 +173,7 @@ SELECT v.pfs_visit_id AS visit, v.issued_at AS time, sv.exp_type,
         WHERE e.pfs_visit_id = v.pfs_visit_id) AS cameras,
     vs.iic_sequence_id, s.sequence_type, s.name AS sequence_name,
     position('iis' IN lower(s.cmd_str)) > 0 AS iis, st.status_flag, st.cmd_output,
-    CASE WHEN d.design_name ~* 'mod[0-9].*group[0-9]' THEN d.design_name END AS design_name
+    d.design_name AS design_name
 FROM pfs_visit v
 JOIN sps_visit sv ON sv.pfs_visit_id = v.pfs_visit_id
 LEFT JOIN visit_set vs ON vs.pfs_visit_id = v.pfs_visit_id
@@ -425,6 +430,8 @@ def readVisitInfo(opdb: Any, first: int, last: int) -> pd.DataFrame:
     info["sequenceEnd"] = pd.Series(ended, index=info.index, dtype=object)
     # A shaka exposure (one fiber group lit) is labelled as such; a non-shaka design gives "".
     info["shaka"] = [shakaLabel(*shakaOf(name)) for name in info["design_name"]]
+    # The full design name, shown on the pages (the dashboard is internal); "" when the opdb has none.
+    info["design"] = [name if isinstance(name, str) else "" for name in info["design_name"]]
     info = info.reindex(columns=_INFO).drop_duplicates("visit")
     info["visit"] = info["visit"].astype("int64")
     info["time"] = pd.to_datetime(info["time"])
@@ -497,7 +504,10 @@ def _takenRow(row: Any, status: str, letter: str, why: str) -> dict:
     arms = "".join(
         sorted({camera[0] for camera in cameras}, key=lambda arm: ARMS.find(arm) % (len(ARMS) + 1))
     )
-    kind = SEQUENCE_KINDS.get(row.sequenceType, "other")
+    if status == NO_QA and isinstance(row.expType, str) and row.expType:
+        kind = row.expType  # a no-QA frame (dark, bias, ...) is shown by its exposure type
+    else:
+        kind = SEQUENCE_KINDS.get(row.sequenceType, "other")
     # The arc lamp (and quartz) from the opdb's sequence name, so an arc shows its lamp before QA runs.
     sequenceName = getattr(row, "sequenceName", None)
     lamp = sequenceName if kind in ("arc", "quartz") and isinstance(sequenceName, str) else ""
@@ -515,33 +525,43 @@ def _takenRow(row: Any, status: str, letter: str, why: str) -> dict:
     }
 
 
-def _noResultRows(info: pd.DataFrame, judgedVisits: set[int], awaiting: bool = False) -> list[dict]:
-    """Return a row for each visit the opdb says was taken, and should have been judged, that was not.
+def _noResultRows(
+    info: pd.DataFrame, judgedVisits: set[int], awaiting: bool = False, includeNoQa: bool = False
+) -> list[dict]:
+    """Return a row for each taken visit that was not judged: passed over, awaiting, or with no QA method.
 
-    Live results arrive in visit order, so a visit older than the latest one judged was passed over
-    (`NO_RESULT`); a newer one may still be on its way. With ``awaiting``, each newer one gets a row too
-    (`AWAITING`), for the night page's "what is being observed now"; without it they are left out, as on
-    the run report.
+    A visit of a judged kind (`JUDGED_EXP_TYPES`) that has no result is either older than the latest one
+    judged, so passed over (`NO_RESULT`), or newer, so maybe still on its way (`AWAITING`, only with
+    ``awaiting`` — the night page's "what is being observed now"). With ``includeNoQa``, a frame of any
+    other kind (a dark, bias, master or test exposure) gets a `NO_QA` row: it was taken and has no QA
+    method, so it is complete, whatever the latest visit judged.
     """
-    if not judgedVisits or "expType" not in info.columns:
+    if "expType" not in info.columns:
         return []
-    latest = max(judgedVisits)
-    taken = info[info["expType"].isin(JUDGED_EXP_TYPES) & ~info["visit"].isin(judgedVisits)]
+    notJudged = info[~info["visit"].isin(judgedVisits)]
     rows = []
-    for row in taken.itertuples():
-        if row.visit < latest:
-            ended = row.sequenceEnd if isinstance(row.sequenceEnd, str) and row.sequenceEnd else None
-            why = {None: "not in a sequence", "completed": "sequence completed"}.get(
-                ended, f"sequence ended: {ended}"
-            )
-            rows.append(_takenRow(row, NO_RESULT, "N", why))
-        elif awaiting and row.visit > latest:
-            rows.append(_takenRow(row, AWAITING, "A", "taken; QA not in yet"))
+    if includeNoQa:
+        for row in notJudged[~notJudged["expType"].isin(JUDGED_EXP_TYPES)].itertuples():
+            rows.append(_takenRow(row, NO_QA, "Q", "no QA method"))
+    if judgedVisits:
+        latest = max(judgedVisits)
+        for row in notJudged[notJudged["expType"].isin(JUDGED_EXP_TYPES)].itertuples():
+            if row.visit < latest:
+                ended = row.sequenceEnd if isinstance(row.sequenceEnd, str) and row.sequenceEnd else None
+                why = {None: "not in a sequence", "completed": "sequence completed"}.get(
+                    ended, f"sequence ended: {ended}"
+                )
+                rows.append(_takenRow(row, NO_RESULT, "N", why))
+            elif awaiting and row.visit > latest:
+                rows.append(_takenRow(row, AWAITING, "A", "taken; QA not in yet"))
     return rows
 
 
 def visitTable(
-    images: pd.DataFrame, info: pd.DataFrame | None = None, awaiting: bool = False
+    images: pd.DataFrame,
+    info: pd.DataFrame | None = None,
+    awaiting: bool = False,
+    includeNoQa: bool = False,
 ) -> pd.DataFrame:
     """Return one row per visit: its worst verdict, the detectors behind it, and when it was taken.
 
@@ -602,7 +622,7 @@ def visitTable(
     ]
     hasSequences = info is not None and "sequenceType" in info.columns
     info = pd.DataFrame(columns=["visit"]) if info is None else info
-    rows += _noResultRows(info, {row["visit"] for row in rows}, awaiting=awaiting)
+    rows += _noResultRows(info, {row["visit"] for row in rows}, awaiting=awaiting, includeNoQa=includeNoQa)
     visits = pd.DataFrame(rows, columns=columns).astype({"visit": "int64"})
     info = info.reindex(columns=_INFO).drop_duplicates("visit").astype({"visit": "int64"})
     visits = visits.merge(info.drop(columns=["expType", "cameras", "iis"]), on="visit", how="left")
@@ -625,6 +645,7 @@ def visitTable(
     # A shaka exposure (one fiber group lit) is labelled apart from a fully lit one of the same kind.
     shaka = visits["shaka"].fillna("") if "shaka" in visits else pd.Series("", index=visits.index)
     visits["label"] = [f"{label} · {tag}" if tag else label for label, tag in zip(labels, shaka, strict=True)]
+    visits["design"] = visits["design"].fillna("").astype(str) if "design" in visits else ""
     visits["slit"] = visits["illumination"].map({"full": "full slit", "iis": "engineering fibers"}).fillna("")
     return visits.sort_values("visit", ignore_index=True)
 
@@ -1103,10 +1124,11 @@ def renderPage(
     now : `datetime.datetime`, optional
         When the page was made; the current time (HST) by default.
     """
-    # The visits judged, and those the opdb says were taken that have no QA result.
+    # The visits judged, those taken with no QA result yet, and those with no QA method (darks, biases, ...).
     everyVisit = visits
     noResult = everyVisit[everyVisit["status"] == NO_RESULT]
-    visits = everyVisit[everyVisit["status"] != NO_RESULT]
+    noQa = everyVisit[everyVisit["status"] == NO_QA]
+    visits = everyVisit[~everyVisit["status"].isin([NO_RESULT, NO_QA])]
 
     def unjudged(frame: pd.DataFrame, slit: str | None = None) -> str:
         """Return how many of ``frame``'s kinds of visit have no result, lit through ``slit``; a dash for none."""
@@ -1129,12 +1151,20 @@ def renderPage(
     ]
     summary = [
         f"<tr><th scope='row'>{name}</th><td>{int(mask.sum())}</td>{_counts(visits[mask])}"
-        f"{unjudged(of, slit)}</tr>"
+        f"{unjudged(of, slit)}<td>–</td></tr>"
         for name, mask, of, slit in kinds
     ]
+    # A row per kind of no-QA frame present (darks, biases, ...): shown by exposure type, with no verdict.
+    noQaLabels = {"dark": "Darks", "bias": "Biases", "test": "Test frames", "master": "Masters"}
+    for nqKind, nqGroup in noQa.groupby("kind"):
+        label = noQaLabels.get(str(nqKind), str(nqKind).capitalize())
+        summary.append(
+            f"<tr><th scope='row'>{html.escape(label)}</th><td>{len(nqGroup)}</td>"
+            f"{_counts(nqGroup)}<td>–</td><td>{len(nqGroup)}</td></tr>"
+        )
     summary.append(
-        f"<tr class='total'><th scope='row'>All</th><td>{len(visits)}</td>{_counts(visits)}"
-        f"<td>{len(noResult) or '–'}</td></tr>"
+        f"<tr class='total'><th scope='row'>All</th><td>{len(visits) + len(noQa)}</td>{_counts(visits)}"
+        f"<td>{len(noResult) or '–'}</td><td>{len(noQa) or '–'}</td></tr>"
     )
 
     offsetsHtml, offsetAxis, residualsHtml = scienceSections(images[images["kind"] == "science"])
@@ -1145,7 +1175,8 @@ def renderPage(
         f"<td>{_nightCell(group[group['kind'].isin(['twilight', 'all-sky'])])}</td>"
         f"<td>{_nightCell(group[group['kind'].isin(['arc', 'quartz']) & (group['illumination'] == 'full')])}</td>"
         f"<td>{_nightCell(group[group['illumination'] == 'iis'])}</td>"
-        f"<td>{int((noResult['night'] == night).sum()) or '–'}</td></tr>"
+        f"<td>{int((noResult['night'] == night).sum()) or '–'}</td>"
+        f"<td>{int((noQa['night'] == night).sum()) or '–'}</td></tr>"
         for night, group in visits[visits["night"] != ""].groupby("night")
     ]
 
@@ -1178,15 +1209,15 @@ def renderPage(
             for r in noResult.itertuples()
         )
         missingSection = (
-            f"<section class='block' id='no-result'><h2>Visits with no QA result ({len(noResult)})</h2>"
+            f"<details class='block' id='no-result'><summary><h2>Visits with no QA result ({len(noResult)})</h2></summary>"
             "<p>These visits exposed the spectrograph and are older than the latest visit judged, yet have no QA "
             "result. The last column is how the instrument's sequence ended; why a completed visit has no result "
             "is not recorded here.</p>"
-            "<div class='tablewrap'><table><thead><tr><th scope='col' class='l'>Visit</th>"
+            "<div class='tablewrap tall'><table><thead><tr><th scope='col' class='l'>Visit</th>"
             "<th scope='col' class='l'>HST</th><th scope='col' class='l'>Kind</th>"
             "<th scope='col' class='l'>Lit through</th><th scope='col'>Exposure (s)</th>"
             "<th scope='col' class='l'>Arms</th><th scope='col' class='l'>Sequence</th></tr></thead>"
-            f"<tbody>\n{missingRows}\n</tbody></table></div></section>"
+            f"<tbody>\n{missingRows}\n</tbody></table></div></details>"
         )
     data = [
         [
@@ -1202,6 +1233,7 @@ def renderPage(
             r.night,
             r.detectorsStatus,
             _sequenceLabel(r.sequenceId),
+            r.design,
         ]
         for r in everyVisit.itertuples()
     ]
@@ -1213,6 +1245,12 @@ def renderPage(
         + _tally("Calibs", calibs, int(unjudgedCalibs.sum()))
         + _tally("Engineering", visits[engineering], int((noResult["illumination"] == "iis").sum()))
     )
+    if len(noQa):
+        # Frames with no QA method (darks, biases, ...): a count only, since they carry no verdict.
+        lead += (
+            f"<li><span class='k'>No QA</span><span class='n'>{len(noQa):,} visits</span>"
+            f"<span class='chip noqa'><b>{len(noQa):,}</b> NO QA</span></li>"
+        )
     when = everyVisit["time"].dropna()
     dates = ""
     if len(when):
@@ -1237,7 +1275,11 @@ def renderPage(
         "{{NIGHTS}}": "\n".join(nights),
         "{{FLAGGED}}": flagged,
         "{{NVISITS}}": f"{len(visits):,}",
-        "{{NO_RESULT_META}}": f", {len(noResult):,} more with no QA result" if len(noResult) else "",
+        "{{NO_RESULT_META}}": "".join(
+            f", {n:,} {label}"
+            for n, label in ((len(noResult), "more with no QA result"), (len(noQa), "with no QA method"))
+            if n
+        ),
         "{{NO_RESULT_SECTION}}": missingSection,
         "{{NO_RESULT_NOTE}}": noResultNote,
         "{{NIMAGES}}": f"{len(images):,}",
@@ -1305,7 +1347,8 @@ def buildReport(
     """
     offsets = _calibrationOffsets(tables)  # shared by measure (science) and calibrationDrift (calibs)
     images = measure(tables, offsets=offsets)
-    visits = visitTable(images, infoFromTables(tables) if info is None else info)
+    # The run report lists every taken visit, no-QA frames (darks, biases, ...) included.
+    visits = visitTable(images, infoFromTables(tables) if info is None else info, includeNoQa=True)
     # The daily-calibration drift over the whole run, the last night with a calibration marked; both
     # groupings, toggled.
     drift = calibrationDrift(tables, visits, offsets=offsets)

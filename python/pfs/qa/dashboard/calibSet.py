@@ -219,12 +219,12 @@ def renderCalibSet(events: list[CalibSet]) -> str:
         return ""
     body = "\n".join(_renderEvent(event) for event in events)
     return (
-        '  <section class="block">\n'
-        "    <h2>Calibration set: go/no-go per detector</h2>\n"
+        '  <details class="block">\n'
+        "    <summary><h2>Calibration set: go/no-go per detector</h2></summary>\n"
         "    <p>Each of the run's set-building events, judged per detector image, reusing "
         "<code>calib inputs</code>. A green cell is go, a red cell a detector to leave out of that exposure's "
         "inputs, a dot exposed but not measured, blank not exposed. The gate rule needs the collection's normal "
         "values and the reserved-RMS rule needs <code>reductionStats</code>, so a sparse run shows mostly go "
         "and missing.</p>\n"
-        f"{body}\n  </section>"
+        f"{body}\n  </details>"
     )

@@ -23,6 +23,7 @@ from pfs.qa.dashboard.agConditions import conditions
 from pfs.qa.dashboard.live import HST
 from pfs.qa.dashboard.runReport import (
     AWAITING,
+    NO_QA,
     NO_RESULT,
     Report,
     _calibrationOffsets,
@@ -46,8 +47,9 @@ _log = logging.getLogger(__name__)
 
 _DATA = Path(__file__).parent / "data"
 
-#: Statuses of a visit the night page shows but qadb holds no verdict for: taken, not (yet) judged.
-_PENDING = (NO_RESULT, AWAITING)
+#: Statuses of a visit the night page shows but qadb holds no verdict for: taken, not (yet) judged, or no
+#: QA method (a dark, bias, ...). All are kept out of the judged counts.
+_PENDING = (NO_RESULT, AWAITING, NO_QA)
 
 #: Each status's CSS class (chip, clock square, tile border).
 _CLASS = {
@@ -57,6 +59,7 @@ _CLASS = {
     "UNKNOWN": "unknown",
     NO_RESULT: "none",
     AWAITING: "awaiting",
+    NO_QA: "noqa",
 }
 
 #: The per-visit row the shared time map reads, in the order `runReport`'s page emits (so one clock
@@ -161,13 +164,15 @@ def _latestTile(visits: pd.DataFrame, images: pd.DataFrame) -> str:
         standing = "awaiting QA"
     elif row["status"] == NO_RESULT:
         standing = "no QA result"
+    elif row["status"] == NO_QA:
+        standing = "no QA method"
     elif detectors:
         standing = f"{judged} of {detectors} detectors judged"
     else:
         standing = ""
     cls = _CLASS.get(row["status"], "unknown")
-    # A coloured border for a verdict or an exposure in progress, not for a passed-over visit.
-    border = cls if row["status"] not in (NO_RESULT,) else ""
+    # A coloured border for a verdict or an exposure in progress, not for a passed-over or no-QA visit.
+    border = cls if row["status"] not in (NO_RESULT, NO_QA) else ""
     detail = html.escape(row["why"]) if row["why"] else ""
     return (
         f"<div class='tile lead {border}'><span class='lab'>Latest visit</span>"
@@ -218,6 +223,7 @@ def _feedRows(visits: pd.DataFrame) -> str:
             f"<tr><th scope='row'><a href='/visit/{row.visit}'>{row.visit}</a></th>"
             f"<td class='l'>{html.escape(_sequenceLabel(row.sequenceId))}</td>"
             f"<td class='l'>{when}</td><td class='l'>{html.escape(row.label)}</td>"
+            f"<td class='l'>{html.escape(str(getattr(row, 'design', '') or ''))}</td>"
             f"<td>{_fmtExp(row.exptime)}</td><td class='l'>{row.arms}</td>"
             f"<td class='l'>{_chip(row.status)}</td><td class='l'>{detectors}</td>"
             f"<td class='l why'>{html.escape(row.why)}</td></tr>"
@@ -309,6 +315,13 @@ def renderNight(
         )
         + _tally("Engineering", judged[judged["illumination"] == "iis"])
     )
+    noQa = visits[visits["status"] == NO_QA]
+    if len(noQa):
+        # Frames with no QA method (darks, biases, ...): a count only, since they carry no verdict.
+        lead += (
+            f"<li><span class='k'>No QA</span><span class='n'>{len(noQa):,} visits</span>"
+            f"<span class='chip noqa'><b>{len(noQa):,}</b> NO QA</span></li>"
+        )
     # The third tile is the night's AG conditions (seeing and transparency, opening a modal) when there is any
     # to show; otherwise the science verdict counts, as before.
     condTile, condModal = conditions(transparency, seeing, night)
@@ -319,9 +332,11 @@ def renderNight(
     )
     offsetsHtml, offsetAxis, residualsHtml = scienceSections(images[images["kind"] == "science"])
     nightText = html.escape(night) if night else "the latest night"
+    # The page title (heading and browser tab) names the night shown, so one night reads apart from another.
+    pageTitle = f"{title} · {night}" if night else title
     fields = {
         "{{THEME}}": _theme(),
-        "{{TITLE}}": html.escape(title),
+        "{{TITLE}}": html.escape(pageTitle),
         "{{FONT_FACES}}": _fontFaces(),
         "{{META}}": f"Night of {nightText} (HST, evening date) · {len(judged):,} visits judged, "
         f"{len(images):,} detector images · the whole run is in the run report",
@@ -384,7 +399,9 @@ def buildNightReport(
     """
     offsets = _calibrationOffsets(tables)  # shared by measure (science) and calibrationDrift (calibs)
     allImages = measure(tables, offsets=offsets)
-    allVisits = visitTable(allImages, infoFromTables(tables) if info is None else info, awaiting=True)
+    allVisits = visitTable(
+        allImages, infoFromTables(tables) if info is None else info, awaiting=True, includeNoQa=True
+    )
     nights = nightsOf(allVisits)
     night = (nights[-1] if nights else "") if night is None else night
     visits = allVisits[allVisits["night"] == night] if night else allVisits

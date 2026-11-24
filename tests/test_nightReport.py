@@ -25,6 +25,23 @@ def _info(visits, times, sequences=None):
     )
 
 
+def testNightPageShowsDesignAndNoQaFrames():
+    tables = _tables((20, "r1", "science", _science()))
+    info = _taken(
+        (20, "object", "scienceObject", False, "completed"),
+        (21, "dark", "darks", False, "completed"),
+    )
+    info["design"] = ["cobraHome-MOD4_group1", "blackDots-moveAll"]
+    page = buildNightReport(tables, info=info).html
+    # The "Latest visits" table gains a Design column, and the night's design names are shown.
+    assert ">Design</th>" in page and "cobraHome-MOD4_group1" in page and "blackDots-moveAll" in page
+    # The dark is listed with a NO QA verdict, but it is not counted among the judged visits.
+    data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
+    byVisit = {row[0]: row[6] for row in data}
+    assert byVisit[21] == "NO QA" and byVisit[20] == "PASS"
+    assert "1 visits judged" in page  # the science visit is judged; the dark is not
+
+
 def testActiveNightIsTheMostRecentAndScopesToIt():
     tables = _tables(
         (1, "r1", "science", _science(x=0.1)),
@@ -53,7 +70,9 @@ def testTheNightPageStandsAloneAndLinks():
     )
     page = made.html
     assert not re.findall(r"\{\{[A-Z_]+\}\}", page)
-    assert page.startswith("<!doctype html>") and "<title>Run99 &lt;x&gt;</title>" in page
+    # The title carries the night shown (the visit was on the evening of 2026-11-04).
+    assert page.startswith("<!doctype html>") and "<title>Run99 &lt;x&gt; · 2026-11-04</title>" in page
+    assert "<h1>Run99 &lt;x&gt; · 2026-11-04</h1>" in page
     # Its fonts travel inside it and nothing is fetched.
     assert page.count("@font-face") == 2 and "url(data:font/woff2;base64," in page
     assert not re.findall(r"""(?:src|href)=["'](?:https?:)?//""", page) and "url(http" not in page

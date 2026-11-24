@@ -188,6 +188,11 @@ def testButlerResidualsReadsTheButlerAndRenders(monkeypatch):
 
         def get(self, dataset, dataId):
             gets.append((dataset, dataId))
+            if dataset == "detectorMap":
+                bbox = types.SimpleNamespace(
+                    getBeginX=lambda: 0, getEndX=lambda: 4096, getBeginY=lambda: 0, getEndY=lambda: 4176
+                )
+                return types.SimpleNamespace(getBBox=lambda: bbox)
             if dataId["arm"] == "b":
                 return _lineData()
             raise LookupError("no such dataset")  # n1: the task wrote nothing
@@ -204,9 +209,10 @@ def testButlerResidualsReadsTheButlerAndRenders(monkeypatch):
     )
     images = cli.butlerResiduals(args, lambda visit: tables)
 
-    # A detector with data is read from the Butler and rendered to a PNG.
+    # A detector with data is read from the Butler and rendered to a PNG; its detectorMap gives the bounds.
     assert images.png(42, "b1")[:4] == b"\x89PNG"
-    assert gets == [("dmLineResidualData", {"instrument": "PFS", "visit": 42, "arm": "b", "spectrograph": 1})]
+    bData = {"instrument": "PFS", "visit": 42, "arm": "b", "spectrograph": 1}
+    assert gets == [("dmLineResidualData", bData), ("detectorMap", bData)]
     # A detector the Butler has none for (LookupError) is a placeholder, not an error.
     assert images.png(42, "n1")[:4] == b"\x89PNG"
     # A camera not among the visit's detectors is a 404 (None), and never read.

@@ -53,10 +53,12 @@ def testVisitPageHasPrevNextNav():
     page = buildVisitPage(tables, None, 7)
     # Dumb nav: the neighbours are visit ± 1 with no existence check.
     assert "href='/visit/6' rel='prev'" in page and "href='/visit/8' rel='next'" in page
-    # The night page sits between prev and next, in that order.
+    # The run report and the current night sit between prev and next, in that order.
     nav = re.search(r"<nav class='visitnav'>(.*?)</nav>", page).group(1)
     order = [nav.index("rel='prev'"), nav.index("href='/'"), nav.index("rel='next'")]
-    assert order == sorted(order) and "Night page" in nav
+    assert order == sorted(order) and "Current night" in nav
+    # The nav links to the run report, not only the body text.
+    assert "href='/run'>Run report</a>" in nav
     # Below visit 1 there is no previous link (it never points at visit 0).
     first = buildVisitPage(_tables((1, "b1", "science", _science(), {"gate": ("PASS", "")})), None, 1)
     assert "rel='prev'" not in first and "href='/visit/2' rel='next'" in first
@@ -65,6 +67,17 @@ def testVisitPageHasPrevNextNav():
     # A no-result visit is still navigable away from.
     none = buildVisitPage({}, None, 5)
     assert "href='/visit/4' rel='prev'" in none and "href='/visit/6' rel='next'" in none
+
+
+def testVisitPageNavLinksToTheVisitsOwnNight():
+    tables = _tables((7, "b1", "science", _science(), {"gate": ("PASS", "")}))
+    info = pd.DataFrame({"visit": [7], "time": pd.to_datetime(["2026-11-02 02:00"])})
+    nav = re.search(r"<nav class='visitnav'>(.*?)</nav>", buildVisitPage(tables, info, 7)).group(1)
+    # The 02:00 exposure belongs to the evening of 2026-11-01, so the nav links to that night, plus the current one.
+    assert "href='/night/2026-11-01'>2026-11-01</a>" in nav and "href='/'>Current night</a>" in nav
+    # Negative control: a visit with no known time has no dated night link, only the current night.
+    plain = re.search(r"<nav class='visitnav'>(.*?)</nav>", buildVisitPage(tables, None, 7)).group(1)
+    assert "/night/" not in plain and "Current night" in plain
 
 
 def testVisitPageShowsResidualPlotsWhenServed():

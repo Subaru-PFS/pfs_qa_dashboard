@@ -16,6 +16,7 @@ tested with a stub reader.
 """
 
 import io
+import logging
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
@@ -29,6 +30,8 @@ from pfs.drp.qa.metrics.registry import CHECKS, FIXED
 # No display on the server; set before any figure is drawn. Imported only in the
 # ``--butler`` path, so the rest of the dashboard needs no matplotlib.
 matplotlib.use("Agg")
+
+_log = logging.getLogger(__name__)
 
 __all__ = ["ResidualImages", "renderResidual", "residualLimits"]
 
@@ -96,10 +99,25 @@ def residualLimits(frameType: str | None, arm: str | None, *, dyKms: bool) -> di
     return limits
 
 
+#: The x-label `plotDetectorResiduals` gives its x–y detector face maps (the hexbins), by which they are
+#: told apart from the 1D trend panels and the colorbar when the detector bounds are applied. This is tied
+#: to that function's convention; a face map with a different x-label would simply keep its auto scale.
+_MAP_XLABEL = "x (pix)"
+
+
 def renderResidual(
-    data: pd.DataFrame, *, title: str, limits: Mapping[str, tuple[float, float]] | None = None
+    data: pd.DataFrame,
+    *,
+    title: str,
+    limits: Mapping[str, tuple[float, float]] | None = None,
+    bbox: tuple[float, float, float, float] | None = None,
 ) -> bytes:
-    """Draw one detector's `plotDetectorResiduals` and return it as PNG bytes."""
+    """Draw one detector's `plotDetectorResiduals` and return it as PNG bytes.
+
+    ``bbox`` is the detector's pixel bounds ``(x0, x1, y0, y1)``. When given, every x–y face map (the
+    hexbins) is held to it, so the maps share one frame — the detector itself — across visits, rather than
+    each auto-scaling to its own lines' extent. The trend panels keep their own scales.
+    """
     # Imported here, not at module scope: it pulls matplotlib and seaborn, needed only when rendering.
     from pfs.drp.qa.plotting.dmResiduals import plotDetectorResiduals
 
@@ -109,6 +127,12 @@ def renderResidual(
     # bare matplotlib.figure.Figure (no pyplot state), so it is freed when it goes out of scope.
     with _RENDER_LOCK:
         fig = plotDetectorResiduals(data, title=title, limits=dict(limits) if limits else None)
+        if bbox is not None:
+            x0, x1, y0, y1 = bbox
+            for ax in fig.axes:
+                if ax.get_xlabel() == _MAP_XLABEL:  # a face map, not a trend panel or the colorbar
+                    ax.set_xlim(x0, x1)
+                    ax.set_ylim(y0, y1)
         fig.savefig(buffer, format="png", dpi=_DPI)
     return buffer.getvalue()
 
@@ -160,12 +184,18 @@ class ResidualImages:
         readLineData: Callable[[int, str, int], pd.DataFrame | None],
         context: Callable[[int], Mapping[str, Any]],
         *,
+        readBBox: Callable[[int, str, int], tuple[float, float, float, float] | None] | None = None,
         limit: int = 64,
     ):
         self._read = readLineData
         self._context = context
+        self._readBBox = readBBox
         self._limit = limit
         self._cache: OrderedDict[tuple[int, str], bytes] = OrderedDict()
+        #: The detector pixel bounds by camera, looked up once each: a detector's bounds do not change
+        #: between its visits, so holding the maps to the detector costs one extra Butler read per camera
+        #: over the server's life, not one per plot.
+        self._bounds: dict[str, tuple[float, float, float, float]] = {}
         self._lock = threading.Lock()
 
     def png(self, visit: int, camera: str) -> bytes | None:
@@ -202,4 +232,31 @@ class ResidualImages:
             return _placeholder(f"No residual data for {camera}, visit {visit}")
         dyKms = set(data.columns) >= _KMS_COLUMNS
         limits = residualLimits(frameType, arm, dyKms=dyKms)
-        return renderResidual(data, title=f"{camera} {visit}", limits=limits)
+        bbox = self._boundsFor(visit, camera, arm, spectrograph)
+        return renderResidual(data, title=f"{camera} {visit}", limits=limits, bbox=bbox)
+
+    def _boundsFor(
+        self, visit: int, camera: str, arm: str, spectrograph: int
+    ) -> tuple[float, float, float, float] | None:
+        """Return the detector's pixel bounds ``(x0, x1, y0, y1)``, read once per camera; None when unknown.
+
+        The reader (`readBBox`) reads one visit's detectorMap and returns its ``getBBox``; the bounds are
+        the detector's, so the first success for a camera is cached and reused for its other visits. A
+        failed or absent read gives None (the maps keep their auto scale), and is not cached, so a later
+        visit tries again.
+        """
+        if self._readBBox is None:
+            return None
+        cached = self._bounds.get(camera)
+        if cached is not None:
+            return cached
+        try:
+            bounds = self._readBBox(visit, arm, spectrograph)
+        except Exception:
+            _log.exception(
+                "Reading the detector bounds for %s failed; the maps keep their auto scale", camera
+            )
+            bounds = None
+        if bounds is not None:
+            self._bounds[camera] = tuple(bounds)  # type: ignore[assignment]
+        return self._bounds.get(camera)

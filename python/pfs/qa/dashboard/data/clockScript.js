@@ -15,15 +15,16 @@
     show: new Set(["science", "cal"]), arm: "", spec: "",
     layout: defaults.layout === "order" ? "order" : "time", night: true,
   };
-  // Detector letters: N no QA result, A taken but not yet judged (night page), U judged but unknown.
-  const WORD = { P: "PASS", W: "WARN", F: "FAIL", U: "UNKNOWN", N: "NO RESULT", A: "AWAITING" };
-  const RANK = { A: -2, N: -1, U: 0, P: 1, W: 2, F: 3 };
-  const groupOf = (r) => r[2] === "science" ? "science" : r[3] === "engineering fibers" ? "eng" : "cal";
+  // Detector letters: Q no QA method, N no QA result, A taken but not yet judged (night page), U unknown.
+  const WORD = { P: "PASS", W: "WARN", F: "FAIL", U: "UNKNOWN", N: "NO RESULT", A: "AWAITING", Q: "NO QA" };
+  const RANK = { Q: -3, A: -2, N: -1, U: 0, P: 1, W: 2, F: 3 };
+  // A no-QA frame (dark, bias, ...) is its own group; else science, engineering fibers, or calibration.
+  const groupOf = (r) => r[6] === "NO QA" ? "noqa" : r[2] === "science" ? "science" : r[3] === "engineering fibers" ? "eng" : "cal";
   // the detectors of a visit that the arm and spectrograph selection keeps, as [name, letter]
   const chosen = (r) => r[10].split(" ").filter(Boolean).map((d) => [d.slice(0, 2), d[2]])
     .filter(([cam]) => (!sel.arm || cam[0] === sel.arm) && (!sel.spec || cam[1] === sel.spec));
-  // "A" is the floor rank, so an all-awaiting or all-no-result visit keeps its own letter.
-  const worstOf = (list) => list.reduce((w, [, s]) => RANK[s] > RANK[w] ? s : w, "A");
+  // The worst keeps the list's own letters, so an all-awaiting, all-no-result or all-no-QA visit shows it.
+  const worstOf = (list) => list.reduce((w, [, s]) => RANK[s] > RANK[w] ? s : w, list.length ? list[0][1] : "A");
   // Minutes from noon (HST) of the night's date to the visit's start: every night shares that clock.
   const minutesOf = (r) => {
     if (!r[1] || !r[9]) return null;
@@ -68,8 +69,18 @@
       axis = `<div class="night"></div><div class="axis">${ticks.join("")}</div>`;
     }
     cal.style.setProperty("--hours", hours);
-    cal.innerHTML = (axis + [...nights.entries()].sort().map(([night, list]) =>
-      `<div class="night">${night}</div><div class="cells${byTime ? " time" : ""}">` + list.map(square).join("") + "</div>").join("")
+    // Each night's date label links to that night's page: the latest to "/" (the canonical live night),
+    // the rest to /night/<date>. Only when more than one night is shown (the run report), so the
+    // single-night night page keeps a plain label.
+    const entries = [...nights.entries()].sort();
+    const latestNight = entries.length ? entries[entries.length - 1][0] : null;
+    const linkNights = entries.length > 1;
+    const nightLabel = (night) =>
+      linkNights && /^\d{4}-\d{2}-\d{2}$/.test(night)
+        ? `<a href="${night === latestNight ? "/" : "/night/" + night}">${night}</a>`
+        : night;
+    cal.innerHTML = (axis + entries.map(([night, list]) =>
+      `<div class="night">${nightLabel(night)}</div><div class="cells${byTime ? " time" : ""}">` + list.map(square).join("") + "</div>").join("")
       + notes.map((note) => `<div class="night"></div><div class="night">${note}</div>`).join(""))
       || `<div class="night">${sel.show.size ? "No visit has the selected detectors." : "No kind of frame is selected."}</div>`;
     tip.hidden = true;
@@ -101,6 +112,9 @@
   // Apply the per-page defaults to the controls before reading them: show Engineering fibers if asked, and
   // reflect the chosen layout in the toggle and the night-only switch (which only applies to By time).
   if (defaults.eng) { const eng = document.getElementById("f-show-eng"); if (eng) eng.checked = true; }
+  // The "Darks & biases" toggle appears only when the page has such frames (the run report, not the night page).
+  const noqaBox = document.getElementById("f-show-noqa");
+  if (noqaBox && !DATA.some((r) => r[6] === "NO QA")) { const l = noqaBox.closest("label"); if (l) l.hidden = true; }
   document.querySelectorAll('.seg[data-group="layout"] button').forEach((b) =>
     b.setAttribute("aria-pressed", String(b.dataset.value === sel.layout)));
   fNight.disabled = sel.layout !== "time";

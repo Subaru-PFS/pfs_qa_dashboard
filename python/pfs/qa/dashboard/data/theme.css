@@ -31,8 +31,23 @@
   }
   main { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
   header, section.text { display: flex; flex-direction: column; gap: 10px; }
-  section.block { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-  section.block > p { color: var(--fg-2); margin: 0; }
+  .block { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .block > p { color: var(--fg-2); margin: 0; }
+  /* Collapsible sections: each <details class="block"> keeps the flex spacing when open; its own children
+     are hidden when closed (a flex <details> otherwise leaves them shown). The two default-open sections
+     carry the `open` attribute in the markup. */
+  details.block > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; }
+  details.block > summary::-webkit-details-marker { display: none; }
+  details.block > summary::before {
+    content: ""; flex: none; width: 0; height: 0;
+    border-left: 7px solid var(--fg-3); border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+    transition: transform 0.15s ease;
+  }
+  details.block[open] > summary::before { transform: rotate(90deg); }
+  details.block > summary:hover::before { border-left-color: var(--fg); }
+  details.block > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+  details.block:not([open]) > :not(summary) { display: none; }
+  @media (prefers-reduced-motion: reduce) { details.block > summary::before { transition: none; } }
   h1 { font-family: var(--display); font-weight: 600; font-size: 2.6rem; line-height: 1.15; margin: 0; text-wrap: balance; }
   h2 { font-family: var(--display); font-weight: 600; font-size: 1.8rem; line-height: 1.2; margin: 0; }
   p { margin: 0; }
@@ -154,6 +169,7 @@
   .chip.fail { color: var(--fail); background: var(--fail-bg); }
   .chip.unknown { color: var(--unk); background: var(--unk-bg); }
   .chip.none { color: var(--fg-2); background: transparent; box-shadow: inset 0 0 0 1px var(--fg-3); }
+  .chip.noqa { color: var(--fg-3); background: var(--band); }
   .controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; }
   .controls label { display: flex; flex-direction: column; gap: 3px; font-size: 0.78rem; color: var(--fg-2); }
   .controls select, .controls input { font: inherit; font-size: 0.9rem; padding: 5px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--fg); }
@@ -161,6 +177,8 @@
   .count { color: var(--fg-3); font-size: 0.85rem; }
   .cal { display: grid; grid-template-columns: max-content 1fr; gap: 5px 12px; align-items: start; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; }
   .cal .night { font-size: 0.78rem; color: var(--fg-2); font-variant-numeric: tabular-nums; line-height: 12px; padding-top: 1px; white-space: nowrap; }
+  .cal .night a { color: inherit; text-decoration: none; }
+  .cal .night a:hover { color: var(--fg); text-decoration: underline; }
   .cal .cells { display: flex; flex-wrap: wrap; gap: 2px; min-width: 0; }
   .sq { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
   /* By time: each row is one night on a shared clock, a visit drawn from its start for as long as it exposed. */
@@ -177,6 +195,8 @@
   .sq.awaiting, .cal .cells.time .sq.awaiting { background: var(--series-1-soft); box-shadow: inset 0 0 0 1px var(--series-1); }
   /* No QA result: an outline, nothing inside. */
   .sq.none, .cal .cells.time .sq.none { background: transparent; box-shadow: inset 0 0 0 1px var(--fg-2); }
+  /* No QA method (darks, biases): a faint filled square, present but unjudged. */
+  .sq.noqa, .cal .cells.time .sq.noqa { background: var(--band); box-shadow: inset 0 0 0 1px var(--fg-3); }
   .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--fg-2); font-size: 0.85rem; align-items: center; }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   .tip { position: fixed; z-index: 20; pointer-events: none; background: var(--surface); color: var(--fg); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; font-size: 0.82rem; line-height: 1.45; box-shadow: 0 4px 14px rgb(0 0 0 / 0.18); max-width: 300px; }

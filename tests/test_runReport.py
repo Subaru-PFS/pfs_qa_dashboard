@@ -266,10 +266,11 @@ def testThePageStandsAlone():
     # The calendar can be laid out in the order taken or by time.
     assert 'data-group="layout"' in page and "const minutesOf" in page
     # The kinds of frame shown are boxes ticked on their own, with no control for all of them at once.
-    assert page.count("data-show=") == 3 and 'data-group="show"' not in page
-    # Engineering-fiber frames start unticked; science and the full-slit calibrations start ticked.
+    assert page.count("data-show=") == 4 and 'data-group="show"' not in page
+    # Engineering fibers and darks/biases start unticked; science and the full-slit calibrations start ticked.
     assert (
         'data-show="eng">' in page
+        and 'data-show="noqa">' in page
         and 'data-show="science" checked>' in page
         and 'data-show="cal" checked>' in page
     )
@@ -606,7 +607,8 @@ def testServeMountsTheNightPageAndTheRunReport(tmp_path, monkeypatch):
     )
 
     night = _fetch(served["application"], "/").body.decode()
-    assert "The night on the clock" in night and "Latest visits" in night and "<h1>Run99</h1>" in night
+    # The night page's title carries the night's date; the run report's stays the plain run name.
+    assert "The night on the clock" in night and "Latest visits" in night and "<h1>Run99 · " in night
     # The night page links to the run report and to the per-visit route.
     assert 'href="/run"' in night and "visit/1" in night
     run = _fetch(served["application"], "/run").body.decode()
@@ -783,14 +785,19 @@ def testAVisitTakenAndNeverJudgedShowsAsNoResult():
         "full slit",
         "sequence ended: abortRequested",
     ]
-    # Negative control: a dark has no QA method, and a visit newer than the latest judged may still be on its way.
+    # By default a dark is left out (no QA method); a visit newer than the latest judged may still be on its way.
     assert 4 not in visits.index and 6 not in visits.index
+    # With includeNoQa the dark is listed as NO QA, by its exposure type; the visit newer than the latest is not.
+    withNoQa = runReport.visitTable(measure(tables), info, includeNoQa=True).set_index("visit")
+    assert withNoQa.loc[4, "status"] == "NO QA" and withNoQa.loc[4, "kind"] == "dark"
+    assert 6 not in withNoQa.index  # negative control: a no-QA frame is listed, but not an unjudged newer one
     # Negative control: without the opdb's listing nothing is known to be missing.
     plain = runReport.visitTable(measure(tables), info[["visit", "time"]])
     assert plain["visit"].tolist() == [2, 5]
 
     page = buildReport(tables, info=info).html
     assert "2 visits judged" in page and ", 2 more with no QA result" in page
+    assert ", 1 with no QA method" in page  # the run report lists the dark as NO QA
     assert "Visits with no QA result (2)" in page and "<b>1</b> NO RESULT" in page
     assert "sequence ended: abortRequested" in page
     data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
@@ -798,6 +805,7 @@ def testAVisitTakenAndNeverJudgedShowsAsNoResult():
         (1, "NO RESULT"),
         (2, "PASS"),
         (3, "NO RESULT"),
+        (4, "NO QA"),
         (5, "PASS"),
     ]
     # Negative control: a page whose visits all have results has no such section or note.
@@ -805,7 +813,7 @@ def testAVisitTakenAndNeverJudgedShowsAsNoResult():
     assert "Visits with no QA result" not in whole and "more with no QA result" not in whole
 
 
-def testReadVisitInfoLabelsShaka():
+def testReadVisitInfoReadsDesignNameAndLabelsShaka():
     raw = pd.DataFrame(
         {
             "visit": [1, 2],
@@ -818,20 +826,23 @@ def testReadVisitInfoLabelsShaka():
             "iis": [False, False],
             "status_flag": [0, 0],
             "cmd_output": ["complete", "complete"],
-            # The opdb returns a name only for a one-fiber-group design; a science field's name is NULL.
+            # The opdb now returns the full design name (the dashboard is internal); None when it has none.
             "design_name": ["cobraHome-MOD4_group2", None],
         }
     )
 
     class Opdb:
         def query_dataframe(self, sql, params):
-            assert "design_name" in sql and "~*" in sql  # the proprietary guard runs in the opdb
+            assert "design_name" in sql  # the full design name is read
+            assert "~*" not in sql  # negative control: no proprietary null-out guard in the query any more
             return raw
 
     info = runReport.readVisitInfo(Opdb(), 1, 2).set_index("visit")
-    assert "design_name" not in info.columns  # the raw name is not carried past the derived label
+    # The full design name is carried onto the pages, and the shaka label is still derived from it.
+    assert info.loc[1, "design"] == "cobraHome-MOD4_group2"
     assert info.loc[1, "shaka"] == "shaka MOD4 group2"
-    assert info.loc[2, "shaka"] == ""  # negative control: a fully lit / science design is not shaka
+    # Negative control: a design with no one-fiber-group name is carried but is not labelled shaka.
+    assert info.loc[2, "design"] == "" and info.loc[2, "shaka"] == ""
 
 
 def testVisitTableTagsShakaInLabel():
@@ -844,6 +855,44 @@ def testVisitTableTagsShakaInLabel():
     visits = runReport.visitTable(measure(tables), info).set_index("visit")
     assert visits.loc[1, "label"] == "arc, Neon · shaka MOD4 group2"
     assert visits.loc[2, "label"] == "arc, Neon"  # negative control: the fully lit arc carries no tag
+
+
+def testTheEveryVisitTableSurfacesTheDesign():
+    tables = _tables((1, "r1", "arc", {}), (2, "r1", "science", _science()))
+    info = _taken(
+        (1, "arc", "scienceArc", False, "completed"),
+        (2, "object", "scienceObject", False, "completed"),
+    )
+    info["design"] = ["cobraHome-MOD4_group1", "blackDots-moveAll"]
+    page = buildReport(tables, info=info).html
+    # The "Every visit" table gains a Design column and a free-text design filter.
+    assert ">Design</th>" in page and 'id="f-design"' in page
+    # Each visit's full design name is in the page data (column 12), to show and to filter on.
+    data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
+    designs = {row[0]: row[12] for row in data}
+    assert designs == {1: "cobraHome-MOD4_group1", 2: "blackDots-moveAll"}
+
+
+def testNoQaFramesAreListedAndTallied():
+    tables = _tables((10, "r1", "science", _science()))
+    info = _taken(
+        (10, "object", "scienceObject", False, "completed"),
+        (11, "dark", "darks", False, "completed"),
+        (12, "dark", "darks", False, "completed"),
+        (13, "bias", "masterBiases", False, "completed"),
+    )
+    page = buildReport(tables, info=info).html
+    # The by-kind and by-night tables gain a No QA column; the lead and a per-type row tally the frames.
+    assert page.count(">No QA</th>") == 2 and "chip noqa" in page and "<b>3</b> NO QA" in page
+    assert ">Darks</th>" in page and ">Biases</th>" in page
+    # The darks/biases are in the page data with the NO QA verdict, by their exposure type as the kind.
+    data = json.loads(re.search(r"const DATA = (\[.*\]);\n", page).group(1))
+    byVisit = {row[0]: (row[2], row[6]) for row in data}
+    assert byVisit[11] == ("dark", "NO QA") and byVisit[13] == ("bias", "NO QA")
+    assert byVisit[10][1] == "PASS"  # the judged science visit is not a no-QA frame
+    # Negative control: with no such frames, there is no No QA lead chip and no per-type row.
+    clean = buildReport(tables, info=info[info["expType"] == "object"]).html
+    assert "chip noqa" not in clean and ">Darks</th>" not in clean
 
 
 def testReadVisitInfoCarriesTheSequenceId():

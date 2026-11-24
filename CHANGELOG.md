@@ -8,6 +8,59 @@ or the Python API.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-23
+
+### Added
+
+- **Every visit is listed, darks and biases included**: the run report's "Every visit" table now lists
+  every SpS exposure in the run, not only the kinds with a QA method. A frame with no QA method (a dark,
+  bias, master or test exposure) is shown by its exposure type with a muted "NO QA" verdict — distinct from
+  "NO RESULT" (a judged kind passed over). These are tallied in a new "No QA" lead line, a "No QA" column
+  and per-type rows in "Visits by kind", and a "No QA" column in "By night"; on the time map they are a
+  "Darks & biases" toggle (off by default) and a faint square, and the verdict filter gains a "NO QA"
+  option. The night page lists them too — in its "Latest visits" feed, the Tonight tile, the lead, and the
+  clock toggle — kept out of the judged counts.
+- **Design name surfaced across the dashboard**: the opdb's full `pfs_design.design_name` is now read and
+  shown — a "Design" column in the run report's "Every visit" table (with a free-text filter: type `shaka`,
+  `SSP`, `blackDots`, a field name, …) and the night page's "Latest visits" table, and a "Design: …" line on
+  each visit page. The query previously nulled every design name except the one-fiber-group (shaka) ones;
+  the dashboard is internal, so the full name is surfaced now (it still must be kept out of public records —
+  commits, tickets, test fixtures).
+- **Night dates on the run report's time map link to their night page**: in "Every visit at a glance" on
+  `/run`, each y-axis night date is now a link — the latest night to `/`, the rest to `/night/<date>` — so
+  you can jump from a night on the clock straight to that night's page. Shown only when more than one night
+  is on the clock, so the single-night night page keeps a plain label.
+
+### Changed
+
+- **Detector residual maps share one frame**: on the visit page (`/visit/<n>`, with `serve --butler`), the
+  four 2D x–y residual face maps are now held to the full detector bounds (`detectorMap.getBBox()`) instead
+  of auto-scaling to each visit's line extent, so a detector's maps read the same from visit to visit and
+  across detectors. A detector's bounds are read once (cached per camera), so the NIR detector keeps its
+  own size; the 1D trend panels are unchanged.
+- **Night-page title carries the night's date**: the night page's heading and browser-tab title now read
+  `<title> · <YYYY-MM-DD>` (e.g. "Visit verdicts · 2026-11-04") rather than just the run title, so one
+  night's page reads apart from another at a glance and in a tab. The run report's title is unchanged.
+- **Visit-page nav links to the run report and the visit's own night**: the top/bottom navigation on each
+  visit page (`/visit/<n>`) now links to the run report (`/run`), the current night (`/`), and — for a
+  visit taken on a past night — that night's page (`/night/<date>`). It previously linked only to the
+  current night, and the run report only from the body text.
+- **Collapsible run-report sections**: every section of the run report (`/run`) is now a
+  `<details>` with a click-to-toggle heading. All start collapsed except "Every visit at a glance" and
+  "Every visit", and "Every visit" moves to the top (just below the at-a-glance clock) so the full,
+  filterable visit table is the first thing in reach; the rest expand on demand.
+- **Scrollbars on the run report's long tables**: the "Visits that do not pass" and "Visits with no QA
+  result" tables, which can each run to hundreds of rows, now use the shared `.tall` wrapper — capped at
+  640 px with a vertical scrollbar and a sticky header — as the "Every visit" table already does, so they
+  no longer push the rest of the page far down.
+
+### Fixed
+
+- **`FutureWarning` from the visit-times concat** in `QadbStore`: the first read concatenated an empty
+  `_times` frame, which pandas warns it will stop excluding when resolving concat dtypes. The empty part
+  is now dropped before the concat, which also keeps `time_exp_start` as `datetime64` on pandas 3 (the old
+  code let the empty object column make the result `object`).
+
 ## [0.15.0] - 2026-11-23
 
 ### Added
