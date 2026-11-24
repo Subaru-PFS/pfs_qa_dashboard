@@ -260,8 +260,12 @@ def _lightbox() -> str:
     return f"<div id='lightbox' hidden><img alt=''></div>\n{_LIGHTBOX_SCRIPT}"
 
 
-def _nav(visit: int) -> str:
-    """Navigation row: the previous visit left, the night page and run report centre, the next visit right.
+def _nav(visit: int, night: str = "") -> str:
+    """Navigation row: the previous visit left, the run report and night links centre, the next visit right.
+
+    The centre links to the run report, the current (live) night page, and — when the visit's own night
+    (HST evening date) is known — that night's page (``/night/<date>``), so a visit taken on a past night
+    links to its own night, not only to the current one.
 
     The previous/next links are deliberately dumb: the neighbours are ``visit - 1``
     and ``visit + 1`` with no check that either exists, so a gap in the numbering
@@ -273,7 +277,10 @@ def _nav(visit: int) -> str:
         if visit > 1
         else "<span class='nolink'>&larr; Visit</span>"
     )
-    middle = "<span class='mid'><a href='/'>Night page</a> · <a href='/run'>Run report</a></span>"
+    links = ["<a href='/run'>Run report</a>", "<a href='/'>Current night</a>"]
+    if isinstance(night, str) and len(night) == 10 and night[4] == "-":
+        links.append(f"<a href='/night/{night}'>{night}</a>")
+    middle = f"<span class='mid'>{' · '.join(links)}</span>"
     nxt = f"<a href='/visit/{visit + 1}' rel='next'>Visit {visit + 1} &rarr;</a>"
     return f"<nav class='visitnav'>{prev}{middle}{nxt}</nav>"
 
@@ -432,8 +439,11 @@ def buildVisitPage(
             "<section class='block'><p>No QA result for this visit: it has not been reduced, or the "
             "reduction stored nothing. The night page shows it as awaiting QA.</p></section>"
         )
+        night = ""
+        if infoRow is not None and not pd.isna(infoRow.get("time")):
+            night = (pd.to_datetime(infoRow["time"]) - pd.Timedelta(hours=12)).strftime("%Y-%m-%d")
         body = (
-            _nav(int(visit))
+            _nav(int(visit), night)
             + "\n"
             + _header(int(visit), None, infoRow)
             + "\n"
@@ -466,7 +476,7 @@ def buildVisitPage(
         plots.append(_extractionSection(perCam, int(visit)))
     body = "\n".join(
         [
-            _nav(int(visit)),
+            _nav(int(visit), str(vrow.get("night", "") or "")),
             _header(int(visit), vrow, infoRow),
             _detectorTable(perCam, residuals),
             _grid(perCam),
