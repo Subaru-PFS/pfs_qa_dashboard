@@ -212,25 +212,22 @@ def agWindow(times, now=None):
     )
 
 
-def agReaders(opdb, qadb, firstVisit, lastVisit=2**31 - 1):
+def agReaders(opdb, qadb):
     """Return ``(readRun, readConditions)`` for an `pfs.qa.dashboard.agRun.AgRunStore`.
 
-    ``readRun(start, end)`` reads the opdb's AG tables of a period; ``readConditions()`` reads qadb's seeing
-    and transparency of the run's visits.
+    ``readRun(start, end)`` reads the opdb's AG tables of a period; ``readConditions(first, last)`` reads
+    qadb's seeing and transparency of the visits ``first`` to ``last``.
     """
     from pfs.drp.qa.guiders.queries import readAgRun
     from pfs.qa.dashboard.agConditions import readSeeing, readTransparency
 
-    def readConditions():
-        return {
-            "seeing": readSeeing(qadb, firstVisit, lastVisit),
-            "transparency": readTransparency(qadb, firstVisit, lastVisit),
-        }
+    def readConditions(first, last):
+        return {"seeing": readSeeing(qadb, first, last), "transparency": readTransparency(qadb, first, last)}
 
     return (lambda start, end: readAgRun(opdb, start, end)), readConditions
 
 
-def readAgTables(opdb, qadb, times, firstVisit, lastVisit=2**31 - 1):
+def readAgTables(opdb, qadb, times):
     """Read a run's AG tables once (`agWindow` of ``times``), with qadb's conditions.
 
     None when there is no time to place the run by, or when the read fails (which is logged).
@@ -244,7 +241,7 @@ def readAgTables(opdb, qadb, times, firstVisit, lastVisit=2**31 - 1):
         f"Reading the AG tables of {window[0]:%Y-%m-%d} to {window[1]:%Y-%m-%d} from the opdb ...", flush=True
     )
     start = time.monotonic()
-    readRun, readConditions = agReaders(opdb, qadb, firstVisit, lastVisit)
+    readRun, readConditions = agReaders(opdb, qadb)
     store = AgRunStore(readRun, *window, readConditions=readConditions)
     try:
         store.refresh()
@@ -634,15 +631,11 @@ def liveAgCache(args: argparse.Namespace, opdb, qadb, times):
         return None
     # Before the run's first result there is no visit to place it by: it is the run under way now.
     window = agWindow(times["time"] if len(times) else [datetime.now(HST).replace(tzinfo=None)])
-    firstVisit = args.first_visit or (int(times["visit"].min()) if len(times) else None)
     print(f"Reading the AG tables from {window[0]:%Y-%m-%d} on from the opdb ...", flush=True)
     start = time.monotonic()
-    readRun, readConditions = agReaders(opdb, qadb, firstVisit, args.last_visit)
+    readRun, readConditions = agReaders(opdb, qadb)
     cache = AgRunCache(
-        # With no first visit to read qadb's conditions from, they are left out rather than read for every run.
-        AgRunStore(readRun, *window, readConditions=readConditions if firstVisit is not None else None),
-        title=args.title,
-        source=agSource(),
+        AgRunStore(readRun, *window, readConditions=readConditions), title=args.title, source=agSource()
     )
     cache.poll()
     exposures = cache.store.tables.get("exposures", [])
@@ -713,9 +706,7 @@ def snapshot(args: argparse.Namespace) -> None:
             # From the first visit asked for, so a visit taken before the first one judged shows as unjudged.
             tables["visitInfo"] = readVisitInfo(opdb, args.first_visit or visits[0], visits[-1])
             # The run's AG tables, for the AG report offline.
-            agRead = readAgTables(
-                opdb, qadb, tables["visitInfo"]["time"], args.first_visit or visits[0], args.last_visit
-            )
+            agRead = readAgTables(opdb, qadb, tables["visitInfo"]["time"])
             if agRead:
                 tables.update(snapshotTables(agRead))
     provenance = qadbProvenance(
@@ -750,9 +741,7 @@ def report(args: argparse.Namespace) -> None:
             visits = judgedVisits(tables)
             if visits:
                 info = readVisitInfo(opdb, args.first_visit or visits[0], visits[-1])
-                agRead = readAgTables(
-                    opdb, qadb, info["time"], args.first_visit or visits[0], args.last_visit
-                )
+                agRead = readAgTables(opdb, qadb, info["time"])
         listing, normalValues = calibSetInputs(
             opdb, qadb, args.collection, info["time"] if info is not None else None
         )

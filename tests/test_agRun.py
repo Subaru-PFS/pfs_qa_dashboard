@@ -121,9 +121,10 @@ def agRunTables(nights=2, visits=3, exposures=30, dead=(), seed=3):
     }
 
 
-def conditions(tables, seeing=0.7):
-    """Return qadb's seeing and transparency for the run's AG exposures, as the readers return them."""
+def conditions(tables, seeing=0.7, first=0, last=2**31 - 1):
+    """Return qadb's seeing and transparency for the run's AG exposures of some visits, as the readers do."""
     exposures = tables["exposures"]
+    exposures = exposures[exposures.pfs_visit_id.between(first, last)].reset_index(drop=True)
     frame = pd.DataFrame(
         {
             "visit": exposures.pfs_visit_id,
@@ -240,19 +241,49 @@ def testStoreJoinsANightWhoseOffsetsAreAllNull():
     assert pd.concat([tables["exposures"], night]).guide_dec.dtype == object
 
 
-def testStoreHoldsTheConditions():
-    tables = agRunTables(nights=1)
+def testStoreReadsTheConditionsOfEachPeriodsVisits():
+    """The conditions qadb holds are read as the AG tables are: the run once, then the night under way's visits."""
+    tables = agRunTables(nights=3)
+    asked = []
+
+    def readConditions(first, last):
+        asked.append((first, last))
+        return conditions(tables, first=first, last=last)
+
+    clock = [NIGHT + pd.Timedelta(days=1, hours=23)]
     store = AgRunStore(
-        Opdb(tables),
-        START,
-        START + pd.Timedelta(days=1),
-        readConditions=lambda: conditions(tables),
-        now=lambda: NIGHT + pd.Timedelta(hours=23),
+        Opdb(tables), START, START + pd.Timedelta(days=3), readConditions=readConditions, now=lambda: clock[0]
     )
     store.refresh()
 
+    # The first night's visits (153000-153002), then the second's (153010-153012), under way.
+    assert asked == [(153000, 153002), (153010, 153012)]
+    assert len(store.tables["seeing"]) == 2 * 3 * 30 and set(store.tables) == {
+        *tables,
+        "seeing",
+        "transparency",
+    }
+    asked.clear()
+    store.refresh()
+    assert asked == [(153010, 153012)]
+    # Once the run is over, it is read to its end, and then qadb is not asked again.
+    clock[0] = NIGHT + pd.Timedelta(days=9)
+    store.refresh()
     assert len(store.tables["seeing"]) == len(tables["exposures"])
-    assert set(store.tables) == {*tables, "seeing", "transparency"}
+    assert not store.tables["seeing"].agcExposureId.duplicated().any()
+    asked.clear()
+    store.refresh()
+    assert asked == []
+    # Negative control: a period with no AG exposure has no visits to ask qadb for.
+    quiet = []
+    AgRunStore(
+        Opdb(tables),
+        START + pd.Timedelta(days=5),
+        START + pd.Timedelta(days=6),
+        readConditions=lambda first, last: quiet.append((first, last)) or {},
+        now=lambda: NIGHT + pd.Timedelta(days=9),
+    ).refresh()
+    assert quiet == []
 
 
 def testASnapshotKeepsTheAgTables(tmp_path):
@@ -304,6 +335,8 @@ def testPageShowsTheRunAsDrpQaReportsIt():
     # The run report's block: the headline numbers and the way to the page.
     assert "<a href='/run/ag'>The AG report</a>" in report.summary
     assert "Guide error, size" in report.summary and "id='ag'" in report.summary
+    # The map of camera states is the page's, not the block's.
+    assert "<svg class='agplot" in page and "<svg" not in report.summary
     # Negative control: without qadb's conditions there is no such section, and no seeing tile.
     plain = buildAgReport(agRunTables()).html
     assert "Seeing and transparency" not in plain and "<span class='lab'>Seeing</span>" not in plain
@@ -445,19 +478,25 @@ def testALiveServeHasAnAgPageBeforeTheRunsFirstResult(monkeypatch):
     import argparse
 
     cli = _cli()
-    opdb = Opdb(agRunTables(nights=1))
+    run = agRunTables(nights=1)
+    opdb = Opdb(run)
     asked = []
-    monkeypatch.setattr(cli, "agReaders", lambda *args: (opdb, lambda: asked.append("conditions") or {}))
+    monkeypatch.setattr(
+        cli,
+        "agReaders",
+        lambda *args: (opdb, lambda first, last: asked.append((first, last)) or conditions(run)),
+    )
     args = argparse.Namespace(first_visit=0, last_visit=2**31 - 1, title="Run31 visit verdicts")
     noVisits = pd.DataFrame({"visit": [], "time": []})
 
     cache = cli.liveAgCache(args, object(), object(), noVisits)
     assert cache is not None and opdb.asked and opdb.asked[0][0] == cache.store.start
-    assert cache.store.start <= pd.Timestamp.now() + pd.Timedelta(hours=14) and asked == []
-    # With visits, the run is theirs, and qadb's conditions are read from the first of them.
+    assert cache.store.start <= pd.Timestamp.now() + pd.Timedelta(hours=14)
+    # With visits, the run is theirs, and qadb's conditions are read for the visits its AG exposures were in.
+    asked.clear()
     visits = pd.DataFrame({"visit": [153000], "time": [NIGHT + pd.Timedelta(hours=20)]})
     cache = cli.liveAgCache(args, object(), object(), visits)
-    assert cache.store.start == START and asked == ["conditions"]
+    assert cache.store.start == START and asked[0] == (153000, 153002)
     # Negative control: without the opdb there is no AG report.
     assert cli.liveAgCache(args, None, object(), visits) is None
 
@@ -551,7 +590,9 @@ def testSnapshotKeepsTheAgTablesReadFromTheOpdb(tmp_path, monkeypatch):
     monkeypatch.setattr("pfs.qa.dashboard.runReport.readVisitInfo", lambda opdb, first, last: info)
     run = agRunTables(nights=1)
     opdb = Opdb(run)
-    monkeypatch.setattr(cli, "agReaders", lambda *args: (opdb, lambda: conditions(run)))
+    monkeypatch.setattr(
+        cli, "agReaders", lambda *args: (opdb, lambda first, last: conditions(run, first=first, last=last))
+    )
     arguments = ["snapshot", "--collection", "c", "--opdb-host", "127.0.0.1", "--out"]
 
     cli.main([*arguments, str(tmp_path / "snap")])
@@ -566,7 +607,7 @@ def testSnapshotKeepsTheAgTablesReadFromTheOpdb(tmp_path, monkeypatch):
     def fail(start, end):
         raise RuntimeError("no such table")
 
-    monkeypatch.setattr(cli, "agReaders", lambda *args: (fail, lambda: {}))
+    monkeypatch.setattr(cli, "agReaders", lambda *args: (fail, lambda first, last: {}))
     cli.main([*arguments, str(tmp_path / "plain")])
     read, _ = readSnapshot(tmp_path / "plain")
     assert agTables(read) is None and "visitInfo" in read

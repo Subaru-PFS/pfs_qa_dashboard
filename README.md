@@ -46,8 +46,7 @@ three share one stylesheet (`data/theme.css`). A visit takes the worst verdict a
   section per camera, AG1/3/5 then AG2/4/6. Each section carries drp_qa's caption of what it shows. The
   run-wide charts are drawn inline, each visit a point that links to its `/visit/<n>` page; a camera's figure
   is drp_qa's own, drawn as a PNG when it is asked for (`/run/ag/camera/AG<n>.png`). The run report carries a
-  short **Auto-guiding** block of the same — the headline numbers, the camera states night by night and the
-  faults — that links to it. The dashboard measures nothing here: the numbers, flags and captions are
+  short **Auto-guiding** block of the same — the headline numbers and the faults — that links to it. The dashboard measures nothing here: the numbers, flags and captions are
   drp_qa's, read from the opdb's AG tables, so the page needs the opdb (`--opdb-host`) or a snapshot made
   with it. Offsets are in arcsec with an axis in AG pixels beside them (1 AG pixel = 13 µm = 0.14″).
 
@@ -85,7 +84,8 @@ that fails or hangs does not hold the page up.
 With the opdb, the AG report is read on a thread of its own, at its own pace: the opdb's AG tables of the run
 (the observing period the latest visit is in, from the first visit's night on) once as the server starts —
 about 20 s for a run of 60,000 AG exposures — and from then on only the night under way, every 10 minutes
-(`agRun.AG_REFRESH`); a night that has ended is read a last time and kept. A slow or failing opdb read leaves
+(`agRun.AG_REFRESH`); a night that has ended is read a last time and kept. qadb's seeing and transparency are read
+the same way, for the visits of each period as it is read, and nothing is read once the run has ended. A slow or failing opdb read leaves
 the AG page as it was (or saying it has not been read yet) and never holds up the other pages.
 
 To show the detector-map residual plots on the per-visit page, add `--butler <repo>` (e.g. `/work/datastore`),

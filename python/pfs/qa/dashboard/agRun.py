@@ -93,7 +93,7 @@ def _combine(parts: list[Mapping[str, pd.DataFrame]]) -> dict[str, pd.DataFrame]
     """Join reads of consecutive periods into one set of tables, as one read of the whole would return."""
     parts = [part for part in parts if part]
     tables = {}
-    for name in parts[0] if parts else ():
+    for name in dict.fromkeys(name for part in parts for name in part):
         frames = [part[name] for part in parts if name in part]
         # A read with no row adds nothing; and one whose column is all NULL (a night's first AG exposure, before
         # its guide offset is written) comes back as objects, which must not turn the whole column into them.
@@ -114,7 +114,9 @@ class AgRunStore:
 
     The first `refresh` reads the run up to the noon before now in one go, and the night under way
     beside it. Each later one reads only that night again; a night that has ended is read a last
-    time and kept. Once the run's end has passed nothing more is read.
+    time and kept. Once the run's end has passed nothing more is read. qadb's conditions are read
+    with each period, for its visits, so a value qadb gains for a night after that night was kept
+    is not seen until the store is made again.
 
     Parameters
     ----------
@@ -124,8 +126,10 @@ class AgRunStore:
     start, end : `datetime.datetime`
         The run (HST): ``start`` inclusive, ``end`` exclusive.
     readConditions : callable, optional
-        ``readConditions()`` returns the run's ``seeing`` and ``transparency`` (the frames of
-        `pfs.qa.dashboard.agConditions.readSeeing` and ``readTransparency``), read whole each time.
+        ``readConditions(first, last)`` returns the ``seeing`` and ``transparency`` of the visits
+        ``first`` to ``last`` (the frames of `pfs.qa.dashboard.agConditions.readSeeing` and
+        ``readTransparency``). It is asked for the visits of each period as that period is read, so
+        the conditions are read as the AG tables are: the run once, then the night under way.
     now : callable, optional
         Returns the current time (HST, naive); for the tests.
 
@@ -142,7 +146,7 @@ class AgRunStore:
         readRun: Callable[[Any, Any], Mapping[str, pd.DataFrame]],
         start: Any,
         end: Any,
-        readConditions: Callable[[], Mapping[str, pd.DataFrame]] | None = None,
+        readConditions: Callable[[int, int], Mapping[str, pd.DataFrame]] | None = None,
         now: Callable[[], Any] | None = None,
     ):
         self._readRun = readRun
@@ -164,6 +168,15 @@ class AgRunStore:
         store.refresh = lambda: False  # type: ignore[method-assign]
         return store
 
+    def _read(self, start: pd.Timestamp, end: pd.Timestamp) -> dict[str, pd.DataFrame]:
+        """Read a period's AG tables, and qadb's conditions for the visits its AG exposures were taken in."""
+        tables = dict(self._readRun(start, end))
+        exposures = tables.get("exposures")
+        if self._readConditions is not None and exposures is not None and len(exposures):
+            visits = exposures["pfs_visit_id"]
+            tables.update(self._readConditions(int(visits.min()), int(visits.max())))
+        return tables
+
     def refresh(self) -> bool:
         """Read what may have changed since the last read; return whether anything did."""
         now = min(pd.Timestamp(self._now()), self.end)
@@ -171,13 +184,11 @@ class AgRunStore:
             return False
         keepTo = max(min(nightStart(now), self.end), self.start)
         if self._keptTo is None or keepTo > self._keptTo:
-            ended = self._readRun(self._keptTo or self.start, keepTo) if keepTo > self.start else {}
+            ended = self._read(self._keptTo or self.start, keepTo) if keepTo > self.start else {}
             self._kept = _combine([self._kept, ended])
             self._keptTo = keepTo
-        under = self._readRun(keepTo, now) if now > keepTo else {}
+        under = self._read(keepTo, now) if now > keepTo else {}
         tables = _combine([self._kept, under])
-        if self._readConditions is not None:
-            tables.update(self._readConditions())
         # What is kept is settled; the night under way is compared by its values, since a guide offset can be
         # written after its exposure was first read.
         signature = (
@@ -186,7 +197,6 @@ class AgRunStore:
                 (name, len(frame), int(pd.util.hash_pandas_object(frame, index=False).sum()))
                 for name, frame in sorted(under.items())
             ),
-            tuple((name, len(tables[name])) for name in CONDITIONS if name in tables),
         )
         changed = signature != self._signature
         if changed:
@@ -980,8 +990,6 @@ def buildAgReport(
         f"{summary['nights']} nights. <a href='{html.escape(agUrl)}'>The AG report</a> has each camera, the "
         "guide error of every science visit, focus and acquisition.</p>"
         + _tiles(summary, flags, tables, brief=True)
-        + _statesChart(run, runAnalysis.stateShares(run, slotsPerNight=1), 1, 14, "Camera states per night")
-        + _STATE_LEGEND
         + (flagList(severe) if severe else "")
         + "</details>"
     )

@@ -18,8 +18,8 @@ or the Python API.
   seeing and transparency from qadb, and a section per camera (AG1/3/5 then AG2/4/6) with drp_qa's own figure
   (`/run/ag/camera/AG<n>.png`). Every section has drp_qa's caption of what it shows. Needs the opdb
   (`--opdb-host`) or a snapshot made with it, and drp_qa 0.19.0.
-- **Auto-guiding on the run report** (INSTRM-3073): `/run` carries a block of the same — the headline numbers,
-  the camera states night by night and the faults — that links to the AG report.
+- **Auto-guiding on the run report** (INSTRM-3073): `/run` carries a block of the same — the headline numbers
+  and the faults — that links to the AG report.
 - `report` writes the AG report beside the run report (`<name>-ag.html`), and `snapshot` keeps the run's AG
   tables (`agRun-*.parquet`) with qadb's seeing and transparency, so `serve --snapshot` has the page too.
 
