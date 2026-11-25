@@ -7,14 +7,6 @@
 <style>
 {{THEME}}
   /* Night page: the latest visit up top, then the night at a glance. */
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; max-width: none; }
-  .tile { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-  .tile.lead { border-width: 2px; }
-  .tile .lab { color: var(--fg-3); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
-  .tile .big { font-family: var(--display); font-weight: 600; font-size: 1.9rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
-  .tile .row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; color: var(--fg-2); font-size: 0.9rem; }
-  .tile .sub { color: var(--fg-3); font-size: 0.82rem; }
-  .tile.pass { border-color: var(--pass); } .tile.warn { border-color: var(--warn); } .tile.fail { border-color: var(--fail); }
   .verdict { font-size: 1.1rem; padding: 2px 12px; }
   tr.now th, tr.now td { background: var(--band); }
   .awaiting { color: var(--fg-3); font-style: italic; }
@@ -35,7 +27,6 @@
   .tile.cond.empty { cursor: default; }
   .tile.cond.empty:hover { border-color: var(--rule); }
   .tile.cond.empty .big { color: var(--fg-3); }
-  .tile .big .unit { font-size: 0.9rem; font-weight: 400; color: var(--fg-3); font-family: var(--body); }
   .tile.cond .sub::after { content: " \2197"; }
   .tile.cond.empty .sub::after { content: none; }
   .spark { display: block; width: 100%; height: 32px; }

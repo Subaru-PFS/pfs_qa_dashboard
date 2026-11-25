@@ -8,6 +8,26 @@ or the Python API.
 
 ## [Unreleased]
 
+### Added
+
+- **The AG report, `/run/ag`** (INSTRM-3073): the run's auto-guiding as a page of its own — drp_qa's end-of-run
+  AG report (`drpQa.py agReport`) drawn for the dashboard. The run's key numbers (cameras in use, the size and
+  jitter of the settled guide error, matched stars, star-position residual, guide offsets not used, seeing)
+  and the analysis's flags come first; then the camera states hour by hour, every science visit's guide error
+  on ΔRA, ΔDec and ΔInR (each visit a point linked to its `/visit/<n>` page), focus, acquisition, each night's
+  seeing and transparency from qadb, and a section per camera (AG1/3/5 then AG2/4/6) with drp_qa's own figure
+  (`/run/ag/camera/AG<n>.png`). Every section has drp_qa's caption of what it shows. Needs the opdb
+  (`--opdb-host`) or a snapshot made with it, and drp_qa 0.19.0.
+- **Auto-guiding on the run report** (INSTRM-3073): `/run` carries a block of the same — the headline numbers,
+  the camera states night by night and the faults — that links to the AG report.
+- `report` writes the AG report beside the run report (`<name>-ag.html`), and `snapshot` keeps the run's AG
+  tables (`agRun-*.parquet`) with qadb's seeing and transparency, so `serve --snapshot` has the page too.
+
+### Changed
+
+- The live server reads the opdb's AG tables as it starts (about 20 s for a full run), then only the night
+  under way every 10 minutes, on a thread of its own: a slow opdb never holds up the other pages.
+
 ## [0.18.0] - 2026-11-23
 
 ### Added

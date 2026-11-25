@@ -12,7 +12,7 @@ Examples::
     # Read it once into a snapshot (parquet and provenance.json), then serve that offline
     python bin/qaDashboard.py snapshot --collection qaActor/reductions --opdb-host 127.0.0.1 --out run31-qadb
     python bin/qaDashboard.py serve --snapshot run31-qadb
-    # Write the run report as one stand-alone page, for any web server
+    # Write the run report as one stand-alone page, for any web server (and <name>-ag.html, the AG report)
     python bin/qaDashboard.py report --snapshot run31-qadb --out run31-report
 
 then open http://localhost:5006. To serve the local network, add ``--address 0.0.0.0``.
@@ -184,6 +184,79 @@ def runWindow(start, end):
     return start - pd.Timedelta(days=1), end + pd.Timedelta(days=1)
 
 
+def agWindow(times, now=None):
+    """Return the period ``(start, end)`` (HST) the AG report covers, for a run whose visits were taken at ``times``.
+
+    The observing period the latest visit is in, with the same run's other periods (its pre-run) from the
+    first visit's night on; the run is read from the opdb to its end, or to now while it is under way. A
+    collection outside every known period (`pfs.drp.qa.comparison.runs`) is covered from its first visit's
+    night, 45 days at most, to the day after its last. None when there is no time.
+    """
+    import pandas as pd
+
+    from pfs.drp.qa.comparison.runs import loadPeriods
+    from pfs.qa.dashboard.agRun import nightStart
+
+    span = pd.to_datetime(pd.Series(list(times) if times is not None else [], dtype="object")).dropna()
+    if span.empty:
+        return None
+    first, last = span.min(), span.max()
+    periods = list(loadPeriods().values())
+    current = [p for p in periods if pd.Timestamp(p.start) <= last <= pd.Timestamp(p.end)]
+    if current:
+        chosen = [p for p in periods if p.run == current[0].run and pd.Timestamp(p.end) >= first]
+        start = max(min(pd.Timestamp(p.start) for p in chosen), nightStart(first))
+        return start, max(pd.Timestamp(p.end) for p in chosen)
+    return max(nightStart(first), nightStart(last) - pd.Timedelta(days=45)), nightStart(last) + pd.Timedelta(
+        days=1
+    )
+
+
+def agReaders(opdb, qadb, firstVisit, lastVisit=2**31 - 1):
+    """Return ``(readRun, readConditions)`` for an `pfs.qa.dashboard.agRun.AgRunStore`.
+
+    ``readRun(start, end)`` reads the opdb's AG tables of a period; ``readConditions()`` reads qadb's seeing
+    and transparency of the run's visits.
+    """
+    from pfs.drp.qa.guiders.queries import readAgRun
+    from pfs.qa.dashboard.agConditions import readSeeing, readTransparency
+
+    def readConditions():
+        return {
+            "seeing": readSeeing(qadb, firstVisit, lastVisit),
+            "transparency": readTransparency(qadb, firstVisit, lastVisit),
+        }
+
+    return (lambda start, end: readAgRun(opdb, start, end)), readConditions
+
+
+def readAgTables(opdb, qadb, times, firstVisit, lastVisit=2**31 - 1):
+    """Read a run's AG tables once (`agWindow` of ``times``), with qadb's conditions.
+
+    None when there is no time to place the run by, or when the read fails (which is logged).
+    """
+    from pfs.qa.dashboard.agRun import AgRunStore
+
+    window = agWindow(times)
+    if window is None:
+        return None
+    print(
+        f"Reading the AG tables of {window[0]:%Y-%m-%d} to {window[1]:%Y-%m-%d} from the opdb ...", flush=True
+    )
+    start = time.monotonic()
+    readRun, readConditions = agReaders(opdb, qadb, firstVisit, lastVisit)
+    store = AgRunStore(readRun, *window, readConditions=readConditions)
+    try:
+        store.refresh()
+    except Exception:
+        # The run report does not depend on the AG tables: say so, and go on without the AG report.
+        logging.getLogger(__name__).exception("Reading the AG tables failed; leaving the AG report out")
+        return None
+    tables = dict(store.tables)
+    print(f"{len(tables.get('exposures', []))} AG exposures in {time.monotonic() - start:.0f} s", flush=True)
+    return tables
+
+
 def readRunListing(opdb, times):
     """Return the opdb visit listing over the run of ``times`` (HST), or None when there is no opdb or no time."""
     import pandas as pd
@@ -231,13 +304,15 @@ def pages(
     readSeeing=None,
     readListing=None,
     readNormalValues=None,
+    agSummary="",
 ) -> dict:
     """Return the pages a `ReportCache` builds: the night page (``/``) and the run report (``/run``).
 
     ``readTransparency(first, last)`` and ``readSeeing(first, last)`` read the night's AG transparency and
     seeing from qadb for the night page's Conditions tile; None (a snapshot, or no live qadb) omits that metric.
     ``readListing(start, end)`` and ``readNormalValues()`` feed the run report's calibration-set section, read
-    each build so it stays current; None omits it.
+    each build so it stays current; None omits it. ``agSummary`` is the run report's auto-guiding block, or
+    what returns it (an `pfs.qa.dashboard.agRun.AgRunCache`'s); empty omits it.
     """
     from pfs.qa.dashboard.nightReport import buildNightReport
     from pfs.qa.dashboard.runReport import buildReport
@@ -260,6 +335,7 @@ def pages(
                 "source": source,
                 "readListing": readListing,
                 "readNormalValues": readNormalValues,
+                "agSummary": agSummary,
             },
         ),
     }
@@ -404,6 +480,7 @@ def serve(args: argparse.Namespace) -> None:
     import pandas as pd
     from tornado.web import Application
 
+    from pfs.qa.dashboard.agRun import AG_REFRESH, AgRunCache, AgRunStore, agRoutes, agTables
     from pfs.qa.dashboard.live import QadbStore
     from pfs.qa.dashboard.nightReport import buildNightReport
     from pfs.qa.dashboard.qadbSource import readSnapshot
@@ -430,22 +507,46 @@ def serve(args: argparse.Namespace) -> None:
         # The set section needs the opdb listing, so without an opdb neither reader is used.
         readNormalValues = None if opdb is None else (lambda: readNormalValuesDb(qadb, args.collection))
         source = sourceText(args.collection, opdb is not None)
+        # The AG report reads the opdb's AG tables, on a thread of its own and at its own pace.
+        agCache = liveAgCache(args, opdb, qadb, store.times)
         cache = ReportCache(
             store,
             readInfo,
             firstVisit=args.first_visit or None,
-            pages=pages(args, source, readTransparency, readSeeing, readListing, readNormalValues),
+            pages=pages(
+                args,
+                source,
+                readTransparency,
+                readSeeing,
+                readListing,
+                readNormalValues,
+                agSummary=(lambda: agCache.summary) if agCache is not None else "",
+            ),
         )
         cache.update()
         # The databases are read on a thread of the cache's own from here on: a browser gets the last
         # page made at once, whatever the databases are doing.
         cache.watch(args.refresh)
+        if agCache is not None:
+            agCache.watch(AG_REFRESH)
     else:
         tables, provenance = readSnapshot(args.snapshot)
         store = QadbStore.fromTables(tables)
         print(f"{len(store.times)} visits in {args.snapshot}", flush=True)
         source = snapshotSource(tables, provenance)
-        cache = ReportCache(store, info=infoFromTables(tables), pages=pages(args, source))
+        agCache = None
+        if agTables(tables) is not None:
+            agCache = AgRunCache(
+                AgRunStore.fromTables(agTables(tables)),
+                title=args.title,
+                source=agSource(str(provenance.get("builtAt") or "")[:10] or None),
+            )
+            agCache.update()
+        cache = ReportCache(
+            store,
+            info=infoFromTables(tables),
+            pages=pages(args, source, agSummary=agCache.summary if agCache is not None else ""),
+        )
         cache.update()
 
     def sliceStore(number: int) -> dict:
@@ -492,7 +593,7 @@ def serve(args: argparse.Namespace) -> None:
     mounts = {"/": "night", "/run": "report"}
     print(
         f"Serving the night page at http://{args.address}:{args.port}/ (past nights at /night/<date>) "
-        "and the run report at /run",
+        "and the run report at /run" + (", with its AG report at /run/ag" if agCache is not None else ""),
         flush=True,
     )
     listen(
@@ -506,12 +607,51 @@ def serve(args: argparse.Namespace) -> None:
                 extraction=extractionImages.png if extractionImages is not None else None,
                 extractionPdf=extractionImages.pdf if extractionImages is not None else None,
             )
+            + (agRoutes(agCache, "/run/ag") if agCache is not None else [])
         ),
         args.address,
         args.port,
         args.show,
         debug=args.debug,
     )
+
+
+def agSource(readOn: str | None = None) -> str:
+    """Return the AG report's note on where its tables come from; ``{date}`` is the day the page is made."""
+    return f"the opdb's AG tables, and qadb's seeing and transparency, read {readOn or '{date}'}."
+
+
+def liveAgCache(args: argparse.Namespace, opdb, qadb, times):
+    """Return the AG report's cache for a live serve, read once; None without the opdb.
+
+    A first read that fails is logged and left to the cache's own thread to try again: the AG page then
+    says it has not been read, and the other pages are served as they are.
+    """
+    from pfs.qa.dashboard.agRun import AgRunCache, AgRunStore
+    from pfs.qa.dashboard.live import HST
+
+    if opdb is None:
+        return None
+    # Before the run's first result there is no visit to place it by: it is the run under way now.
+    window = agWindow(times["time"] if len(times) else [datetime.now(HST).replace(tzinfo=None)])
+    firstVisit = args.first_visit or (int(times["visit"].min()) if len(times) else None)
+    print(f"Reading the AG tables from {window[0]:%Y-%m-%d} on from the opdb ...", flush=True)
+    start = time.monotonic()
+    readRun, readConditions = agReaders(opdb, qadb, firstVisit, args.last_visit)
+    cache = AgRunCache(
+        # With no first visit to read qadb's conditions from, they are left out rather than read for every run.
+        AgRunStore(readRun, *window, readConditions=readConditions if firstVisit is not None else None),
+        title=args.title,
+        source=agSource(),
+    )
+    cache.poll()
+    exposures = cache.store.tables.get("exposures", [])
+    print(
+        f"{len(exposures)} AG exposures in {time.monotonic() - start:.0f} s"
+        + (f"; the first read failed ({cache.error}), and will be tried again" if cache.error else ""),
+        flush=True,
+    )
+    return cache
 
 
 def listen(application, address: str, port: int, show: bool = False, debug: bool = False) -> None:
@@ -558,6 +698,7 @@ def _autoreload() -> None:
 
 def snapshot(args: argparse.Namespace) -> None:
     """Read the collection from qadb (and the opdb) once and write it, with its provenance, to ``--out``."""
+    from pfs.qa.dashboard.agRun import snapshotTables
     from pfs.qa.dashboard.live import HST, qadbProvenance, readCollection
     from pfs.qa.dashboard.qadbSource import writeSnapshot
     from pfs.qa.dashboard.runReport import readVisitInfo
@@ -571,6 +712,12 @@ def snapshot(args: argparse.Namespace) -> None:
         if visits:
             # From the first visit asked for, so a visit taken before the first one judged shows as unjudged.
             tables["visitInfo"] = readVisitInfo(opdb, args.first_visit or visits[0], visits[-1])
+            # The run's AG tables, for the AG report offline.
+            agRead = readAgTables(
+                opdb, qadb, tables["visitInfo"]["time"], args.first_visit or visits[0], args.last_visit
+            )
+            if agRead:
+                tables.update(snapshotTables(agRead))
     provenance = qadbProvenance(
         f"{args.collection} (qadb snapshot)",
         builtAt=datetime.now(HST).isoformat(timespec="seconds"),
@@ -586,12 +733,14 @@ def snapshot(args: argparse.Namespace) -> None:
 
 def report(args: argparse.Namespace) -> None:
     """Write the report of the collection (``--collection``) or a snapshot (``--snapshot``) to ``--out``."""
+    from pfs.qa.dashboard.agRun import agTables, buildAgReport
     from pfs.qa.dashboard.live import HST
     from pfs.qa.dashboard.runReport import buildReport, readVisitInfo, sourceText
 
     start = time.monotonic()
     info = None
     listing = normalValues = None
+    agRead, agReadOn = None, None
     if args.collection:
         from pfs.qa.dashboard.live import readCollection
 
@@ -601,6 +750,9 @@ def report(args: argparse.Namespace) -> None:
             visits = judgedVisits(tables)
             if visits:
                 info = readVisitInfo(opdb, args.first_visit or visits[0], visits[-1])
+                agRead = readAgTables(
+                    opdb, qadb, info["time"], args.first_visit or visits[0], args.last_visit
+                )
         listing, normalValues = calibSetInputs(
             opdb, qadb, args.collection, info["time"] if info is not None else None
         )
@@ -610,12 +762,31 @@ def report(args: argparse.Namespace) -> None:
 
         tables, provenance = readSnapshot(args.snapshot)
         source = snapshotSource(tables, provenance)
+        agRead, agReadOn = agTables(tables), str(provenance.get("builtAt") or "")[:10] or None
+    # The AG report is a page of its own beside the run report, which carries its summary and links to it.
+    agPage = None
+    if agRead:
+        agPage = buildAgReport(
+            agRead,
+            title=args.title,
+            source=agSource(agReadOn),
+            runUrl=f"{args.name}.html",
+            agUrl=f"{args.name}-ag.html",
+            embed=True,
+        )
     made = buildReport(
-        tables, info=info, listing=listing, normalValues=normalValues, **reportOptions(args, source)
+        tables,
+        info=info,
+        listing=listing,
+        normalValues=normalValues,
+        agSummary=agPage.summary if agPage is not None else "",
+        **reportOptions(args, source),
     )
     args.out.mkdir(parents=True, exist_ok=True)
     page = args.out / f"{args.name}.html"
     page.write_text(made.html)
+    if agPage is not None:
+        (args.out / f"{args.name}-ag.html").write_text(agPage.html)
     made.visits.to_csv(args.out / "visits.csv", index=False)
     made.images.to_csv(args.out / "images.csv", index=False)
 
@@ -632,7 +803,8 @@ def report(args: argparse.Namespace) -> None:
         f"all visits: {tally(made.visits)}",
         flush=True,
     )
-    print(f"Wrote {page} in {time.monotonic() - start:.1f} s", flush=True)
+    also = f" and {args.name}-ag.html" if agPage is not None else ""
+    print(f"Wrote {page}{also} in {time.monotonic() - start:.1f} s", flush=True)
 
 
 if __name__ == "__main__":

@@ -733,6 +733,8 @@ def testSnapshotKeepsWhatTheReportShowsOfEachVisit(tmp_path, monkeypatch):
         sys.modules, "pfs.utils.database.opdb", types.SimpleNamespace(OpDB=lambda **k: Opdb())
     )
     cli = _cli()
+    # The AG tables are another read of the opdb (tests/test_agRun.py); this is about the visits.
+    monkeypatch.setattr(cli, "readAgTables", lambda *args: None)
     cli.main(["snapshot", "--collection", "c", "--opdb-host", "127.0.0.1", "--out", str(tmp_path / "snap")])
     assert asked == [{"first": 1, "last": 1}]  # one query, with the visit range bound
 
