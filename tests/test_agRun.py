@@ -495,12 +495,12 @@ def testTilesSayOneThingEach():
     ]
     # Every star designed on the five cameras in use is matched in every AG exposure.
     assert "<span class='big'>100<span class='unit'>%</span></span>" in report.html
-    assert "<span class='pill'>of designed stars</span>" in report.html
+    assert "<li>of designed stars</li>" in report.html
     # The guide error is one value in arcsec, said in AG pixels too.
     assert re.search(r"Guide error</span><span class='big'>0\.0\d<span class='unit'>″</span>", report.html)
     assert re.search(
-        r"<span class='pill'>median visit</span><span class='pill'><b>0\.\d</b> AG px</span>"
-        r"<span class='pill'>95% &lt; <b>0\.\d\d″</b></span>",
+        r"<ul class='facts'><li>median visit</li><li><b>0\.\d</b> AG px</li>"
+        r"<li>95% &lt; <b>0\.\d\d″</b></li></ul>",
         report.html,
     )
     # A tile carries no sentence: what it is, in full, is on its hover text.

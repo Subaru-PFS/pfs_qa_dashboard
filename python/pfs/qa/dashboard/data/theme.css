@@ -223,11 +223,11 @@
   .tile .sub { color: var(--fg-3); font-size: 0.82rem; }
   .tile.pass { border-color: var(--pass); } .tile.warn { border-color: var(--warn); } .tile.fail { border-color: var(--fail); }
   .tile .big .unit { font-size: 0.9rem; font-weight: 400; color: var(--fg-3); font-family: var(--body); }
-  .tile .pills { display: flex; flex-wrap: wrap; gap: 5px 6px; margin-top: 4px; }
-  .tile .pill { font-size: 0.74rem; line-height: 1.5; padding: 0 8px; border-radius: 999px; color: var(--fg-2); background: var(--band); white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .tile .pill b { font-weight: 600; color: var(--fg); }
-  .tile.warn .pill { color: var(--warn); background: var(--warn-bg); }
-  .tile.warn .pill b { color: var(--warn); }
+  .tile ul.facts { margin: 4px 0 0; padding-left: 1.1em; gap: 1px; color: var(--fg-2); font-size: 0.8rem; line-height: 1.45; font-variant-numeric: tabular-nums; }
+  .tile ul.facts li::marker { color: var(--fg-3); }
+  .tile ul.facts b { font-weight: 600; color: var(--fg); }
+  .tile.warn ul.facts li { color: var(--warn); }
+  .tile.warn ul.facts b { color: var(--warn); }
   /* The AG report (and its block on the run report): charts against the run's nights, drawn as inline SVG. */
   svg.agplot { display: block; width: 100%; height: auto; }
   svg.agplot.wide { min-width: 760px; }

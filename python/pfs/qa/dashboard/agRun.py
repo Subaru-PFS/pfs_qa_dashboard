@@ -687,12 +687,12 @@ def _tiles(
     unused = [f"AG{n}" for n in range(1, 7) if f"AG{n}" not in inUse]
     tables = tables or {}
 
-    def tile(label: str, big: str, pills: list[str], what: str, cls: str = "") -> str:
-        """One number, with what qualifies it as short labels; ``what`` says in full what it is, on hover."""
-        labels = "".join(f"<span class='pill'>{pill}</span>" for pill in pills)
+    def tile(label: str, big: str, facts: list[str], what: str, cls: str = "") -> str:
+        """One number, with what qualifies it as a short list; ``what`` says in full what it is, on hover."""
+        items = "".join(f"<li>{fact}</li>" for fact in facts)
         return (
             f"<div class='tile {cls}' title='{html.escape(what)}'><span class='lab'>{label}</span>"
-            f"<span class='big'>{big}</span><span class='pills'>{labels}</span></div>"
+            f"<span class='big'>{big}</span><ul class='facts'>{items}</ul></div>"
         )
 
     def arcsec(value: float) -> str:
@@ -760,13 +760,13 @@ def _tiles(
     )
     seeing, transparency = tables.get("seeing"), tables.get("transparency")
     if seeing is not None and len(seeing):
-        pills = ["AG FWHM", "median"]
+        facts = ["AG FWHM", "median"]
         if transparency is not None and len(transparency):
-            pills.append(f"transparency <b>{transparency['value'].median():.2f}</b>")
+            facts.append(f"transparency <b>{transparency['value'].median():.2f}</b>")
         tiles["seeing"] = tile(
             "Seeing",
             arcsec(seeing["value"].median()),
-            pills,
+            facts,
             "The median seeing (AG FWHM) and transparency of the run's AG exposures, as stored in qadb.",
         )
     elif "residual" in chosen:
