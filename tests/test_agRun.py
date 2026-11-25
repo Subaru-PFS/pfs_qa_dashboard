@@ -345,7 +345,7 @@ def testPageShowsTheRunAsDrpQaReportsIt():
 def testACameraNotInUseIsNamedAndNotDrawn():
     report = buildAgReport(agRunTables(dead=(1,)))
 
-    assert "5 <span class='unit'>of 6</span>" in report.html and "AG2 not in use" in report.html
+    assert "5 <span class='unit'>of 6</span>" in report.html and "<b>AG2</b> not in use" in report.html
     assert "not in use: no detections in the run" in report.html
     assert "camera/AG2.png" not in report.html and "camera/AG4.png" in report.html
     assert report.cameraPng(2) is None
@@ -487,7 +487,7 @@ def testTilesSayOneThingEach():
         "Guide error",
         "Guide jitter",
         "Guide stars matched",
-        "Star position, measured − expected",
+        "Star position error",
         "Too few stars",
         "Guide offsets not used",
         "FWHM of matched stars",
@@ -495,10 +495,18 @@ def testTilesSayOneThingEach():
     ]
     # Every star designed on the five cameras in use is matched in every AG exposure.
     assert "<span class='big'>100<span class='unit'>%</span></span>" in report.html
-    assert "of the designed guide stars on the cameras in use, median visit" in report.html
+    assert "<span class='pill'>of designed stars</span>" in report.html
     # The guide error is one value in arcsec, said in AG pixels too.
     assert re.search(r"Guide error</span><span class='big'>0\.0\d<span class='unit'>″</span>", report.html)
-    assert re.search(r"median visit · 0\.\d AG pixels · 95% of visits under 0\.\d\d″", report.html)
+    assert re.search(
+        r"<span class='pill'>median visit</span><span class='pill'><b>0\.\d</b> AG px</span>"
+        r"<span class='pill'>95% &lt; <b>0\.\d\d″</b></span>",
+        report.html,
+    )
+    # A tile carries no sentence: what it is, in full, is on its hover text.
+    tiles = report.html.split("<div class='tiles'>")[1].split("<details")[0]
+    assert "class='sub'" not in tiles and tiles.count("title='") == len(labels)
+    assert "title='The RMS of a science visit&#x27;s settled guide offsets on the sky" in tiles
     # The run report's block has the few that summarise the run.
     assert re.findall(r"<span class='lab'>([^<]*)</span>", report.summary) == [
         "Cameras in use",
@@ -536,7 +544,7 @@ def testNightTilesAreOneNightsOwn():
         and "<a href='/run/ag'>the run's AG report</a>" in first
     )
     assert "6 <span class='unit'>of 6</span>" in first and "5 <span class='unit'>of 6</span>" in later
-    assert "AG3 not in use" in later and "AG exposures and 3 science visits" in later
+    assert "<b>AG3</b> not in use" in later and "AG exposures and 3 science visits" in later
 
     def error(tiles):
         return float(re.search(r"Guide error</span><span class='big'>([\d.]+)<", tiles).group(1))

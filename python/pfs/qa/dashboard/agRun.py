@@ -687,10 +687,12 @@ def _tiles(
     unused = [f"AG{n}" for n in range(1, 7) if f"AG{n}" not in inUse]
     tables = tables or {}
 
-    def tile(label: str, big: str, sub: str, cls: str = "") -> str:
+    def tile(label: str, big: str, pills: list[str], what: str, cls: str = "") -> str:
+        """One number, with what qualifies it as short labels; ``what`` says in full what it is, on hover."""
+        labels = "".join(f"<span class='pill'>{pill}</span>" for pill in pills)
         return (
-            f"<div class='tile {cls}'><span class='lab'>{label}</span><span class='big'>{big}</span>"
-            f"<span class='sub'>{sub}</span></div>"
+            f"<div class='tile {cls}' title='{html.escape(what)}'><span class='lab'>{label}</span>"
+            f"<span class='big'>{big}</span><span class='pills'>{labels}</span></div>"
         )
 
     def arcsec(value: float) -> str:
@@ -700,59 +702,87 @@ def _tiles(
         "cameras": tile(
             "Cameras in use",
             f"{len(inUse)} <span class='unit'>of 6</span>",
-            (", ".join(unused) + " not in use") if unused else "all six detected stars",
+            [f"<b>{name}</b> not in use" for name in unused] or ["all six"],
+            "The cameras that detected anything in these AG exposures.",
             "warn" if unused else "",
         ),
         "error": tile(
             "Guide error",
             arcsec(error["size"]),
-            f"RMS on the sky, median visit · {_number(error['size'] / _PIXEL_ARCSEC, 1)} AG pixels · "
-            f"95% of visits under {_number(error['size95'], 2)}″",
+            [
+                "median visit",
+                f"<b>{_number(error['size'] / _PIXEL_ARCSEC, 1)}</b> AG px",
+                f"95% &lt; <b>{_number(error['size95'], 2)}″</b>",
+            ],
+            "The RMS of a science visit's settled guide offsets on the sky (ΔRA and ΔDec together): the median "
+            "visit, and the value 95% of visits are under.",
         ),
         "jitter": tile(
             "Guide jitter",
             arcsec(error["jitter"]),
-            f"frame to frame on the sky, median visit · 95% of visits under {_number(error['jitter95'], 2)}″",
+            ["median visit", "frame to frame", f"95% &lt; <b>{_number(error['jitter95'], 2)}″</b>"],
+            "How much a science visit's guide offset on the sky moves from one AG exposure to the next: the "
+            "median visit, and the value 95% of visits are under.",
         ),
     }
     if np.isfinite(matched["median"]):
         tiles["matched"] = tile(
             "Guide stars matched",
             f"{_number(100 * matched['median'], 0)}<span class='unit'>%</span>",
-            "of the designed guide stars on the cameras in use, median visit · 5% of visits under "
-            f"{_number(100 * matched['p5'], 0)}%",
+            ["median visit", "of designed stars", f"5% &lt; <b>{_number(100 * matched['p5'], 0)}%</b>"],
+            "The share of a science visit's designed guide stars, on the cameras in use, that were matched: the "
+            "median visit, and the share 5% of visits are under.",
         )
     tiles["residual"] = tile(
-        "Star position, measured − expected",
+        "Star position error",
         f"{_number(summary['residualUm']['median'], 1)} <span class='unit'>µm</span>",
-        f"= {_number(summary['residualUm']['median'] / _PIXEL_UM, 2)} AG pixels; "
-        f"95% of AG exposures under {_number(summary['residualUm']['p95'], 1)} µm",
+        [
+            "measured − expected",
+            f"<b>{_number(summary['residualUm']['median'] / _PIXEL_UM, 2)}</b> AG px",
+            f"95% &lt; <b>{_number(summary['residualUm']['p95'], 1)} µm</b>",
+        ],
+        "The distance of a matched star from where the guider expected it: the median science AG exposure, and "
+        "the value 95% of them are under.",
     )
     tiles["tooFew"] = tile(
         "Too few stars",
         f"{_number(stars['underMinimumPct'], 2)}<span class='unit'>%</span>",
-        "of science AG exposures matched fewer than 3 stars",
+        ["of science AG exposures", "&lt; <b>3</b> matched stars"],
+        "The share of science AG exposures in which fewer than 3 guide stars were matched.",
     )
     tiles["notUsed"] = tile(
         "Guide offsets not used",
         f"{loop['rejected']} <span class='unit'>rejected</span>",
-        f"and {loop['noOffset']} never written, of {summary['exposures']:,} AG exposures",
+        [f"<b>{loop['noOffset']}</b> not written", f"of <b>{summary['exposures']:,}</b>"],
+        "AG exposures whose guide offset the guider rejected (INVALID_OFFSET), or never wrote, of all the AG "
+        "exposures.",
         "fail" if loop["rejected"] else "",
     )
     seeing, transparency = tables.get("seeing"), tables.get("transparency")
     if seeing is not None and len(seeing):
-        sub = "median AG FWHM of the run's AG exposures"
+        pills = ["AG FWHM", "median"]
         if transparency is not None and len(transparency):
-            sub += f"; transparency {transparency['value'].median():.2f}"
-        tiles["seeing"] = tile("Seeing", arcsec(seeing["value"].median()), sub)
+            pills.append(f"transparency <b>{transparency['value'].median():.2f}</b>")
+        tiles["seeing"] = tile(
+            "Seeing",
+            arcsec(seeing["value"].median()),
+            pills,
+            "The median seeing (AG FWHM) and transparency of the run's AG exposures, as stored in qadb.",
+        )
     elif "residual" in chosen:
-        tiles["seeing"] = tile("FWHM of matched stars", arcsec(summary["fwhm"]), "median")
+        tiles["seeing"] = tile(
+            "FWHM of matched stars",
+            arcsec(summary["fwhm"]),
+            ["median"],
+            "The median FWHM of the matched stars, over cameras and AG exposures.",
+        )
     if flags is not None:
         severe = sum(1 for flag in flags if flag.severe)
         tiles["flags"] = tile(
             "Flags",
             f"{severe} <span class='unit'>fault{'' if severe == 1 else 's'}</span>",
-            f"and {len(flags) - severe} to look at",
+            [f"<b>{len(flags) - severe}</b> to look at"],
+            "What the analysis flags: faults, and things worth a look. They are listed under Flags.",
             "fail" if severe else "",
         )
     return f"<div class='tiles'>{''.join(tiles[name] for name in chosen if name in tiles)}</div>"
