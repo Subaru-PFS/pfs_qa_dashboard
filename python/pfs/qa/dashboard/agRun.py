@@ -687,19 +687,27 @@ def _tiles(
     unused = [f"AG{n}" for n in range(1, 7) if f"AG{n}" not in inUse]
     tables = tables or {}
 
-    def tile(label: str, big: str, facts: list[str], what: str, cls: str = "") -> str:
-        """One number, and separate facts about it as a short list; ``what`` says in full what it is, on hover."""
+    def tile(label: str, big: str, facts: list[str], what: str, cls: str = "", of: str = "") -> str:
+        """Return a tile: one number, what it is the value of (``of``), and separate facts about it as a list.
+
+        ``what`` says in full what the number is, on hover.
+        """
         items = "".join(f"<li>{fact}</li>" for fact in facts)
         listed = f"<ul class='facts'>{items}</ul>" if items else ""
+        under = f"<span class='sub'>{of}</span>" if of else ""
         return (
             f"<div class='tile {cls}' title='{html.escape(what)}'><span class='lab'>{label}</span>"
-            f"<span class='big'>{big}</span>{listed}</div>"
+            f"<span class='big'>{big}</span>{under}{listed}</div>"
         )
 
-    def value(number: str, unit: str, of: str = "") -> str:
-        """Return a tile's number with its unit, and what it is the value of ("median visit") beside it."""
+    def value(number: str, unit: str) -> str:
+        """Return a tile's number with its unit beside it."""
         gap = " " if unit.startswith(" ") else ""
-        return f"{number}{gap}<span class='unit'>{unit.strip()}{' ' + of if of else ''}</span>"
+        return f"{number}{gap}<span class='unit'>{unit.strip()}</span>"
+
+    def medianOf(count: int) -> str:
+        """Say what a tile's value is the median of: the visits, one value each, and how many there were."""
+        return f"median of {count:,} visit{'' if count == 1 else 's'}"
 
     # A bullet is one fact on its own: the same value in another unit, or how far the visits spread.
     tiles = {
@@ -712,39 +720,42 @@ def _tiles(
         ),
         "error": tile(
             "Guide error",
-            value(_number(error["size"], 2), "″", "median visit"),
+            value(_number(error["size"], 2), "″"),
             [
                 f"<b>{_number(error['size'] / _PIXEL_ARCSEC, 1)}</b> AG pixels",
                 f"95% of visits under <b>{_number(error['size95'], 2)}″</b>",
             ],
-            "The RMS of a science visit's settled guide offsets on the sky (ΔRA and ΔDec together): the median "
-            "visit, and the value 95% of visits are under.",
+            "The RMS of a science visit's settled guide offsets on the sky (ΔRA and ΔDec together), one value "
+            "a visit: the median of those values, and the value 95% of visits are under.",
+            of=medianOf(summary["settledVisits"]),
         ),
         "jitter": tile(
             "Frame-to-frame jitter",
-            value(_number(error["jitter"], 2), "″", "median visit"),
+            value(_number(error["jitter"], 2), "″"),
             [
                 f"<b>{_number(error['jitter'] / _PIXEL_ARCSEC, 1)}</b> AG pixels",
                 f"95% of visits under <b>{_number(error['jitter95'], 2)}″</b>",
             ],
-            "How much a science visit's guide offset on the sky moves from one AG exposure to the next: the "
-            "median visit, and the value 95% of visits are under.",
+            "How much a science visit's guide offset on the sky moves from one AG exposure to the next, one "
+            "value a visit: the median of those values, and the value 95% of visits are under.",
+            of=medianOf(summary["settledVisits"]),
         ),
     }
     if np.isfinite(matched["median"]):
         tiles["matched"] = tile(
             "Designed guide stars matched",
-            value(_number(100 * matched["median"], 0), "%", "median visit"),
+            value(_number(100 * matched["median"], 0), "%"),
             [
                 f"5% of visits under <b>{_number(100 * matched['p5'], 0)}%</b>",
                 f"5% of visits over <b>{_number(100 * matched['p95'], 0)}%</b>",
             ],
-            "The share of a science visit's designed guide stars, on the cameras in use, that were matched: the "
-            "median visit, and the shares 5% of visits are under and over.",
+            "The share of a science visit's designed guide stars, on the cameras in use, that were matched, one "
+            "value a visit: the median of those values, and the shares 5% of visits are under and over.",
+            of=medianOf(matched["visits"]),
         )
     tiles["residual"] = tile(
         "Star position, measured − expected",
-        value(_number(summary["residualUm"]["median"], 1), " µm", "median"),
+        value(_number(summary["residualUm"]["median"], 1), " µm median"),
         [
             f"<b>{_number(summary['residualUm']['median'] / _PIXEL_UM, 2)}</b> AG pixels",
             f"95% of AG exposures under <b>{_number(summary['residualUm']['p95'], 1)} µm</b>",
@@ -773,14 +784,14 @@ def _tiles(
             facts.append(f"transparency <b>{transparency['value'].median():.2f}</b>")
         tiles["seeing"] = tile(
             "Seeing (AG FWHM)",
-            value(f"{seeing['value'].median():.2f}", "″", "median"),
+            value(f"{seeing['value'].median():.2f}", "″ median"),
             facts,
             "The median seeing (AG FWHM) and transparency of the run's AG exposures, as stored in qadb.",
         )
     elif "residual" in chosen:
         tiles["seeing"] = tile(
             "FWHM of matched stars",
-            value(_number(summary["fwhm"], 2), "″", "median"),
+            value(_number(summary["fwhm"], 2), "″ median"),
             [],
             "The median FWHM of the matched stars, over cameras and AG exposures.",
         )
@@ -793,7 +804,13 @@ def _tiles(
             "What the analysis flags: faults, and things worth a look. They are listed under Flags.",
             "fail" if severe else "",
         )
-    return f"<div class='tiles'>{''.join(tiles[name] for name in chosen if name in tiles)}</div>"
+    # Each tile is named in the markup, so it can be found whatever it says.
+    named = [
+        tiles[name].replace("<div class='tile", f"<div data-tile='{name}' class='tile", 1)
+        for name in chosen
+        if name in tiles
+    ]
+    return f"<div class='tiles'>{''.join(named)}</div>"
 
 
 def nightTables(tables: Mapping[str, pd.DataFrame], night: str) -> dict[str, pd.DataFrame]:

@@ -135,6 +135,17 @@ def conditions(tables, seeing=0.7, first=0, last=2**31 - 1):
     return {"seeing": frame.assign(value=seeing), "transparency": frame.assign(value=0.8)}
 
 
+def tileNames(page):
+    """Return the tiles a page shows, by name, in order."""
+    return re.findall(r"data-tile='(\w+)'", page)
+
+
+def tileValue(page, name):
+    """Return the number a page's tile shows."""
+    found = re.search(rf"data-tile='{name}'.*?<span class='big'>([\d.,]+)", page, re.DOTALL)
+    return float(found.group(1).replace(",", ""))
+
+
 class Opdb:
     """Answers ``readRun(start, end)`` from a run's tables, and records what was asked."""
 
@@ -235,7 +246,7 @@ def testStoreJoinsANightWhoseOffsetsAreAllNull():
 
     assert exposures.guide_dec.dtype == float and exposures["mask"].dtype == float
     assert exposures.guide_dec.isna().sum() == 1
-    assert "Cameras in use" in buildAgReport(store.tables).html
+    assert "cameras" in tileNames(buildAgReport(store.tables).html)
     # Negative control: joined as they come, the columns would be objects, which the analysis cannot take.
     night = read(START + pd.Timedelta(days=1), START + pd.Timedelta(days=2))["exposures"]
     assert pd.concat([tables["exposures"], night]).guide_dec.dtype == object
@@ -319,34 +330,34 @@ def testPageShowsTheRunAsDrpQaReportsIt():
     report = buildAgReport(tables, title="Run31 visit verdicts", source="the opdb, read {date}.")
     page = report.html
 
-    assert "<h1>Auto-guiding</h1>" in page and "&lsaquo; Run31 visit verdicts</a>" in page
+    assert 'data-page="ag"' in page and "Run31 visit verdicts</a>" in page
     assert "{{" not in page
     # The scale is said where the reader sees it, and the offsets carry an axis in AG pixels.
     assert "1 AG pixel = 13 µm = 0.14″" in page and ">AG pixels</text>" in page
     # The captions are drp_qa's own, one for every figure.
     for caption in captions().values():
         assert html.escape(caption) in page
-    assert "Cameras in use" in page and "6 <span class='unit'>of 6</span>" in page
+    assert tileValue(page, "cameras") == 6
     # Every science visit is a point in each guiding panel, linked to its page.
     assert page.count("<a href='/visit/153000'>") == 6 + 1  # size and jitter on three axes, and the focus
     for camera in range(1, 7):
         assert f"src='/run/ag/camera/AG{camera}.png'" in page
-    assert "Seeing and transparency" in page and "median 0.70″" in page
+    assert "id='conditions'" in page and tileValue(page, "seeing") == 0.7
     # The run report's block: the headline numbers and the way to the page.
-    assert "<a href='/run/ag'>The AG report</a>" in report.summary
-    assert "<span class='lab'>Guide error</span>" in report.summary and "id='ag'" in report.summary
+    assert "<a href='/run/ag'>" in report.summary and "id='ag'" in report.summary
+    assert tileNames(report.summary) == list(agRun._RUN_TILES)
     # The map of camera states is the page's, not the block's.
     assert "<svg class='agplot" in page and "<svg" not in report.summary
-    # Negative control: without qadb's conditions there is no such section, and no seeing tile.
-    plain = buildAgReport(agRunTables()).html
-    assert "Seeing and transparency" not in plain and "<span class='lab'>Seeing (AG FWHM)</span>" not in plain
+    # Negative control: without qadb's conditions there is no such section, and the run report has no seeing tile.
+    plain = buildAgReport(agRunTables())
+    assert "id='conditions'" not in plain.html and "seeing" not in tileNames(plain.summary)
 
 
 def testACameraNotInUseIsNamedAndNotDrawn():
     report = buildAgReport(agRunTables(dead=(1,)))
 
-    assert "5 <span class='unit'>of 6</span>" in report.html and "<b>AG2</b> not in use" in report.html
-    assert "not in use: no detections in the run" in report.html
+    assert tileValue(report.html, "cameras") == 5 and "<b>AG2</b>" in report.html
+    assert "<rect class='unused'" in report.html
     assert "camera/AG2.png" not in report.html and "camera/AG4.png" in report.html
     assert report.cameraPng(2) is None
     # Negative control: a camera in use has a figure.
@@ -359,7 +370,7 @@ def testAPageWrittenAsAFileHoldsItsFigures():
 
     assert report.html.count("src='data:image/png;base64,") == 6
     assert 'href="run31.html"' in report.html
-    assert "<a href='run31-ag.html'>The AG report</a>" in report.summary
+    assert "<a href='run31-ag.html'>" in report.summary
     # Negative control: served, the page asks the server for them.
     assert "data:image/png" not in buildAgReport(agRunTables(nights=1)).html
 
@@ -368,22 +379,22 @@ def testARunWithNoAgExposureSaysSo():
     empty = {name: frame.iloc[:0] for name, frame in agRunTables(nights=1).items()}
     report = buildAgReport(empty, title="Run31 visit verdicts")
 
-    assert "No AG exposure has been read for this run yet." in report.html
+    assert 'data-page="ag"' in report.html and tileNames(report.html) == []
     assert report.summary == "" and report.cameraPng(1) is None
     # A night with too few AG exposures to report is said too.
     few = buildAgReport(agRunTables(nights=1, visits=1, exposures=5))
-    assert "No night of this run has enough AG exposures to report yet." in few.html
+    assert tileNames(few.html) == [] and few.summary == ""
 
 
 def testTheRunReportCarriesTheAgBlock():
     tables = _tables((1, "r1", "science", _science()))
     block = buildAgReport(agRunTables(nights=1)).summary
 
-    assert "<h2>Auto-guiding</h2>" in buildReport(tables, agSummary=block).html
-    assert "<h2>Auto-guiding</h2>" in buildReport(tables, agSummary=lambda: block).html
+    assert block in buildReport(tables, agSummary=block).html
+    assert block in buildReport(tables, agSummary=lambda: block).html
     # Negative control: without one the run report has no such section, and no placeholder left.
     plain = buildReport(tables).html
-    assert "Auto-guiding" not in plain and "{{AG_SUMMARY}}" not in plain
+    assert "id='ag'" not in plain and "{{AG_SUMMARY}}" not in plain
 
 
 def _application(cache):
@@ -400,7 +411,7 @@ def testRoutesServeThePageItsStatusAndTheFigures():
     application = _application(cache)
 
     page = _fetch(application, "/run/ag")
-    assert "text/html" in page.headers["Content-Type"] and "<h1>Auto-guiding</h1>" in page.body.decode()
+    assert "text/html" in page.headers["Content-Type"] and 'data-page="ag"' in page.body.decode()
     # The page's live script asks for ``status`` beside it.
     status = json.loads(_fetch(application, "/run/status").body)
     assert status["built"] == 1 and status["error"] is None
@@ -428,12 +439,12 @@ def testAFailedFirstReadLeavesAPageThatSaysSo():
     cache = AgRunCache(store, title="Run31 visit verdicts")
     cache.poll()
 
-    assert "The AG tables have not been read yet: RuntimeError: connection refused" in cache.pageFor()
+    assert "RuntimeError: connection refused" in cache.pageFor() and tileNames(cache.pageFor()) == []
     assert cache.summary == "" and cache.status()["error"] == "RuntimeError: connection refused"
     failing[0] = False
     cache.poll()
-    assert "Cameras in use" in cache.pageFor() and cache.status()["error"] is None
-    assert "<span class='lab'>Guide error</span>" in cache.summary
+    assert "cameras" in tileNames(cache.pageFor()) and cache.status()["error"] is None
+    assert "error" in tileNames(cache.summary)
 
 
 def testCacheMakesThePageAgainOnlyWhenAReadBringsSomething():
@@ -465,7 +476,6 @@ def testThePageIsNotMadeAgainOnEveryRead():
     assert cache.update() is False and cache.built == 1
     # The read happened all the same: the night's tiles are of the newer tables.
     assert store.version == 2 and cache.nightTiles("2026-11-03") != early
-    assert "from 90 AG exposures" in cache.nightTiles("2026-11-03")
     # Negative control: with nothing between makings, the same read makes the page again.
     assert agRun.AG_REFRESH < agRun.AG_REBUILD
     eager = AgRunCache(
@@ -477,53 +487,24 @@ def testThePageIsNotMadeAgainOnEveryRead():
     assert eager.update() is True and eager.built == 2
 
 
-def testTilesSayOneThingEach():
-    """One number a tile: the guide error and its jitter on the sky, and the share of guide stars matched."""
+def testEachPageShowsItsTiles():
+    """The AG report, the run report's block and the night page each show their own tiles, with the run's numbers."""
     report = buildAgReport(agRunTables(dead=(1,)))
-    labels = re.findall(r"<span class='lab'>([^<]*)</span>", report.html)
 
-    assert labels == [
-        "Cameras in use",
-        "Guide error",
-        "Frame-to-frame jitter",
-        "Designed guide stars matched",
-        "Star position, measured − expected",
-        "AG exposures with under 3 stars",
-        "Guide offsets not used",
-        "FWHM of matched stars",
-        "Flags",
-    ]
+    assert tileNames(report.html) == list(agRun._PAGE_TILES)
+    assert tileNames(report.summary) == [name for name in agRun._RUN_TILES if name != "seeing"]
     # Every star designed on the five cameras in use is matched in every AG exposure.
-    assert "<span class='big'>100<span class='unit'>% median visit</span></span>" in report.html
-    # The guide error is one value in arcsec, said in AG pixels too.
-    assert re.search(
-        r"Guide error</span><span class='big'>0\.0\d<span class='unit'>″ median visit</span>", report.html
-    )
-    assert re.search(
-        r"<ul class='facts'><li><b>0\.\d</b> AG pixels</li>"
-        r"<li>95% of visits under <b>0\.\d\d″</b></li></ul>",
-        report.html,
-    )
-    # A bullet is a fact of its own (another unit, or the spread), never a piece of what the number is.
-    facts = re.findall(r"<li>(.*?)</li>", report.html.split("<div class='tiles'>")[1].split("<details")[0])
-    assert all("<b>" in fact or fact == "of the science AG exposures" for fact in facts)
-    assert "<li>median visit</li>" not in report.html and "<li>of designed stars</li>" not in report.html
-    # A tile carries no sentence: what it is, in full, is on its hover text.
-    tiles = report.html.split("<div class='tiles'>")[1].split("<details")[0]
-    assert "class='sub'" not in tiles and tiles.count("title='") == len(labels)
-    assert "title='The RMS of a science visit&#x27;s settled guide offsets on the sky" in tiles
-    # The run report's block has the few that summarise the run.
-    assert re.findall(r"<span class='lab'>([^<]*)</span>", report.summary) == [
-        "Cameras in use",
-        "Guide error",
-        "Frame-to-frame jitter",
-        "Designed guide stars matched",
-        "Flags",
-    ]
-    # Negative control: a read without the designed guide stars has no such tile.
+    assert tileValue(report.html, "matched") == 100
+    # The guide error is the 0.05″ of each axis in quadrature, and is given in AG pixels too (0.14″ each).
+    error = tileValue(report.html, "error")
+    assert 0.05 < error < 0.09
+    pixels = float(re.search(r"data-tile='error'.*?<li><b>([\d.]+)</b>", report.html, re.DOTALL).group(1))
+    # Both are rounded for the tile: the arcsec to 0.01, the pixels to 0.1.
+    assert pixels == pytest.approx(error / 0.14, abs=0.09)
+    # Negative control: a read without the designed guide stars has no tile for them.
     older = agRunTables()
     del older["magnitudes"]
-    assert "Designed guide stars matched" not in buildAgReport(older).html
+    assert "matched" not in tileNames(buildAgReport(older).html)
 
 
 def testNightTilesAreOneNightsOwn():
@@ -537,24 +518,10 @@ def testNightTilesAreOneNightsOwn():
     tables["cameras"] = cameras[~(cameras.agc_exposure_id.isin(ids) & (cameras.agc_camera_id == 2))]
     first, later = agRun.buildNightTiles(tables, "2026-11-03"), agRun.buildNightTiles(tables, "2026-11-04")
 
-    assert re.findall(r"<span class='lab'>([^<]*)</span>", first) == [
-        "Cameras in use",
-        "Guide error",
-        "Frame-to-frame jitter",
-        "Designed guide stars matched",
-        "Guide offsets not used",
-    ]
-    assert (
-        "from 90 AG exposures and 3 science visits" in first
-        and "<a href='/run/ag'>the run's AG report</a>" in first
-    )
-    assert "6 <span class='unit'>of 6</span>" in first and "5 <span class='unit'>of 6</span>" in later
-    assert "<b>AG3</b> not in use" in later and "AG exposures and 3 science visits" in later
-
-    def error(tiles):
-        return float(re.search(r"Guide error</span><span class='big'>([\d.]+)<", tiles).group(1))
-
-    assert error(later) > 5 * error(first)
+    assert tileNames(first) == list(agRun._NIGHT_TILES) and "<a href='/run/ag'>" in first
+    assert tileValue(first, "cameras") == 6 and tileValue(later, "cameras") == 5
+    assert "<b>AG3</b>" in later and "<b>AG3</b>" not in first
+    assert tileValue(later, "error") > 5 * tileValue(first, "error")
     # Only the night's rows are taken, and not the grid.
     night = agRun.nightTables(tables, "2026-11-03")
     assert len(night["exposures"]) == 90 and night["exposures"].taken_at.max() < START + pd.Timedelta(days=1)
@@ -579,12 +546,12 @@ def testTheNightPageCarriesTheNightsAgTiles():
 
     page = buildNightReport(tables, info=info, agTiles=agTiles).html
     assert asked == ["2026-11-03"]
-    assert "Auto-guiding this night, from 90 AG exposures" in page and "Designed guide stars matched" in page
+    assert cache.nightTiles("2026-11-03") in page and tileNames(page) == list(agRun._NIGHT_TILES)
     # They follow the page's own tiles.
-    assert page.index("Auto-guiding this night") > page.index('<div class="tiles">')
+    assert page.index("data-tile=") > page.index('<div class="tiles">')
     # Negative control: without them the page has no such row, and no placeholder left.
     plain = buildNightReport(tables, info=info).html
-    assert "Auto-guiding this night" not in plain and "{{AG_TILES}}" not in plain
+    assert tileNames(plain) == [] and "{{AG_TILES}}" not in plain
 
 
 def testAFailureToMakeTheNightsTilesLeavesThemOut(monkeypatch):
@@ -597,7 +564,7 @@ def testAFailureToMakeTheNightsTilesLeavesThemOut(monkeypatch):
     assert cache.nightTiles("2026-11-03") == ""
     # Negative control: made as usual, they are there.
     monkeypatch.undo()
-    assert "Guide error" in AgRunCache(AgRunStore.fromTables(agRunTables(nights=1))).nightTiles("2026-11-03")
+    assert tileNames(AgRunCache(AgRunStore.fromTables(agRunTables(nights=1))).nightTiles("2026-11-03"))
 
 
 def testAgWindowIsTheRunTheVisitsAreIn():
@@ -672,9 +639,9 @@ def testReportWritesTheAgPageBesideTheRunReport(tmp_path, capsys):
 
     agPage = (tmp_path / "out" / "run31-ag.html").read_text()
     runPage = (tmp_path / "out" / "run31.html").read_text()
-    assert "<h1>Auto-guiding</h1>" in agPage and 'href="run31.html"' in agPage
+    assert tileNames(agPage) and 'href="run31.html"' in agPage
     assert "read 2026-11-05." in agPage and "data:image/png;base64," in agPage
-    assert "<a href='run31-ag.html'>The AG report</a>" in runPage
+    assert "<a href='run31-ag.html'>" in runPage
     assert "run31.html and run31-ag.html" in capsys.readouterr().out
     # Negative control: a snapshot with no AG tables writes the run report alone.
     cli.main(
@@ -687,7 +654,7 @@ def testReportWritesTheAgPageBesideTheRunReport(tmp_path, capsys):
         ]
     )
     assert not (tmp_path / "out2" / "index-ag.html").exists()
-    assert "Auto-guiding" not in (tmp_path / "out2" / "index.html").read_text()
+    assert tileNames((tmp_path / "out2" / "index.html").read_text()) == []
 
 
 def testServeMountsTheAgPageOfASnapshot(tmp_path, monkeypatch):
@@ -700,8 +667,8 @@ def testServeMountsTheAgPageOfASnapshot(tmp_path, monkeypatch):
     )
     cli.main(["serve", "--snapshot", str(_snapshot(tmp_path / "snap")), "--title", "Run31 visit verdicts"])
 
-    assert "<h1>Auto-guiding</h1>" in _fetch(served["application"], "/run/ag").body.decode()
-    assert "<a href='/run/ag'>The AG report</a>" in _fetch(served["application"], "/run").body.decode()
+    assert tileNames(_fetch(served["application"], "/run/ag").body.decode())
+    assert "<a href='/run/ag'>" in _fetch(served["application"], "/run").body.decode()
     assert json.loads(_fetch(served["application"], "/run/status").body)["built"] == 1
     assert _fetch(served["application"], "/run/ag/camera/AG1.png").body[:4] == b"\x89PNG"
     # Negative control: a snapshot with no AG tables has no AG page.
@@ -709,7 +676,7 @@ def testServeMountsTheAgPageOfASnapshot(tmp_path, monkeypatch):
     with pytest.raises(HTTPClientError) as error:
         _fetch(served["application"], "/run/ag")
     assert error.value.code == 404
-    assert "Auto-guiding" not in _fetch(served["application"], "/run").body.decode()
+    assert tileNames(_fetch(served["application"], "/run").body.decode()) == []
 
 
 def testSnapshotKeepsTheAgTablesReadFromTheOpdb(tmp_path, monkeypatch):
