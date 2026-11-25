@@ -334,7 +334,7 @@ def testPageShowsTheRunAsDrpQaReportsIt():
     assert "Seeing and transparency" in page and "median 0.70″" in page
     # The run report's block: the headline numbers and the way to the page.
     assert "<a href='/run/ag'>The AG report</a>" in report.summary
-    assert "Guide error, size" in report.summary and "id='ag'" in report.summary
+    assert "<span class='lab'>Guide error</span>" in report.summary and "id='ag'" in report.summary
     # The map of camera states is the page's, not the block's.
     assert "<svg class='agplot" in page and "<svg" not in report.summary
     # Negative control: without qadb's conditions there is no such section, and no seeing tile.
@@ -433,14 +433,15 @@ def testAFailedFirstReadLeavesAPageThatSaysSo():
     failing[0] = False
     cache.poll()
     assert "Cameras in use" in cache.pageFor() and cache.status()["error"] is None
-    assert "Guide error, size" in cache.summary
+    assert "<span class='lab'>Guide error</span>" in cache.summary
 
 
 def testCacheMakesThePageAgainOnlyWhenAReadBringsSomething():
     tables = agRunTables(nights=1)
     opdb = Opdb(tables)
     clock = [NIGHT + pd.Timedelta(hours=20, minutes=6)]  # part-way through the second visit
-    cache = AgRunCache(AgRunStore(opdb, START, START + pd.Timedelta(days=1), now=lambda: clock[0]))
+    store = AgRunStore(opdb, START, START + pd.Timedelta(days=1), now=lambda: clock[0])
+    cache = AgRunCache(store, rebuildEvery=0)
 
     assert cache.update() is True and cache.built == 1
     first = cache.pageFor()
@@ -449,6 +450,141 @@ def testCacheMakesThePageAgainOnlyWhenAReadBringsSomething():
     clock[0] = NIGHT + pd.Timedelta(hours=23)
     assert cache.update() is True and cache.built == 2
     assert cache.pageFor() != first
+
+
+def testThePageIsNotMadeAgainOnEveryRead():
+    """The store is read every time, for the night page's tiles; the run's page waits until it is due."""
+    tables = agRunTables(nights=1)
+    clock = [NIGHT + pd.Timedelta(hours=20, minutes=6)]
+    store = AgRunStore(Opdb(tables), START, START + pd.Timedelta(days=1), now=lambda: clock[0])
+    cache = AgRunCache(store, rebuildEvery=3600)
+    cache.update()
+    early = cache.nightTiles("2026-11-03")
+
+    clock[0] = NIGHT + pd.Timedelta(hours=23)
+    assert cache.update() is False and cache.built == 1
+    # The read happened all the same: the night's tiles are of the newer tables.
+    assert store.version == 2 and cache.nightTiles("2026-11-03") != early
+    assert "from 90 AG exposures" in cache.nightTiles("2026-11-03")
+    # Negative control: with nothing between makings, the same read makes the page again.
+    assert agRun.AG_REFRESH < agRun.AG_REBUILD
+    eager = AgRunCache(
+        AgRunStore(Opdb(tables), START, START + pd.Timedelta(days=1), now=lambda: clock[0]), rebuildEvery=0
+    )
+    clock[0] = NIGHT + pd.Timedelta(hours=20, minutes=6)
+    eager.update()
+    clock[0] = NIGHT + pd.Timedelta(hours=23)
+    assert eager.update() is True and eager.built == 2
+
+
+def testTilesSayOneThingEach():
+    """One number a tile: the guide error and its jitter on the sky, and the share of guide stars matched."""
+    report = buildAgReport(agRunTables(dead=(1,)))
+    labels = re.findall(r"<span class='lab'>([^<]*)</span>", report.html)
+
+    assert labels == [
+        "Cameras in use",
+        "Guide error",
+        "Guide jitter",
+        "Guide stars matched",
+        "Star position, measured − expected",
+        "Too few stars",
+        "Guide offsets not used",
+        "FWHM of matched stars",
+        "Flags",
+    ]
+    # Every star designed on the five cameras in use is matched in every AG exposure.
+    assert "<span class='big'>100<span class='unit'>%</span></span>" in report.html
+    assert "of the designed guide stars on the cameras in use, median visit" in report.html
+    # The guide error is one value in arcsec, said in AG pixels too.
+    assert re.search(r"Guide error</span><span class='big'>0\.0\d<span class='unit'>″</span>", report.html)
+    assert re.search(r"median visit · 0\.\d AG pixels · 95% of visits under 0\.\d\d″", report.html)
+    # The run report's block has the few that summarise the run.
+    assert re.findall(r"<span class='lab'>([^<]*)</span>", report.summary) == [
+        "Cameras in use",
+        "Guide error",
+        "Guide jitter",
+        "Guide stars matched",
+        "Flags",
+    ]
+    # Negative control: a read without the designed guide stars has no such tile.
+    older = agRunTables()
+    del older["magnitudes"]
+    assert "Guide stars matched" not in buildAgReport(older).html
+
+
+def testNightTilesAreOneNightsOwn():
+    """The night page's AG tiles summarise that night's AG exposures alone."""
+    tables = agRunTables(nights=2)
+    # On the second night AG3 detects nothing, and the pointing is ten times as far off.
+    second = tables["exposures"].taken_at >= START + pd.Timedelta(days=1)
+    tables["exposures"].loc[second, "guide_delta_dec"] *= 10
+    ids = tables["exposures"].agc_exposure_id[second]
+    cameras = tables["cameras"]
+    tables["cameras"] = cameras[~(cameras.agc_exposure_id.isin(ids) & (cameras.agc_camera_id == 2))]
+    first, later = agRun.buildNightTiles(tables, "2026-11-03"), agRun.buildNightTiles(tables, "2026-11-04")
+
+    assert re.findall(r"<span class='lab'>([^<]*)</span>", first) == [
+        "Cameras in use",
+        "Guide error",
+        "Guide jitter",
+        "Guide stars matched",
+        "Guide offsets not used",
+    ]
+    assert (
+        "from 90 AG exposures and 3 science visits" in first
+        and "<a href='/run/ag'>the run's AG report</a>" in first
+    )
+    assert "6 <span class='unit'>of 6</span>" in first and "5 <span class='unit'>of 6</span>" in later
+    assert "AG3 not in use" in later and "AG exposures and 3 science visits" in later
+
+    def error(tiles):
+        return float(re.search(r"Guide error</span><span class='big'>([\d.]+)<", tiles).group(1))
+
+    assert error(later) > 5 * error(first)
+    # Only the night's rows are taken, and not the grid.
+    night = agRun.nightTables(tables, "2026-11-03")
+    assert len(night["exposures"]) == 90 and night["exposures"].taken_at.max() < START + pd.Timedelta(days=1)
+    assert "grid" not in night and set(night["visits"].pfs_visit_id) == {153000, 153001, 153002}
+    # Negative control: a night with no AG exposure, and no night at all, have no tiles.
+    assert agRun.buildNightTiles(tables, "2026-11-09") == "" and agRun.buildNightTiles(tables, "") == ""
+
+
+def testTheNightPageCarriesTheNightsAgTiles():
+    from pfs.qa.dashboard.nightReport import buildNightReport
+
+    tables = _tables((153000, "r1", "science", _science()))
+    info = pd.DataFrame(
+        {"visit": [153000], "time": [NIGHT + pd.Timedelta(hours=20)], "exptime": [900.0], "cameras": ["r1"]}
+    )
+    cache = AgRunCache(AgRunStore.fromTables(agRunTables(nights=1)))
+    asked = []
+
+    def agTiles(night):
+        asked.append(night)
+        return cache.nightTiles(night)
+
+    page = buildNightReport(tables, info=info, agTiles=agTiles).html
+    assert asked == ["2026-11-03"]
+    assert "Auto-guiding this night, from 90 AG exposures" in page and "Guide stars matched" in page
+    # They follow the page's own tiles.
+    assert page.index("Auto-guiding this night") > page.index('<div class="tiles">')
+    # Negative control: without them the page has no such row, and no placeholder left.
+    plain = buildNightReport(tables, info=info).html
+    assert "Auto-guiding this night" not in plain and "{{AG_TILES}}" not in plain
+
+
+def testAFailureToMakeTheNightsTilesLeavesThemOut(monkeypatch):
+    cache = AgRunCache(AgRunStore.fromTables(agRunTables(nights=1)))
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(agRun, "buildNightTiles", fail)
+    assert cache.nightTiles("2026-11-03") == ""
+    # Negative control: made as usual, they are there.
+    monkeypatch.undo()
+    assert "Guide error" in AgRunCache(AgRunStore.fromTables(agRunTables(nights=1))).nightTiles("2026-11-03")
 
 
 def testAgWindowIsTheRunTheVisitsAreIn():

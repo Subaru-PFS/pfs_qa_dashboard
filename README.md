@@ -38,15 +38,17 @@ three share one stylesheet (`data/theme.css`). A visit takes the worst verdict a
 
 - **The AG report** (`/run/ag`) — how the guide cameras and the guide loop did over the run: drp_qa's
   end-of-run AG report (`drpQa.py agReport`, `pfs.drp.qa.guiders.runAnalysis`) as a page. It opens with the
-  run's key numbers (the cameras in use; the size and the frame-to-frame jitter of the settled guide error in
-  ΔRA and ΔDec; the stars matched per AG exposure and per camera; how far the matched stars were from where the
-  guider expected them; the guide offsets rejected or never written; the seeing) and what the analysis flags,
+  run's key numbers (the cameras in use; the guide error on the sky, the RMS of a visit's settled guide offsets,
+  and its frame-to-frame jitter; the share of the designed guide stars on the cameras in use that were matched,
+  per visit; how far the matched stars were from where the guider expected them; the guide offsets rejected or
+  never written; the seeing) and what the analysis flags,
   then the camera states hour by hour (matched, no detections, detections but no match, disabled), every
   science visit's guide error, focus, acquisition, each night's seeing and transparency from qadb, and a
   section per camera, AG1/3/5 then AG2/4/6. Each section carries drp_qa's caption of what it shows. The
   run-wide charts are drawn inline, each visit a point that links to its `/visit/<n>` page; a camera's figure
   is drp_qa's own, drawn as a PNG when it is asked for (`/run/ag/camera/AG<n>.png`). The run report carries a
-  short **Auto-guiding** block of the same — the headline numbers and the faults — that links to it. The dashboard measures nothing here: the numbers, flags and captions are
+  short **Auto-guiding** block of the same — the headline numbers and the faults — that links to it, and the
+  night page a row of the same tiles for that night's AG exposures alone (`agRun.buildNightTiles`). The dashboard measures nothing here: the numbers, flags and captions are
   drp_qa's, read from the opdb's AG tables, so the page needs the opdb (`--opdb-host`) or a snapshot made
   with it. Offsets are in arcsec with an axis in AG pixels beside them (1 AG pixel = 13 µm = 0.14″).
 
@@ -83,8 +85,10 @@ that fails or hangs does not hold the page up.
 
 With the opdb, the AG report is read on a thread of its own, at its own pace: the opdb's AG tables of the run
 (the observing period the latest visit is in, from the first visit's night on) once as the server starts —
-about 20 s for a run of 60,000 AG exposures — and from then on only the night under way, every 10 minutes
-(`agRun.AG_REFRESH`); a night that has ended is read a last time and kept. qadb's seeing and transparency are read
+about 20 s for a run of 60,000 AG exposures — and from then on only the night under way, every 2 minutes
+(`agRun.AG_REFRESH`), which is what the night page's AG tiles follow; the AG report itself, which is about the
+whole run and takes seconds to make, is made again at most every 10 minutes (`agRun.AG_REBUILD`). A night that
+has ended is read a last time and kept. qadb's seeing and transparency are read
 the same way, for the visits of each period as it is read, and nothing is read once the run has ended. A slow or failing opdb read leaves
 the AG page as it was (or saying it has not been read yet) and never holds up the other pages.
 

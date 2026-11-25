@@ -40,6 +40,7 @@ from pfs.qa.dashboard.runReport import _DATA, ReportCache, _fontFaces, _theme
 _log = logging.getLogger(__name__)
 
 __all__ = [
+    "AG_REBUILD",
     "AG_REFRESH",
     "AgReport",
     "AgRunCache",
@@ -47,12 +48,23 @@ __all__ = [
     "agRoutes",
     "agTables",
     "buildAgReport",
+    "buildNightTiles",
     "nightStart",
+    "nightTables",
     "snapshotTables",
 ]
 
-#: Seconds between reads of the night under way. The page is about the run, so it need not follow each exposure.
-AG_REFRESH = 600.0
+#: Seconds between reads of the night under way: what the night page's AG tiles follow.
+AG_REFRESH = 120.0
+
+#: Seconds, at least, between makings of the AG page. It is about the whole run and takes seconds to make,
+#: so it need not follow each read.
+AG_REBUILD = 600.0
+
+#: The tiles each page shows, in order (`_tiles`): the AG report's, the run report's block, and the night page's.
+_PAGE_TILES = ("cameras", "error", "jitter", "matched", "residual", "tooFew", "notUsed", "seeing", "flags")
+_RUN_TILES = ("cameras", "error", "jitter", "matched", "seeing", "flags")
+_NIGHT_TILES = ("cameras", "error", "jitter", "matched", "notUsed")
 
 #: What a snapshot's AG tables are called: ``agRun-<table>``.
 _PREFIX = "agRun-"
@@ -658,11 +670,22 @@ def _conditionsCharts(run: Any, tables: Mapping[str, pd.DataFrame]) -> str:
     return out
 
 
-def _tiles(summary: dict, flags: list, tables: Mapping[str, pd.DataFrame], brief: bool = False) -> str:
-    """Return the run's key numbers as tiles; ``brief`` keeps the few the run report shows."""
-    error, stars, loop = summary["guideError"], summary["matchedStars"], summary["guideLoop"]
+def _tiles(
+    summary: dict,
+    chosen: tuple[str, ...],
+    flags: list | None = None,
+    tables: Mapping[str, pd.DataFrame] | None = None,
+) -> str:
+    """Return key numbers as tiles: those of ``chosen`` that there is something to show for.
+
+    A visit is a science visit with settled guide offsets (drp_qa's `settledJitter`), of the run or of
+    the night the summary is of.
+    """
+    error, stars, loop = summary["guideError"]["sky"], summary["matchedStars"], summary["guideLoop"]
+    matched = summary["matchedFraction"]
     inUse = summary["camerasInUse"]
     unused = [f"AG{n}" for n in range(1, 7) if f"AG{n}" not in inUse]
+    tables = tables or {}
 
     def tile(label: str, big: str, sub: str, cls: str = "") -> str:
         return (
@@ -670,81 +693,115 @@ def _tiles(summary: dict, flags: list, tables: Mapping[str, pd.DataFrame], brief
             f"<span class='sub'>{sub}</span></div>"
         )
 
-    def pair(key: str) -> str:
-        return f"{_number(error['ra'][key], 3)}″ · {_number(error['dec'][key], 3)}″"
+    def arcsec(value: float) -> str:
+        return f"{_number(value, 2)}<span class='unit'>″</span>"
 
-    def both(key: str) -> str:
-        return f"<span class='two'>{pair(key)}</span>"
-
-    severe = sum(1 for flag in flags if flag.severe)
-    tiles = [
-        tile(
+    tiles = {
+        "cameras": tile(
             "Cameras in use",
             f"{len(inUse)} <span class='unit'>of 6</span>",
             (", ".join(unused) + " not in use") if unused else "all six detected stars",
             "warn" if unused else "",
         ),
-        tile(
-            "Guide error, size",
-            both("size"),
-            f"ΔRA · ΔDec, RMS per visit; ΔInR {_number(error['inr']['size'], 2)}″. "
-            f"95% of visits under {pair('size95')}",
+        "error": tile(
+            "Guide error",
+            arcsec(error["size"]),
+            f"RMS on the sky, median visit · {_number(error['size'] / _PIXEL_ARCSEC, 1)} AG pixels · "
+            f"95% of visits under {_number(error['size95'], 2)}″",
         ),
-        tile(
-            "Guide error, jitter",
-            both("jitter"),
-            f"ΔRA · ΔDec, frame to frame; ΔInR {_number(error['inr']['jitter'], 2)}″. "
-            f"95% of visits under {pair('jitter95')}",
+        "jitter": tile(
+            "Guide jitter",
+            arcsec(error["jitter"]),
+            f"frame to frame on the sky, median visit · 95% of visits under {_number(error['jitter95'], 2)}″",
         ),
-        tile(
-            "Matched stars",
-            f"{_number(stars['perExposure'], 0)} <span class='unit'>per AG exposure</span>",
-            "per camera: " + ", ".join(f"{name} {_number(n, 0)}" for name, n in stars["perCamera"].items()),
-        ),
-    ]
-    if not brief:
-        tiles += [
-            tile(
-                "Star position, measured − expected",
-                f"{_number(summary['residualUm']['median'], 1)} <span class='unit'>µm</span>",
-                f"= {_number(summary['residualUm']['median'] / _PIXEL_UM, 2)} AG pixels; "
-                f"95% of AG exposures under {_number(summary['residualUm']['p95'], 1)} µm",
-            ),
-            tile(
-                "Too few stars",
-                f"{_number(stars['underMinimumPct'], 2)}<span class='unit'>%</span>",
-                "of science AG exposures matched fewer than 3 stars; "
-                f"5% of them matched {_number(stars['p5'], 0)} or fewer",
-            ),
-            tile(
-                "Guide offsets not used",
-                f"{loop['rejected']} <span class='unit'>rejected</span>",
-                f"and {loop['noOffset']} never written, of {summary['exposures']:,} AG exposures",
-                "fail" if loop["rejected"] else "",
-            ),
-        ]
-    seeing, transparency = _nightly(tables.get("seeing")), _nightly(tables.get("transparency"))
-    if len(seeing):
-        values = tables["seeing"]["value"]
-        sub = "median AG FWHM of the run's AG exposures"
-        if len(transparency):
-            sub += f"; transparency {tables['transparency']['value'].median():.2f}"
-        tiles.append(tile("Seeing", f"{values.median():.2f}<span class='unit'>″</span>", sub))
-    elif not brief:
-        tiles.append(
-            tile(
-                "FWHM of matched stars", f"{_number(summary['fwhm'], 2)}<span class='unit'>″</span>", "median"
-            )
+    }
+    if np.isfinite(matched["median"]):
+        tiles["matched"] = tile(
+            "Guide stars matched",
+            f"{_number(100 * matched['median'], 0)}<span class='unit'>%</span>",
+            "of the designed guide stars on the cameras in use, median visit · 5% of visits under "
+            f"{_number(100 * matched['p5'], 0)}%",
         )
-    tiles.append(
-        tile(
+    tiles["residual"] = tile(
+        "Star position, measured − expected",
+        f"{_number(summary['residualUm']['median'], 1)} <span class='unit'>µm</span>",
+        f"= {_number(summary['residualUm']['median'] / _PIXEL_UM, 2)} AG pixels; "
+        f"95% of AG exposures under {_number(summary['residualUm']['p95'], 1)} µm",
+    )
+    tiles["tooFew"] = tile(
+        "Too few stars",
+        f"{_number(stars['underMinimumPct'], 2)}<span class='unit'>%</span>",
+        "of science AG exposures matched fewer than 3 stars",
+    )
+    tiles["notUsed"] = tile(
+        "Guide offsets not used",
+        f"{loop['rejected']} <span class='unit'>rejected</span>",
+        f"and {loop['noOffset']} never written, of {summary['exposures']:,} AG exposures",
+        "fail" if loop["rejected"] else "",
+    )
+    seeing, transparency = tables.get("seeing"), tables.get("transparency")
+    if seeing is not None and len(seeing):
+        sub = "median AG FWHM of the run's AG exposures"
+        if transparency is not None and len(transparency):
+            sub += f"; transparency {transparency['value'].median():.2f}"
+        tiles["seeing"] = tile("Seeing", arcsec(seeing["value"].median()), sub)
+    elif "residual" in chosen:
+        tiles["seeing"] = tile("FWHM of matched stars", arcsec(summary["fwhm"]), "median")
+    if flags is not None:
+        severe = sum(1 for flag in flags if flag.severe)
+        tiles["flags"] = tile(
             "Flags",
             f"{severe} <span class='unit'>fault{'' if severe == 1 else 's'}</span>",
             f"and {len(flags) - severe} to look at",
             "fail" if severe else "",
         )
+    return f"<div class='tiles'>{''.join(tiles[name] for name in chosen if name in tiles)}</div>"
+
+
+def nightTables(tables: Mapping[str, pd.DataFrame], night: str) -> dict[str, pd.DataFrame]:
+    """Return the rows of a run's AG tables that belong to one night (its evening's date, ``YYYY-MM-DD``).
+
+    The ``grid`` is left out: the night page's numbers do not use it.
+    """
+    from pfs.drp.qa.guiders.runAnalysis import nightOf
+
+    when = pd.Timestamp(night)
+    exposures = tables["exposures"]
+    exposures = exposures[nightOf(exposures["taken_at"]) == when]
+    visits = set(exposures["pfs_visit_id"])
+    out = {"exposures": exposures, "designStars": tables["designStars"]}
+    cameras, focus = tables["cameras"], tables["focus"]
+    out["cameras"] = cameras[cameras["agc_exposure_id"].isin(exposures["agc_exposure_id"])]
+    out["visits"] = tables["visits"][tables["visits"]["pfs_visit_id"].isin(visits)]
+    out["focus"] = focus[nightOf(focus["created_at"]) == when]
+    if "magnitudes" in tables:
+        out["magnitudes"] = tables["magnitudes"][tables["magnitudes"]["pfs_visit_id"].isin(visits)]
+    return out
+
+
+def buildNightTiles(tables: Mapping[str, pd.DataFrame], night: str, agUrl: str = "/run/ag") -> str:
+    """Return one night's auto-guiding as a row of tiles, for the night page; ``""`` when there is nothing to show.
+
+    The same numbers as the AG report's tiles (`pfs.drp.qa.guiders.runAnalysis.runSummary`), over the
+    night's AG exposures alone.
+    """
+    from pfs.drp.qa.guiders import runAnalysis
+
+    exposures = tables.get("exposures")
+    if exposures is None or exposures.empty or not night:
+        return ""
+    run = runAnalysis.prepareRun(nightTables(tables, night))
+    if not len(run.plottedNights):
+        return ""
+    summary = runAnalysis.runSummary(run, runAnalysis.settledJitter(run))
+    return (
+        "<section class='block' id='ag'>"
+        f"<p class='meta'>Auto-guiding this night, from {summary['exposures']:,} AG exposures and "
+        f"{summary['settledVisits']} science visits · "
+        f"<a href='{html.escape(agUrl)}'>the run's AG report</a></p>"
+        + _tiles(summary, _NIGHT_TILES)
+        + "</section>"
     )
-    return f"<div class='tiles'>{''.join(tiles)}</div>"
 
 
 @dataclass
@@ -981,7 +1038,9 @@ def buildAgReport(
         )
         + "</ul></section>"
     )
-    report.html = _page(title, runUrl, meta, _tiles(summary, flags, tables) + "".join(sections) + notes)
+    report.html = _page(
+        title, runUrl, meta, _tiles(summary, _PAGE_TILES, flags, tables) + "".join(sections) + notes
+    )
 
     severe = [flag for flag in flags if flag.severe]
     report.summary = (
@@ -989,7 +1048,7 @@ def buildAgReport(
         f"<p>The guide cameras and the guide loop over the run, from {summary['exposures']:,} AG exposures on "
         f"{summary['nights']} nights. <a href='{html.escape(agUrl)}'>The AG report</a> has each camera, the "
         "guide error of every science visit, focus and acquisition.</p>"
-        + _tiles(summary, flags, tables, brief=True)
+        + _tiles(summary, _RUN_TILES, flags, tables)
         + (flagList(severe) if severe else "")
         + "</details>"
     )
@@ -1010,9 +1069,12 @@ class AgRunCache(ReportCache):
         What `buildAgReport` takes besides the tables.
     """
 
-    def __init__(self, store: AgRunStore, **options: Any):
+    def __init__(self, store: AgRunStore, rebuildEvery: float = AG_REBUILD, **options: Any):
         super().__init__(store, pages={"ag": (buildAgReport, options)})
         self._options = options
+        self._rebuildEvery = rebuildEvery
+        self._madeAt: float | None = None
+        self._nightTiles: dict[tuple[int, str], str] = {}
 
     def pageFor(self, name: str = "ag") -> str:
         """Return the page made last; before the first read has worked, a page that says so (it reads nothing)."""
@@ -1022,14 +1084,20 @@ class AgRunCache(ReportCache):
         return super().pageFor(name)
 
     def update(self) -> bool:
-        """Read the opdb for what is new and make the page again if anything changed; return whether it did."""
+        """Read the opdb for what is new, and make the page again if it is due; return whether it was made.
+
+        The store is read every time (the night page's tiles follow it); the page, which is about the
+        whole run, is made again when a read has brought something new and at least ``rebuildEvery``
+        seconds have passed since it was last made.
+        """
         with self._lock:
             self._timings = {}
             mark = time.monotonic()
             self.store.refresh()
             mark, self._timings["opdb"] = time.monotonic(), time.monotonic() - mark
             version = self.store.version
-            changed = not self.reports or self._version != version
+            due = self._madeAt is None or mark - self._madeAt >= self._rebuildEvery
+            changed = not self.reports or (self._version != version and due)
             if changed:
                 self.reports = {
                     name: builder(self.store.tables, **options)
@@ -1037,10 +1105,29 @@ class AgRunCache(ReportCache):
                 }
                 self.built += 1
                 self._version = version
+                self._madeAt = mark
             self._timings["rebuild"] = time.monotonic() - mark
             self.readAt = datetime.now(HST)
             self.error = None
             return changed
+
+    def nightTiles(self, night: str) -> str:
+        """Return a night's AG tiles for the night page, from the tables last read; ``""`` when there are none.
+
+        It reads nothing. A night's tiles are kept until the next read that brings something new; a
+        failure to make them is logged and leaves the night page without them.
+        """
+        key = (self.store.version, night)
+        if key not in self._nightTiles:
+            try:
+                tiles = buildNightTiles(self.store.tables, night, self._options.get("agUrl", "/run/ag"))
+            except Exception:
+                _log.exception("Making the AG tiles of %s failed; leaving them out", night)
+                tiles = ""
+            # Only this read's are worth keeping.
+            self._nightTiles = {k: v for k, v in self._nightTiles.items() if k[0] == key[0]}
+            self._nightTiles[key] = tiles
+        return self._nightTiles[key]
 
     @property
     def summary(self) -> str:

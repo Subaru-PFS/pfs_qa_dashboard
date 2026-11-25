@@ -302,6 +302,7 @@ def pages(
     readListing=None,
     readNormalValues=None,
     agSummary="",
+    agTiles=None,
 ) -> dict:
     """Return the pages a `ReportCache` builds: the night page (``/``) and the run report (``/run``).
 
@@ -309,7 +310,8 @@ def pages(
     seeing from qadb for the night page's Conditions tile; None (a snapshot, or no live qadb) omits that metric.
     ``readListing(start, end)`` and ``readNormalValues()`` feed the run report's calibration-set section, read
     each build so it stays current; None omits it. ``agSummary`` is the run report's auto-guiding block, or
-    what returns it (an `pfs.qa.dashboard.agRun.AgRunCache`'s); empty omits it.
+    what returns it, and ``agTiles(night)`` the night page's auto-guiding tiles (both an
+    `pfs.qa.dashboard.agRun.AgRunCache`'s); empty or None omits them.
     """
     from pfs.qa.dashboard.nightReport import buildNightReport
     from pfs.qa.dashboard.runReport import buildReport
@@ -323,6 +325,7 @@ def pages(
                 "runUrl": "/run",
                 "readTransparency": readTransparency,
                 "readSeeing": readSeeing,
+                "agTiles": agTiles,
             },
         ),
         "report": (
@@ -518,6 +521,7 @@ def serve(args: argparse.Namespace) -> None:
                 readListing,
                 readNormalValues,
                 agSummary=(lambda: agCache.summary) if agCache is not None else "",
+                agTiles=agCache.nightTiles if agCache is not None else None,
             ),
         )
         cache.update()
@@ -542,7 +546,12 @@ def serve(args: argparse.Namespace) -> None:
         cache = ReportCache(
             store,
             info=infoFromTables(tables),
-            pages=pages(args, source, agSummary=agCache.summary if agCache is not None else ""),
+            pages=pages(
+                args,
+                source,
+                agSummary=agCache.summary if agCache is not None else "",
+                agTiles=agCache.nightTiles if agCache is not None else None,
+            ),
         )
         cache.update()
 
@@ -584,7 +593,13 @@ def serve(args: argparse.Namespace) -> None:
             for name in ("iqQaMetrics", "dmLineResidualSummary", "dmLineResidualMetrics", "qaGate")
         }
         return buildNightReport(
-            tables, info=cache.info, title=args.title, source=source, night=date, runUrl="/run"
+            tables,
+            info=cache.info,
+            title=args.title,
+            source=source,
+            night=date,
+            runUrl="/run",
+            agTiles=agCache.nightTiles if agCache is not None else None,
         ).html
 
     mounts = {"/": "night", "/run": "report"}
