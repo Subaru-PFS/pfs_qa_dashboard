@@ -339,7 +339,7 @@ def testPageShowsTheRunAsDrpQaReportsIt():
     assert "<svg class='agplot" in page and "<svg" not in report.summary
     # Negative control: without qadb's conditions there is no such section, and no seeing tile.
     plain = buildAgReport(agRunTables()).html
-    assert "Seeing and transparency" not in plain and "<span class='lab'>Seeing</span>" not in plain
+    assert "Seeing and transparency" not in plain and "<span class='lab'>Seeing (AG FWHM)</span>" not in plain
 
 
 def testACameraNotInUseIsNamedAndNotDrawn():
@@ -485,24 +485,29 @@ def testTilesSayOneThingEach():
     assert labels == [
         "Cameras in use",
         "Guide error",
-        "Guide jitter",
-        "Guide stars matched",
-        "Star position error",
-        "Too few stars",
+        "Frame-to-frame jitter",
+        "Designed guide stars matched",
+        "Star position, measured − expected",
+        "AG exposures with under 3 stars",
         "Guide offsets not used",
         "FWHM of matched stars",
         "Flags",
     ]
     # Every star designed on the five cameras in use is matched in every AG exposure.
-    assert "<span class='big'>100<span class='unit'>%</span></span>" in report.html
-    assert "<li>of designed stars</li>" in report.html
+    assert "<span class='big'>100<span class='unit'>% median visit</span></span>" in report.html
     # The guide error is one value in arcsec, said in AG pixels too.
-    assert re.search(r"Guide error</span><span class='big'>0\.0\d<span class='unit'>″</span>", report.html)
     assert re.search(
-        r"<ul class='facts'><li>median visit</li><li><b>0\.\d</b> AG px</li>"
-        r"<li>95% &lt; <b>0\.\d\d″</b></li></ul>",
+        r"Guide error</span><span class='big'>0\.0\d<span class='unit'>″ median visit</span>", report.html
+    )
+    assert re.search(
+        r"<ul class='facts'><li><b>0\.\d</b> AG pixels</li>"
+        r"<li>95% of visits under <b>0\.\d\d″</b></li></ul>",
         report.html,
     )
+    # A bullet is a fact of its own (another unit, or the spread), never a piece of what the number is.
+    facts = re.findall(r"<li>(.*?)</li>", report.html.split("<div class='tiles'>")[1].split("<details")[0])
+    assert all("<b>" in fact or fact == "of the science AG exposures" for fact in facts)
+    assert "<li>median visit</li>" not in report.html and "<li>of designed stars</li>" not in report.html
     # A tile carries no sentence: what it is, in full, is on its hover text.
     tiles = report.html.split("<div class='tiles'>")[1].split("<details")[0]
     assert "class='sub'" not in tiles and tiles.count("title='") == len(labels)
@@ -511,14 +516,14 @@ def testTilesSayOneThingEach():
     assert re.findall(r"<span class='lab'>([^<]*)</span>", report.summary) == [
         "Cameras in use",
         "Guide error",
-        "Guide jitter",
-        "Guide stars matched",
+        "Frame-to-frame jitter",
+        "Designed guide stars matched",
         "Flags",
     ]
     # Negative control: a read without the designed guide stars has no such tile.
     older = agRunTables()
     del older["magnitudes"]
-    assert "Guide stars matched" not in buildAgReport(older).html
+    assert "Designed guide stars matched" not in buildAgReport(older).html
 
 
 def testNightTilesAreOneNightsOwn():
@@ -535,8 +540,8 @@ def testNightTilesAreOneNightsOwn():
     assert re.findall(r"<span class='lab'>([^<]*)</span>", first) == [
         "Cameras in use",
         "Guide error",
-        "Guide jitter",
-        "Guide stars matched",
+        "Frame-to-frame jitter",
+        "Designed guide stars matched",
         "Guide offsets not used",
     ]
     assert (
@@ -574,7 +579,7 @@ def testTheNightPageCarriesTheNightsAgTiles():
 
     page = buildNightReport(tables, info=info, agTiles=agTiles).html
     assert asked == ["2026-11-03"]
-    assert "Auto-guiding this night, from 90 AG exposures" in page and "Guide stars matched" in page
+    assert "Auto-guiding this night, from 90 AG exposures" in page and "Designed guide stars matched" in page
     # They follow the page's own tiles.
     assert page.index("Auto-guiding this night") > page.index('<div class="tiles">')
     # Negative control: without them the page has no such row, and no placeholder left.
