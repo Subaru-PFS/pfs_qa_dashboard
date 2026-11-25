@@ -38,8 +38,8 @@ three share one stylesheet (`data/theme.css`). A visit takes the worst verdict a
 
 - **The AG report** (`/run/ag`) — how the guide cameras and the guide loop did over the run: drp_qa's
   end-of-run AG report (`drpQa.py agReport`, `pfs.drp.qa.guiders.runAnalysis`) as a page. It opens with the
-  run's key numbers (the cameras in use; the guide error on the sky, the RMS of a visit's settled guide offsets,
-  and its frame-to-frame jitter; the share of the designed guide stars on the cameras in use that were matched,
+  run's key numbers (the cameras in use; the guide error on the sky, the RMS of a visit's guide offsets with the
+  shutters open, and its frame-to-frame jitter; the share of the designed guide stars on the cameras in use that were matched,
   per visit; how far the matched stars were from where the guider expected them; the guide offsets rejected or
   never written; the seeing) and what the analysis flags,
   then the camera states hour by hour (matched, no detections, detections but no match, disabled), every

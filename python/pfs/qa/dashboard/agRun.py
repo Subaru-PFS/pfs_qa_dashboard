@@ -450,7 +450,7 @@ _STATE_LEGEND = (
 
 
 def _guidingCharts(run: Any, jitter: pd.DataFrame) -> str:
-    """Return each science visit's settled guide error: per axis, its size and its jitter against the nights."""
+    """Return each science visit's guide error: per axis, its size and its jitter against the nights."""
     from pfs.drp.qa.guiders.runAnalysis import nightPosition
 
     nights = run.plottedNights
@@ -678,7 +678,7 @@ def _tiles(
 ) -> str:
     """Return key numbers as tiles: those of ``chosen`` that there is something to show for.
 
-    A visit is a science visit with settled guide offsets (drp_qa's `settledJitter`), of the run or of
+    A visit is a science visit measured with its shutters open (drp_qa's `visitGuideErrors`), of the run or of
     the night the summary is of.
     """
     error, stars, loop = summary["guideError"]["sky"], summary["matchedStars"], summary["guideLoop"]
@@ -718,29 +718,33 @@ def _tiles(
             "The cameras that detected anything in these AG exposures.",
             "warn" if unused else "",
         ),
-        "error": tile(
+    }
+    # With no visit measured (a read with no shutter times), there is no guide error to show.
+    if summary["measuredVisits"]:
+        tiles["error"] = tile(
             "Guide error",
             value(_number(error["size"], 2), "″"),
             [
                 f"<b>{_number(error['size'] / _PIXEL_ARCSEC, 1)}</b> AG pixels",
                 f"95% of visits under <b>{_number(error['size95'], 2)}″</b>",
             ],
-            "The RMS of a science visit's settled guide offsets on the sky (ΔRA and ΔDec together), one value "
-            "a visit: the median of those values, and the value 95% of visits are under.",
-            of=medianOf(summary["settledVisits"]),
-        ),
-        "jitter": tile(
+            "The RMS of a science visit's guide offsets on the sky (ΔRA and ΔDec together) in the AG exposures "
+            "taken with the shutters open, one value a visit: the median of those values, and the value 95% of "
+            "visits are under.",
+            of=medianOf(summary["measuredVisits"]),
+        )
+        tiles["jitter"] = tile(
             "Frame-to-frame jitter",
             value(_number(error["jitter"], 2), "″"),
             [
                 f"<b>{_number(error['jitter'] / _PIXEL_ARCSEC, 1)}</b> AG pixels",
                 f"95% of visits under <b>{_number(error['jitter95'], 2)}″</b>",
             ],
-            "How much a science visit's guide offset on the sky moves from one AG exposure to the next, one "
-            "value a visit: the median of those values, and the value 95% of visits are under.",
-            of=medianOf(summary["settledVisits"]),
-        ),
-    }
+            "How much a science visit's guide offset on the sky moves from one AG exposure to the next, with "
+            "the shutters open, one value a visit: the median of those values, and the value 95% of visits are "
+            "under.",
+            of=medianOf(summary["measuredVisits"]),
+        )
     if np.isfinite(matched["median"]):
         tiles["matched"] = tile(
             "Designed guide stars matched",
@@ -848,11 +852,11 @@ def buildNightTiles(tables: Mapping[str, pd.DataFrame], night: str, agUrl: str =
     run = runAnalysis.prepareRun(nightTables(tables, night))
     if not len(run.plottedNights):
         return ""
-    summary = runAnalysis.runSummary(run, runAnalysis.settledJitter(run))
+    summary = runAnalysis.runSummary(run, runAnalysis.visitGuideErrors(run))
     return (
         "<section class='block' id='ag'>"
         f"<p class='meta'>Auto-guiding this night, from {summary['exposures']:,} AG exposures and "
-        f"{summary['settledVisits']} science visits · "
+        f"{summary['scienceVisits']} science visits · "
         f"<a href='{html.escape(agUrl)}'>the run's AG report</a></p>"
         + _tiles(summary, _NIGHT_TILES)
         + "</section>"
@@ -968,7 +972,7 @@ def buildAgReport(
     if not len(run.plottedNights):
         return AgReport(_empty(title, runUrl, "No night of this run has enough AG exposures to report yet."))
     config = run.config
-    jitter = runAnalysis.settledJitter(run)
+    jitter = runAnalysis.visitGuideErrors(run)
     dropouts = runAnalysis.findDropouts(run)
     clusters = runAnalysis.findRejectionClusters(run)
     modelErrors = runAnalysis.fitModelErrors(run)

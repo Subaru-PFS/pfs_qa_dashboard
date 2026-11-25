@@ -31,7 +31,8 @@ START = NIGHT + pd.Timedelta(hours=12)
 def agRunTables(nights=2, visits=3, exposures=30, dead=(), seed=3):
     """Return the tables of drp_qa's ``readAgRun`` for a small run: science visits from 20:00 HST each night.
 
-    Every camera but those of ``dead`` detects 8 spots, 6 of them good matches, in every AG exposure
+    Each visit's spectrograph shutters are open throughout its AG exposures. Every camera but those of
+    ``dead`` detects 8 spots, 6 of them good matches, in every AG exposure
     (10 s apart); the guide offsets are noise of 0.05″ (1″ in rotation).
     """
     rng = np.random.default_rng(seed)
@@ -41,7 +42,7 @@ def agRunTables(nights=2, visits=3, exposures=30, dead=(), seed=3):
         when = NIGHT + pd.Timedelta(days=night, hours=20)
         for index in range(visits):
             visit = 153000 + 10 * night + index
-            visitRows.append((visit, 77, 0.0, 9000 + visit, "scienceObject"))
+            opened = when + pd.Timedelta(seconds=9)
             for _ in range(exposures):
                 aid += 1
                 when += pd.Timedelta(seconds=10)
@@ -68,6 +69,8 @@ def agRunTables(nights=2, visits=3, exposures=30, dead=(), seed=3):
                         continue
                     for half, sigma in ((0, 2.0), (1, 2.2)):
                         cameraRows.append((aid, camera, half, 4, 3, sigma, 100.0, 12.0, 0, 1, 0, 0, 0, 0))
+            closed = when + pd.Timedelta(seconds=5)
+            visitRows.append((visit, 77, 0.0, 9000 + visit, "scienceObject", opened, closed))
             for camera in range(6):
                 magnitudeRows.append(
                     (visit, camera, 15.0, 2 * exposures, 0 if camera in dead else 2 * exposures)
@@ -102,6 +105,8 @@ def agRunTables(nights=2, visits=3, exposures=30, dead=(), seed=3):
                 "dec_center_designed",
                 "iic_sequence_id",
                 "sequence_type",
+                "shutter_open",
+                "shutter_close",
             ],
         ),
         "focus": pd.DataFrame(
@@ -505,6 +510,18 @@ def testEachPageShowsItsTiles():
     older = agRunTables()
     del older["magnitudes"]
     assert "matched" not in tileNames(buildAgReport(older).html)
+
+
+def testAReadWithNoShutterTimesShowsNoGuideError():
+    """A snapshot made before the shutter times were read still makes its page, without a guide error."""
+    older = agRunTables()
+    older["visits"] = older["visits"].drop(columns=["shutter_open", "shutter_close"])
+    report = buildAgReport(older)
+
+    assert "cameras" in tileNames(report.html) and "matched" in tileNames(report.html)
+    assert "error" not in tileNames(report.html) and "jitter" not in tileNames(report.html)
+    # Negative control: read with them, the same run has both.
+    assert {"error", "jitter"} <= set(tileNames(buildAgReport(agRunTables()).html))
 
 
 def testNightTilesAreOneNightsOwn():
