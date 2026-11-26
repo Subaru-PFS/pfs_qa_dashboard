@@ -10,33 +10,28 @@ or the Python API.
 
 ### Added
 
-- **The AG report, `/run/ag`** (INSTRM-3073): the run's auto-guiding as a page of its own — drp_qa's end-of-run
-  AG report (`drpQa.py agReport`) drawn for the dashboard. The run's key numbers (cameras in use, the guide
-  error on the sky and its jitter, the share of designed guide stars matched per visit, star-position residual,
-  guide offsets not used, seeing)
-  and the analysis's flags come first; then the camera states hour by hour, every science visit's guide error
-  on ΔRA, ΔDec and ΔInR (each visit a point linked to its `/visit/<n>` page), focus, acquisition, each night's
-  seeing and transparency from qadb, and a section per camera (AG1/3/5 then AG2/4/6) with drp_qa's own figure
-  (`/run/ag/camera/AG<n>.png`). Every section has drp_qa's caption of what it shows, and every chart a legend. Needs the opdb
+- **The AG report, `/run/ag`** (INSTRM-3073): drp_qa's end-of-run AG report as a page. Needs the opdb
   (`--opdb-host`) or a snapshot made with it, and drp_qa 0.19.0.
-- **Auto-guiding on the run report** (INSTRM-3073): `/run` carries a block of the same — the headline numbers
-  and the faults — that links to the AG report.
-- **Auto-guiding on the night page** (INSTRM-3073): the night page (`/`, and `/night/<date>`) carries a row
-  of the same tiles for that night's AG exposures alone: cameras in use, guide error, jitter, guide stars
-  matched and guide offsets not used.
-- `report` writes the AG report beside the run report (`<name>-ag.html`), and `snapshot` keeps the run's AG
-  tables (`agRun-*.parquet`) with qadb's seeing and transparency, so `serve --snapshot` has the page too.
+  - Key numbers and flags first.
+  - Camera states, each science visit's guide error (a point links to its `/visit/<n>`), focus, acquisition,
+    and each night's seeing and transparency from qadb.
+  - The six detectors on the PFI (`/run/ag/focalPlane.png`) and a figure per camera
+    (`/run/ag/camera/AG<n>.png`), both drp_qa's.
+  - drp_qa's caption on every section, and a legend on every chart.
+- **Auto-guiding on the run report** (INSTRM-3073): `/run` carries a block of the headline numbers and the
+  faults, linking to the AG report.
+- **Auto-guiding on the night page** (INSTRM-3073): `/` and `/night/<date>` carry the same tiles for that
+  night alone.
+- `report` writes `<name>-ag.html` beside the run report; `snapshot` keeps the AG tables (`agRun-*.parquet`)
+  and qadb's seeing and transparency.
 
 ### Changed
 
-- **A night begins at 14:00 HST, not noon** (INSTRM-3073): the night a visit belongs to, on every page and both
-  clocks, rolls over at 14:00 HST, which is 00:00 UTC, when the date in the raw files' names changes; it is
-  still named by its HST evening's date. Frames taken between 12:00 and 14:00 HST (mostly the darks that follow
-  a night) move to the night before, and the whole-day clock runs from 14:00. The hour is drp_qa's
-  `comparison.runs.NIGHT_START`. Needs drp_qa 0.19.0.
-- The live server reads the opdb's AG tables as it starts (about 20 s for a full run), then only the night
-  under way every 2 minutes, on a thread of its own: a slow opdb never holds up the other pages. The AG report
-  is made again at most every 10 minutes.
+- **A night begins at 14:00 HST (00:00 UTC), not noon** (INSTRM-3073): on every page and both clocks; a night
+  is still named by its HST evening's date. Needs drp_qa 0.19.0.
+- The live server reads the opdb's AG tables once as it starts (about 20 s for a full run), then only the
+  night under way every 2 minutes, on a thread of its own. The AG report is made again at most every 10
+  minutes.
 
 ## [0.18.0] - 2026-11-23
 

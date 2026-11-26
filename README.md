@@ -45,8 +45,9 @@ three share one stylesheet (`data/theme.css`). A visit takes the worst verdict a
   then the camera states hour by hour (matched, no detections, detections but no match, disabled), every
   science visit's guide error, focus, acquisition, each night's seeing and transparency from qadb, and a
   section per camera, AG1/3/5 then AG2/4/6. Each section carries drp_qa's caption of what it shows. The
-  run-wide charts are drawn inline, each visit a point that links to its `/visit/<n>` page; a camera's figure
-  is drp_qa's own, drawn as a PNG when it is asked for (`/run/ag/camera/AG<n>.png`). The run report carries a
+  run-wide charts are drawn inline, each visit a point that links to its `/visit/<n>` page; the figures of the
+  cameras (the six detectors on the PFI, then one per camera) are drp_qa's own, drawn as PNGs when they are
+  asked for (`/run/ag/focalPlane.png`, `/run/ag/camera/AG<n>.png`). The run report carries a
   short **Auto-guiding** block of the same — the headline numbers and the faults — that links to it, and the
   night page a row of the same tiles for that night's AG exposures alone (`agRun.buildNightTiles`). The dashboard measures nothing here: the numbers, flags and captions are
   drp_qa's, read from the opdb's AG tables, so the page needs the opdb (`--opdb-host`) or a snapshot made

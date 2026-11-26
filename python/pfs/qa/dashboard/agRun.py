@@ -8,7 +8,7 @@ report (``/run``) carries a short block of the same (`AgReport.summary`) that li
 
 The dashboard measures nothing of its own here. The numbers, the flags and each figure's caption are
 drp_qa's (`runSummary`, `findFlags`, `runPlotting.captions`); the run-wide charts are drawn inline as
-SVG from the same analysis, and each camera's figure is drp_qa's own (`runPlotting.plotCamera`),
+SVG from the same analysis, and the figures of the cameras are drp_qa's own (`runPlotting.plotFocalPlane`, `plotCamera`),
 rendered as a PNG when it is asked for. Seeing and transparency are what qadb holds
 (`pfs.qa.dashboard.agConditions`).
 
@@ -19,6 +19,7 @@ other pages. A snapshot keeps the tables (`snapshotTables`), for serving or writ
 """
 
 import base64
+import functools
 import html
 import io
 import logging
@@ -76,7 +77,7 @@ CONDITIONS = ("seeing", "transparency")
 #: The size of an AG pixel: microns, and arcsec on the sky.
 _PIXEL_UM, _PIXEL_ARCSEC = 13.0, 0.14
 
-#: Dots per inch of a camera's figure (drp_qa's `plotCamera`); `_cameraPx` gives its size in pixels.
+#: Dots per inch of drp_qa's figures (`plotCamera`, `plotFocalPlane`); `_figurePx` gives their size in pixels.
 _DPI = 110
 
 #: Geometry of the charts drawn against the run's nights (an SVG viewBox, scaled to the space it is given):
@@ -458,11 +459,9 @@ _VISIT_KEYS = (
 _OFF_SCALE_KEY = "<span><i class='key off'></i>beyond the scale, marked at its edge</span>"
 
 
-def _cameraPx() -> tuple[int, int]:
-    """Return the size (pixels) of a camera's figure as `_renderCamera` draws it."""
-    from pfs.drp.qa.guiders.runPlotting import CAMERA_FIGURE_IN
-
-    return round(CAMERA_FIGURE_IN[0] * _DPI), round(CAMERA_FIGURE_IN[1] * _DPI)
+def _figurePx(inches: tuple[float, float]) -> tuple[int, int]:
+    """Return the size (pixels) of one of drp_qa's figures as `_render` draws it."""
+    return round(inches[0] * _DPI), round(inches[1] * _DPI)
 
 
 def _guidingCharts(run: Any, jitter: pd.DataFrame) -> str:
@@ -918,24 +917,37 @@ class AgReport:
 
         None when there is none: no such camera, no run, or a camera not in use, which has nothing to draw.
         """
+        from pfs.drp.qa.guiders.runPlotting import plotCamera
+
         if self.run is None or camera - 1 not in self.run.inUse:
             return None
         with self._lock:
             if camera not in self._images:
-                self._images[camera] = _renderCamera(self.run, camera - 1, self.clusters, self.modelErrors)
+                self._images[camera] = _render(
+                    plotCamera, self.run, camera - 1, self.clusters, self.modelErrors
+                )
             return self._images[camera]
 
+    def focalPlanePng(self) -> bytes | None:
+        """Return the figure of the six detectors on the PFI as PNG bytes, drawn once; None when there is no run."""
+        from pfs.drp.qa.guiders.runPlotting import plotFocalPlane
 
-def _renderCamera(run: Any, cid: int, clusters: pd.DataFrame, modelErrors: pd.DataFrame) -> bytes:
-    """Draw one camera's figure (drp_qa's `plotCamera`) and return it as PNG bytes."""
-    from pfs.drp.qa.guiders.runPlotting import plotCamera
+        if self.run is None:
+            return None
+        with self._lock:
+            if 0 not in self._images:
+                self._images[0] = _render(plotFocalPlane, self.run, self.modelErrors)
+            return self._images[0]
 
+
+def _render(plot: Callable[..., Any], *args: Any) -> bytes:
+    """Draw one of drp_qa's figures (``plot(*args)``) and return it as PNG bytes."""
     # matplotlib isn't thread-safe: one lock for every figure the server draws.
     from pfs.qa.dashboard.visitResiduals import _RENDER_LOCK
 
     with _RENDER_LOCK:
         buffer = io.BytesIO()
-        plotCamera(run, cid, clusters, modelErrors).savefig(buffer, format="png", dpi=_DPI)
+        plot(*args).savefig(buffer, format="png", dpi=_DPI)
         return buffer.getvalue()
 
 
@@ -986,8 +998,8 @@ def buildAgReport(
     runUrl, agUrl : `str`
         Where the run report and this page are served (or, written as files, what they are called).
     embed : `bool`
-        Put each camera's figure in the page itself, for a page written as a file; otherwise the
-        page asks for ``<agUrl>/camera/AG<n>.png`` (`agRoutes`).
+        Put the cameras' figures in the page itself, for a page written as a file; otherwise the
+        page asks for ``<agUrl>/focalPlane.png`` and ``<agUrl>/camera/AG<n>.png`` (`agRoutes`).
     """
     from pfs.drp.qa.guiders import runAnalysis
     from pfs.drp.qa.guiders.runPlotting import CAMERA_ORDER, GROUPS_NOTE, captions
@@ -1024,8 +1036,25 @@ def buildAgReport(
             f"<details class='block' open{ident}><summary><h2>{heading}</h2></summary>{text}{body}</details>"
         )
 
+    from pfs.drp.qa.guiders.runPlotting import CAMERA_FIGURE_IN, FOCAL_PLANE_FIGURE_IN
+
+    def figure(src: str, data: Callable[[], bytes | None], inches: tuple[float, float], alt: str) -> str:
+        """Return a figure of drp_qa's as an image linked to itself: held in the page, or asked for by it."""
+        if embed:
+            src = "data:image/png;base64," + base64.b64encode(data() or b"").decode("ascii")
+        width, height = _figurePx(inches)
+        return (
+            f"<a class='camera' href='{src}'><img loading='lazy' width='{width}' height='{height}' "
+            f"alt='{alt}' src='{src}'></a>"
+        )
+
+    focalPlane = figure(
+        f"{agUrl}/focalPlane.png",
+        report.focalPlanePng,
+        FOCAL_PLANE_FIGURE_IN,
+        "The six AG detectors on the PFI",
+    )
     cameras = []
-    cameraPx = _cameraPx()
     for cid in CAMERA_ORDER:
         own = [flag for flag in flags if flag.agc_camera_id == cid]
         name = f"AG{cid + 1}"
@@ -1033,15 +1062,14 @@ def buildAgReport(
             # Nothing to draw: the flag says it is not in use.
             cameras.append(f"<h3 id='{name}'>{name}</h3>{flagList(own)}")
             continue
-        if embed:
-            data = base64.b64encode(report.cameraPng(cid + 1) or b"").decode("ascii")
-            src = f"data:image/png;base64,{data}"
-        else:
-            src = f"{agUrl}/camera/{name}.png"
         cameras.append(
             f"<h3 id='{name}'>{name}</h3>{flagList(own)}"
-            f"<a class='camera' href='{src}'><img loading='lazy' width='{cameraPx[0]}' height='{cameraPx[1]}' "
-            f"alt='{name} over the run' src='{src}'></a>"
+            + figure(
+                f"{agUrl}/camera/{name}.png",
+                functools.partial(report.cameraPng, cid + 1),
+                CAMERA_FIGURE_IN,
+                f"{name} over the run",
+            )
         )
     populations = (
         run.frames.groupby("population")
@@ -1088,10 +1116,17 @@ def buildAgReport(
     sections.append(
         section(
             "Cameras",
-            _table(runAnalysis.cameraSummary(run, clusters, modelErrors)) + "".join(cameras),
-            caption["camera"]
-            + " A rejected match is a detection paired with a guide star but not counted as a good match. "
-            "Directions are on the detector: 0° = +x, 90° = +y.",
+            focalPlane
+            + "<h3>Each camera</h3><p>"
+            + html.escape(
+                caption["camera"]
+                + " A rejected match is a detection paired with a guide star but not counted as a good match. "
+                "Directions are on the detector: 0° = +x, 90° = +y."
+            )
+            + "</p>"
+            + _table(runAnalysis.cameraSummary(run, clusters, modelErrors))
+            + "".join(cameras),
+            caption["focalPlane"],
             "cameras",
         )
     )
@@ -1227,7 +1262,7 @@ def agRoutes(cache: AgRunCache, mount: str = "/run/ag") -> list[tuple[str, type]
     """Return the Tornado routes of the AG page: the page, its live status, and each camera's figure.
 
     The page is served at ``mount``, and asks for ``status`` beside it (``/run/status`` for
-    ``/run/ag``) and for ``<mount>/camera/AG<n>.png``. A figure is drawn on the request, off the
+    ``/run/ag``), for ``<mount>/focalPlane.png`` and for ``<mount>/camera/AG<n>.png``. A figure is drawn on the request, off the
     event loop, and kept until the page is made again.
     """
     from concurrent.futures import ThreadPoolExecutor
@@ -1249,13 +1284,14 @@ def agRoutes(cache: AgRunCache, mount: str = "/run/ag") -> list[tuple[str, type]
             self.write(cache.status())
 
     class CameraHandler(RequestHandler):
-        async def get(self, camera: str) -> None:
+        async def get(self, camera: str | None = None) -> None:
             report = cache.report
-            data = (
-                None
-                if report is None
-                else await IOLoop.current().run_in_executor(pool, report.cameraPng, int(camera))
-            )
+            if report is None:
+                data = None
+            elif camera is None:
+                data = await IOLoop.current().run_in_executor(pool, report.focalPlanePng)
+            else:
+                data = await IOLoop.current().run_in_executor(pool, report.cameraPng, int(camera))
             if data is None:
                 self.set_status(404)
                 return
@@ -1267,4 +1303,5 @@ def agRoutes(cache: AgRunCache, mount: str = "/run/ag") -> list[tuple[str, type]
         (re.escape(mount), PageHandler),
         (re.escape(mount.rsplit("/", 1)[0]) + "/status", StatusHandler),
         (re.escape(mount) + r"/camera/AG([1-6])\.png", CameraHandler),
+        (re.escape(mount) + r"/focalPlane\.png", CameraHandler),
     ]

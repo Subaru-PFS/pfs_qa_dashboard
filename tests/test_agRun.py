@@ -350,6 +350,7 @@ def testPageShowsTheRunAsDrpQaReportsIt():
     assert page.count("<a href='/visit/153000'>") == 6 + 1  # size and jitter on three axes, and the focus
     for camera in range(1, 7):
         assert f"src='/run/ag/camera/AG{camera}.png'" in page
+    assert "src='/run/ag/focalPlane.png'" in page
     assert "id='conditions'" in page and tileValue(page, "seeing") == 0.7
     # The run report's block: the headline numbers and the way to the page.
     assert "<a href='/run/ag'>" in report.summary and "id='ag'" in report.summary
@@ -389,7 +390,8 @@ def testACameraNotInUseIsNamedAndNotDrawn():
 def testAPageWrittenAsAFileHoldsItsFigures():
     report = buildAgReport(agRunTables(nights=1), runUrl="run31.html", agUrl="run31-ag.html", embed=True)
 
-    assert report.html.count("src='data:image/png;base64,") == 6
+    # The six detectors on the PFI, and each of the six cameras.
+    assert report.html.count("src='data:image/png;base64,") == 7
     assert 'href="run31.html"' in report.html
     assert "<a href='run31-ag.html'>" in report.summary
     # Negative control: served, the page asks the server for them.
@@ -436,6 +438,7 @@ def testRoutesServeThePageItsStatusAndTheFigures():
     # The page's live script asks for ``status`` beside it.
     status = json.loads(_fetch(application, "/run/status").body)
     assert status["built"] == 1 and status["error"] is None
+    assert _fetch(application, "/run/ag/focalPlane.png").body[:4] == b"\x89PNG"
     figure = _fetch(application, "/run/ag/camera/AG4.png")
     assert figure.headers["Content-Type"] == "image/png" and figure.body[:4] == b"\x89PNG"
     # Negative control: a camera not in use, and one that does not exist, have none.
