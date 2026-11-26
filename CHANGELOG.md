@@ -17,7 +17,7 @@ or the Python API.
   and the analysis's flags come first; then the camera states hour by hour, every science visit's guide error
   on ΔRA, ΔDec and ΔInR (each visit a point linked to its `/visit/<n>` page), focus, acquisition, each night's
   seeing and transparency from qadb, and a section per camera (AG1/3/5 then AG2/4/6) with drp_qa's own figure
-  (`/run/ag/camera/AG<n>.png`). Every section has drp_qa's caption of what it shows. Needs the opdb
+  (`/run/ag/camera/AG<n>.png`). Every section has drp_qa's caption of what it shows, and every chart a legend. Needs the opdb
   (`--opdb-host`) or a snapshot made with it, and drp_qa 0.19.0.
 - **Auto-guiding on the run report** (INSTRM-3073): `/run` carries a block of the same — the headline numbers
   and the faults — that links to the AG report.

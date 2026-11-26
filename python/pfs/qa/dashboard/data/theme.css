@@ -270,6 +270,11 @@
   .legend .key.s2 { background: var(--series-2); }
   .legend .key.few { background: none; box-shadow: inset 0 0 0 1px var(--fg-3); }
   .legend .key.dot { width: 9px; height: 9px; border-radius: 50%; }
+  .legend .key.every { background: var(--fg-2); opacity: 0.7; }
+  .legend .key.fewer { background: var(--fail-fill); }
+  .legend .key.off { width: 0; height: 0; border-radius: 0; background: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 8px solid var(--fg-2); }
+  .legend .key.medianline { height: 0; border-top: 1px dashed var(--fg-2); background: none; }
+  .legend .key.iqr { width: 5px; height: 14px; border-radius: 3px; background: var(--series-1); opacity: 0.35; }
   .legend .key.limit { height: 0; border-top: 2px dashed var(--fail-fill); background: none; }
   ul.flags { list-style: none; padding-left: 0; gap: 8px; }
   ul.flags li { padding: 1px 0 1px 12px; border-left: 3px solid var(--rule); color: var(--fg-2); max-width: 110ch; }

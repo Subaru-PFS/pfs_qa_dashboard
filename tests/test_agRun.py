@@ -361,6 +361,19 @@ def testPageShowsTheRunAsDrpQaReportsIt():
     assert "id='conditions'" not in plain.html and "seeing" not in tileNames(plain.summary)
 
 
+def testEveryChartOfPointsHasALegend():
+    """The marks a chart draws are named beside it: the visits' two kinds, the median line, the limit."""
+    html = buildAgReport(agRunTables()).html
+    guiding = html[html.index("id='guiding'") : html.index("id='focus'")]
+    focus = html[html.index("id='focus'") : html.index("id='acquisition'")]
+
+    for key in ("key dot every", "key dot fewer", "key medianline"):
+        assert key in guiding
+    assert "key dot every" in focus and "key dot fewer" in focus
+    # Negative control: the focus charts draw no median line, and have no key for one.
+    assert "key medianline" not in focus
+
+
 def testACameraNotInUseIsNamedAndNotDrawn():
     report = buildAgReport(agRunTables(dead=(1,)))
 

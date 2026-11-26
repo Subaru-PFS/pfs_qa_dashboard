@@ -76,9 +76,8 @@ CONDITIONS = ("seeing", "transparency")
 #: The size of an AG pixel: microns, and arcsec on the sky.
 _PIXEL_UM, _PIXEL_ARCSEC = 13.0, 0.14
 
-#: Dots per inch of a camera's figure (drp_qa's `plotCamera`, 14.5 x 6.2 in), and its size in pixels.
+#: Dots per inch of a camera's figure (drp_qa's `plotCamera`); `_cameraPx` gives its size in pixels.
 _DPI = 110
-_CAMERA_PX = (1595, 682)
 
 #: Geometry of the charts drawn against the run's nights (an SVG viewBox, scaled to the space it is given):
 #: the width of a chart across the page and of one of a pair side by side, and the margins.
@@ -451,6 +450,21 @@ _STATE_LEGEND = (
 )
 
 
+#: What the points of a per-visit chart are, for its legend.
+_VISIT_KEYS = (
+    "<span><i class='key dot every'></i>science visit, stars matched on every camera in use</span>"
+    "<span><i class='key dot fewer'></i>on fewer cameras</span>"
+)
+_OFF_SCALE_KEY = "<span><i class='key off'></i>beyond the scale, marked at its edge</span>"
+
+
+def _cameraPx() -> tuple[int, int]:
+    """Return the size (pixels) of a camera's figure as `_renderCamera` draws it."""
+    from pfs.drp.qa.guiders.runPlotting import CAMERA_FIGURE_IN
+
+    return round(CAMERA_FIGURE_IN[0] * _DPI), round(CAMERA_FIGURE_IN[1] * _DPI)
+
+
 def _guidingCharts(run: Any, jitter: pd.DataFrame) -> str:
     """Return each science visit's guide error: per axis, its size and its jitter against the nights."""
     from pfs.drp.qa.guiders.runAnalysis import nightPosition
@@ -486,7 +500,10 @@ def _guidingCharts(run: Any, jitter: pd.DataFrame) -> str:
             body += _points(strip, base.assign(y=values.to_numpy()), low, high, "″")
             title = f"{name}, {what} <span class='sub'>median {_number(median, 3)}″</span>"
             panels.append(_panel(title, strip.svg(body, f"{name}, {what}, per science visit")))
-    return f"<div class='pair'>{''.join(panels)}</div>"
+    legend = (
+        f"<div class='legend'>{_VISIT_KEYS}<span><i class='key medianline'></i>the run's median</span></div>"
+    )
+    return f"{legend}<div class='pair'>{''.join(panels)}</div>"
 
 
 def _problemsChart(run: Any) -> str:
@@ -558,9 +575,12 @@ def _focusCharts(run: Any) -> str:
         }
     )
     body += _points(strip, points, low, high, " µm")
-    out = _panel(
-        "Guider focus error dZ <span class='sub'>median of the cameras in use, per science visit</span>",
-        strip.svg(body, "Guider focus error per science visit"),
+    out = (
+        _panel(
+            "Guider focus error dZ <span class='sub'>median of the cameras in use, per science visit</span>",
+            strip.svg(body, "Guider focus error per science visit"),
+        )
+        + f"<div class='legend'>{_VISIT_KEYS}{_OFF_SCALE_KEY}</div>"
     )
 
     focus = run.focus[run.focus.night.isin(nights) & (run.focus.m2_off3 > 0)].sort_values("created_at")
@@ -616,7 +636,7 @@ def _acquisitionChart(run: Any) -> str:
     legend = (
         "<div class='legend'><span><i class='key s1 dot'></i>ΔRA on the sky</span>"
         "<span><i class='key s2 dot'></i>ΔDec</span>"
-        f"<span><i class='key limit'></i>max_correction, ±{limit:g}″</span></div>"
+        f"<span><i class='key limit'></i>max_correction, ±{limit:g}″</span>{_OFF_SCALE_KEY}</div>"
     )
     return (
         _panel(
@@ -669,6 +689,11 @@ def _conditionsCharts(run: Any, tables: Mapping[str, pd.DataFrame]) -> str:
                 f"<circle class='pt night' cx='{x}' cy='{strip.y(row.median, 0, high)}' r='3.4'>{tip}</circle>"
             )
         out += _panel(title, strip.svg(body, f"{name} per night"))
+    if out:
+        out += (
+            "<div class='legend'><span><i class='key dot s1'></i>the night's median</span>"
+            "<span><i class='key iqr'></i>the middle half of its AG exposures</span></div>"
+        )
     return out
 
 
@@ -1000,6 +1025,7 @@ def buildAgReport(
         )
 
     cameras = []
+    cameraPx = _cameraPx()
     for cid in CAMERA_ORDER:
         own = [flag for flag in flags if flag.agc_camera_id == cid]
         name = f"AG{cid + 1}"
@@ -1014,7 +1040,7 @@ def buildAgReport(
             src = f"{agUrl}/camera/{name}.png"
         cameras.append(
             f"<h3 id='{name}'>{name}</h3>{flagList(own)}"
-            f"<a class='camera' href='{src}'><img loading='lazy' width='{_CAMERA_PX[0]}' height='{_CAMERA_PX[1]}' "
+            f"<a class='camera' href='{src}'><img loading='lazy' width='{cameraPx[0]}' height='{cameraPx[1]}' "
             f"alt='{name} over the run' src='{src}'></a>"
         )
     populations = (
