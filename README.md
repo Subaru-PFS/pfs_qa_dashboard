@@ -1,8 +1,8 @@
 # pfs_qa_dashboard
 
 The PFS image QA in a browser: three stand-alone pages giving every visit of a collection a verdict — what is
-being observed now, the whole run, and one visit in detail. Served live during a run from qadb (with the opdb's
-visits), or offline from a snapshot, or written once as files. It reads what drp_qa's QA tasks stored and **judges
+being observed now, the whole run, and one visit in detail — and a fourth on the run's auto-guiding. Served live
+during a run from qadb (with the opdb's visits), or offline from a snapshot, or written once as files. It reads what drp_qa's QA tasks stored and **judges
 nothing**: every verdict and reason is an image's row of qadb's `qa_gate`, which drp_qa's gate wrote (read back
 with `pfs.drp.qa.qadb.reader`). An image with no gate row is UNKNOWN.
 
@@ -36,6 +36,28 @@ three share one stylesheet (`data/theme.css`). A visit takes the worst verdict a
   the drift and scatter views drawn from the stored per-line data, in detector order, linked from the
   Detectors table and enlarged on click.
 
+- **The AG report** (`/run/ag`) — how the guide cameras and the guide loop did over the run: drp_qa's
+  end-of-run AG report (`drpQa.py agReport`, `pfs.drp.qa.guiders.runAnalysis`) as a page. It opens with the
+  run's key numbers (the cameras in use; the guide error on the sky, the RMS of a visit's guide offsets with the
+  shutters open, and its frame-to-frame jitter; the share of the designed guide stars on the cameras in use that were matched,
+  per visit; how far the matched stars were from where the guider expected them; the guide offsets rejected or
+  never written; the seeing) and what the analysis flags,
+  then the camera states hour by hour (matched, no detections, detections but no match, disabled), every
+  science visit's guide error, focus, acquisition, each night's seeing and transparency from qadb, and a
+  section per camera, AG1/3/5 then AG2/4/6. Each section carries drp_qa's caption of what it shows. The
+  run-wide charts are drawn inline, each visit a point that links to its `/visit/<n>` page; the figures of the
+  cameras (the six detectors on the PFI, then one per camera) are drp_qa's own, drawn as PNGs when they are
+  asked for (`/run/ag/focalPlane.png`, `/run/ag/camera/AG<n>.png`). The run report carries a
+  short **Auto-guiding** block of the same — the headline numbers and the faults — that links to it, and the
+  night page a row of the same tiles for that night's AG exposures alone (`agRun.buildNightTiles`). The dashboard measures nothing here: the numbers, flags and captions are
+  drp_qa's, read from the opdb's AG tables, so the page needs the opdb (`--opdb-host`) or a snapshot made
+  with it. Offsets are in arcsec with an axis in AG pixels beside them (1 AG pixel = 13 µm = 0.14″).
+
+**A night** runs from 14:00 HST to 14:00 HST the next day and is named by its evening's date (HST). 14:00 HST is
+00:00 UTC, when the date in the raw files' names changes, so a night's frames all carry one UTC date, and the darks
+taken through the day after a night stay on its page. The hour is drp_qa's (`comparison.runs.NIGHT_START`), which
+its own night-by-night work uses too.
+
 Every visit on the run report and both clocks links to its `/visit/<n>` page (the every-visit table, the
 not-passing and no-result lists, and each heatmap square).
 
@@ -55,8 +77,9 @@ python bin/qaDashboard.py serve --collection qaActor/reductions --first-visit <f
     --qadb-host 127.0.0.1 --qadb-port 5436 --opdb-host 127.0.0.1 --opdb-port 5432 [--refresh 30]
 ```
 
-`serve` answers `/` with the night page, `/run` with the run report, `/visit/<n>` with a visit's page, and
-`/status` with what the live pages poll. It listens on `localhost:5006`; add `--address 0.0.0.0` to serve the
+`serve` answers `/` with the night page, `/run` with the run report, `/run/ag` with its AG report,
+`/visit/<n>` with a visit's page, and `/status` (`/run/status` for the AG report) with what the live pages
+poll. It listens on `localhost:5006`; add `--address 0.0.0.0` to serve the
 network.
 
 Every `--refresh` seconds, on a thread of its own, it reads qadb for the images loaded or judged since the last
@@ -65,6 +88,15 @@ opdb, the visits taken since — so a new exposure makes the pages again and the
 is not being reduced. The whole opdb range is re-read on a qadb change, so judged visits stay current. The
 databases are read off the server's loop, and a browser is answered at once with the last page made, so a database
 that fails or hangs does not hold the page up.
+
+With the opdb, the AG report is read on a thread of its own, at its own pace: the opdb's AG tables of the run
+(the observing period the latest visit is in, from the first visit's night on) once as the server starts —
+about 20 s for a run of 60,000 AG exposures — and from then on only the night under way, every 2 minutes
+(`agRun.AG_REFRESH`), which is what the night page's AG tiles follow; the AG report itself, which is about the
+whole run and takes seconds to make, is made again at most every 10 minutes (`agRun.AG_REBUILD`). A night that
+has ended is read a last time and kept. qadb's seeing and transparency are read
+the same way, for the visits of each period as it is read, and nothing is read once the run has ended. A slow or failing opdb read leaves
+the AG page as it was (or saying it has not been read yet) and never holds up the other pages.
 
 To show the detector-map residual plots on the per-visit page, add `--butler <repo>` (e.g. `/work/datastore`),
 pointing at a Butler on the same host that holds the collection's `dmLineResidualData` — the per-line data the
@@ -83,7 +115,8 @@ server may then need restarting.
 ## Offline: a file, or a snapshot
 
 ```bash
-# Write the run report as one stand-alone page (<name>.html, default index.html), with visits.csv and images.csv
+# Write the run report as one stand-alone page (<name>.html, default index.html), with visits.csv and images.csv,
+# and its AG report beside it (<name>-ag.html)
 python bin/qaDashboard.py report --collection qaActor/reductions --first-visit <first visit> \
     --opdb-host 127.0.0.1 --opdb-port 5432 --title "Run31 visit verdicts" --name run31 --out <dir>
 
@@ -93,7 +126,10 @@ python bin/qaDashboard.py serve  --snapshot <dir>
 python bin/qaDashboard.py report --snapshot <dir> --out <dir>
 ```
 
-`report` writes the run report alone and fetches nothing (no live script). A snapshot keeps the gate's verdicts
+`report` writes the run report and, with the opdb or a snapshot that holds the AG tables, the AG report beside it
+(`<name>-ag.html`, its cameras' figures inside it); both fetch nothing (no live script). A snapshot made with the
+opdb keeps the run's AG tables (`agRun-*.parquet`, about 65 MB for a run of 60,000 AG exposures) and qadb's
+seeing and transparency, so `serve --snapshot` has the AG page too. A snapshot keeps the gate's verdicts
 (`qaGate.parquet`); one written before the dashboard read the gate is refused — write it again. A run judged after
 the fact is loaded into a qadb first (drp_qa's `bin.src/loadQadb.py`; a local copy will do). The report is made
 for any collection in qadb: the live one (`qaActor/reductions`) or a redone run's.
@@ -112,8 +148,8 @@ python bin/qaDashboard.py serve --snapshot <dir> --debug
 
 ## Running it
 
-The dashboard needs drp_qa 0.5.0 or later (`pfs.drp.qa`, with `pfs.drp.qa.qadb.reader.readGate` and the gate's
-`metrics.registry`), for a qadb at spt_qa_database 0.6.0, and pfs_utils importable: set up in the LSST/PFS stack,
+The dashboard needs drp_qa 0.19.0 or later (`pfs.drp.qa`, with `pfs.drp.qa.qadb.reader.readGate`, the gate's
+`metrics.registry`, and the AG run analysis's `runSummary` and captions), for a qadb at spt_qa_database 0.6.0, and pfs_utils importable: set up in the LSST/PFS stack,
 or their checkouts' `python/` on `PYTHONPATH`. Stack-free, [uv](https://docs.astral.sh/uv/) makes `.venv` from
 `pyproject.toml` on its own Python, apart from the system's:
 

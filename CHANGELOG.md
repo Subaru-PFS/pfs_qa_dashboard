@@ -8,6 +8,31 @@ or the Python API.
 
 ## [Unreleased]
 
+### Added
+
+- **The AG report, `/run/ag`** (INSTRM-3073): drp_qa's end-of-run AG report as a page. Needs the opdb
+  (`--opdb-host`) or a snapshot made with it, and drp_qa 0.19.0.
+  - Key numbers and flags first.
+  - Camera states, each science visit's guide error (a point links to its `/visit/<n>`), focus, acquisition,
+    and each night's seeing and transparency from qadb.
+  - The six detectors on the PFI (`/run/ag/focalPlane.png`) and a figure per camera
+    (`/run/ag/camera/AG<n>.png`), both drp_qa's.
+  - drp_qa's caption on every section, and a legend on every chart.
+- **Auto-guiding on the run report** (INSTRM-3073): `/run` carries a block of the headline numbers and the
+  faults, linking to the AG report.
+- **Auto-guiding on the night page** (INSTRM-3073): `/` and `/night/<date>` carry the same tiles for that
+  night alone.
+- `report` writes `<name>-ag.html` beside the run report; `snapshot` keeps the AG tables (`agRun-*.parquet`)
+  and qadb's seeing and transparency.
+
+### Changed
+
+- **A night begins at 14:00 HST (00:00 UTC), not noon** (INSTRM-3073): on every page and both clocks; a night
+  is still named by its HST evening's date. Needs drp_qa 0.19.0.
+- The live server reads the opdb's AG tables once as it starts (about 20 s for a full run), then only the
+  night under way every 2 minutes, on a thread of its own. The AG report is made again at most every 10
+  minutes.
+
 ## [0.18.0] - 2026-11-23
 
 ### Added

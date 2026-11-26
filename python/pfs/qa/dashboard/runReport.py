@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 
 from pfs.drp.qa.comparison.classify import shakaLabel, shakaOf
+from pfs.drp.qa.comparison.runs import NIGHT_START
 from pfs.drp.qa.metrics.registry import CHECKS, FIXED, specFor
 from pfs.qa.dashboard.live import GATE, HST, LAST_VISIT
 
@@ -646,7 +647,8 @@ def visitTable(
     when = pd.to_datetime(visits["time"])
     visits["time"] = when
     visits["hst"] = when.dt.strftime("%Y-%m-%d %H:%M").fillna("")
-    visits["night"] = (when - pd.Timedelta(hours=12)).dt.strftime("%Y-%m-%d").fillna("")
+    # A night begins at drp_qa's NIGHT_START (14:00 HST, 00:00 UTC) and is named by its evening's date.
+    visits["night"] = (when - pd.Timedelta(hours=NIGHT_START)).dt.strftime("%Y-%m-%d").fillna("")
     labels = []
     for kind, lamp, sequence in zip(visits["kind"], visits["lamp"], visits["sequenceType"], strict=True):
         if kind == "arc" and lamp:
@@ -693,7 +695,8 @@ def _clockControls() -> str:
 @functools.cache
 def _clockScript() -> str:
     """Return the shared time-map script (``data/clockScript.js``), for ``{{CLOCK_SCRIPT}}`` inside a page's script."""
-    return (_DATA / "clockScript.js").read_text()
+    # The clock counts from the hour a night begins, which the script takes from drp_qa's NIGHT_START.
+    return (_DATA / "clockScript.js").read_text().replace("{{NIGHT_START}}", str(NIGHT_START))
 
 
 @functools.cache
@@ -1135,6 +1138,7 @@ def renderPage(
     calibDriftSm: str = "",
     calibDriftArm: str = "",
     calibSet: str = "",
+    agSummary: str = "",
 ) -> str:
     """Return the report as one HTML document, with its styles, charts and script inline.
 
@@ -1151,6 +1155,8 @@ def renderPage(
         (`sourceText`); ``{date}`` in it becomes the date of ``now``.
     now : `datetime.datetime`, optional
         When the page was made; the current time (HST) by default.
+    agSummary : `str`
+        The run's auto-guiding block (`pfs.qa.dashboard.agRun.AgReport.summary`), as HTML; none when empty.
     """
     # The visits judged, those taken with no QA result yet, and those with no QA method (darks, biases, ...).
     everyVisit = visits
@@ -1295,6 +1301,7 @@ def renderPage(
         "{{CLOCK_SCRIPT}}": _clockScript(),
         "{{SUMMARY}}": "\n".join(summary),
         "{{CALIB_SET}}": calibSet,
+        "{{AG_SUMMARY}}": agSummary,
         "{{CALIB_DRIFT_SM}}": calibDriftSm,
         "{{CALIB_DRIFT_ARM}}": calibDriftArm,
         "{{OFFSETS}}": offsetsHtml,
@@ -1347,6 +1354,7 @@ def buildReport(
     normalValues: pd.DataFrame | None = None,
     readListing: Callable[[Any, Any], pd.DataFrame] | None = None,
     readNormalValues: Callable[[], pd.DataFrame] | None = None,
+    agSummary: str | Callable[[], str] = "",
 ) -> Report:
     """Return the report of what a qadb read holds: its gate verdicts, by image and visit, and the page.
 
@@ -1372,6 +1380,9 @@ def buildReport(
         set section stays current (a later rebuild set, newly-accepted normal values) without a
         restart; ``start``/``end`` span the run of ``info``'s visit times. When given they supersede
         the ``listing``/``normalValues`` frames, which stay for one-shot callers (a report, the tests).
+    agSummary : `str` or callable, optional
+        The run's auto-guiding block as HTML (`pfs.qa.dashboard.agRun.AgReport.summary`), or what
+        returns it: a live serve passes its AG cache's, read each build. Empty omits the block.
     """
     offsets = _calibrationOffsets(tables)  # shared by measure (science) and calibrationDrift (calibs)
     images = measure(tables, offsets=offsets)
@@ -1395,6 +1406,7 @@ def buildReport(
         calibDriftSm=calibDriftSection(drift, activeNight=latest, by="spectrograph", highlight="latest"),
         calibDriftArm=calibDriftSection(drift, activeNight=latest, by="arm", highlight="latest"),
         calibSet=_calibSetSection(listing, tables, normalValues),
+        agSummary=agSummary() if callable(agSummary) else agSummary,
     )
     return Report(images, visits, page)
 

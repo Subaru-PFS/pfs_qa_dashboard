@@ -245,8 +245,9 @@ def testAVisitTakesItsWorstDetectorAndTheEveningsDate():
         4: "unclassified (dot roach)",
     }
     assert visits.loc[3, "why"] == "n1: calib NeI: |offset Y|=1.5px >= warn limit 1px"
-    # A night is the HST date of its evening: 02:00 belongs to the evening before.
-    assert visits["night"].to_dict() == {1: "2026-11-03", 2: "2026-11-04", 3: "2026-11-04", 4: ""}
+    # A night is the HST date of its evening, from 14:00 (00:00 UTC): 02:00 belongs to the evening before, and
+    # so does a dark at 13:00 the next day.
+    assert visits["night"].to_dict() == {1: "2026-11-03", 2: "2026-11-03", 3: "2026-11-04", 4: ""}
     # Negative control: the calendar date of the exposure is not the night.
     assert visits.loc[1, "hst"][:10] != visits.loc[1, "night"]
 
@@ -566,6 +567,17 @@ def testReportNamesThePage(tmp_path):
     assert not (out / "index.html").exists()
 
 
+def testTheClockCountsFromTheStartOfTheNight():
+    """The pages' clock takes the hour a night begins from drp_qa, so it and the nights' dates agree."""
+    from pfs.drp.qa.comparison.runs import NIGHT_START
+
+    page = buildReport(_tables((1, "r1", "science", _science()))).html
+
+    assert f"const NIGHT_START = {NIGHT_START};" in page and "{{NIGHT_START}}" not in page
+    # Negative control: the script itself holds no hour of its own.
+    assert "{{NIGHT_START}}" in (Path(runReport.__file__).parent / "data" / "clockScript.js").read_text()
+
+
 def _fetch(application, path):
     """Return the response of ``application`` to a GET of ``path``, served on a port of its own."""
     import asyncio
@@ -733,6 +745,8 @@ def testSnapshotKeepsWhatTheReportShowsOfEachVisit(tmp_path, monkeypatch):
         sys.modules, "pfs.utils.database.opdb", types.SimpleNamespace(OpDB=lambda **k: Opdb())
     )
     cli = _cli()
+    # The AG tables are another read of the opdb (tests/test_agRun.py); this is about the visits.
+    monkeypatch.setattr(cli, "readAgTables", lambda *args: None)
     cli.main(["snapshot", "--collection", "c", "--opdb-host", "127.0.0.1", "--out", str(tmp_path / "snap")])
     assert asked == [{"first": 1, "last": 1}]  # one query, with the visit range bound
 

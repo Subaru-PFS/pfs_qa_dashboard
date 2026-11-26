@@ -298,6 +298,7 @@ def renderNight(
     transparency: pd.DataFrame | None = None,
     seeing: pd.DataFrame | None = None,
     nights: list[str] | None = None,
+    agTiles: str = "",
 ) -> str:
     """Return the night page as one stand-alone HTML document.
 
@@ -315,6 +316,8 @@ def renderNight(
     nights : `list` of `str`, optional
         Every night (HST evening date) of the run, for the earlier/later navigation and the night dropdown;
         the latest links to ``/`` and the rest to ``/night/<date>``. No navigation when there is one night or none.
+    agTiles : `str`
+        The night's auto-guiding tiles (`pfs.qa.dashboard.agRun.buildNightTiles`), as HTML; none when empty.
     """
     now = datetime.now(HST) if now is None else now
     judged = visits[~visits["status"].isin(_PENDING)]
@@ -356,6 +359,7 @@ def renderNight(
         "{{CLOCK_CONTROLS}}": _clockControls(),
         "{{CLOCK_SCRIPT}}": _clockScript(),
         "{{TILES}}": tiles,
+        "{{AG_TILES}}": agTiles,
         "{{LEAD}}": lead,
         "{{CONDITIONS_MODAL}}": condModal,
         "{{FEED}}": _feedRows(visits),
@@ -388,6 +392,7 @@ def buildNightReport(
     now: datetime | None = None,
     readTransparency: Callable[[int, int], pd.DataFrame] | None = None,
     readSeeing: Callable[[int, int], pd.DataFrame] | None = None,
+    agTiles: Callable[[str], str] | None = None,
 ) -> Report:
     """Return the night page of what a qadb read holds, scoped to one night (the latest by default).
 
@@ -407,6 +412,10 @@ def buildNightReport(
         ``read(first, last)`` returning a visit range's AG transparency / seeing (`agConditions.readTransparency`
         / `readSeeing` over qadb). Read for the night's visits to build the Conditions tile and modal; a read
         that fails is logged and that metric dropped, so it never blanks the page. None omits the metric.
+    agTiles : callable, optional
+        ``agTiles(night)`` returns the night's auto-guiding tiles as HTML
+        (`pfs.qa.dashboard.agRun.AgRunCache.nightTiles`), shown under the page's own; it reads nothing.
+        None, or an empty answer, leaves them out.
     """
     offsets = _calibrationOffsets(tables)  # shared by measure (science) and calibrationDrift (calibs)
     allImages = measure(tables, offsets=offsets)
@@ -443,5 +452,6 @@ def buildNightReport(
         transparency=read(readTransparency, "transparency"),
         seeing=read(readSeeing, "seeing"),
         nights=nights,
+        agTiles=agTiles(night) if agTiles is not None and night else "",
     )
     return Report(images, visits, page)

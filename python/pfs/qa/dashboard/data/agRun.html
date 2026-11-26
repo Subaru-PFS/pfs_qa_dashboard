@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auto-guiding · {{RUN_TITLE}}</title>
+<style>
+{{THEME}}
+  .agnav { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.9rem; }
+  .agnav a { color: var(--series-1); text-decoration: none; }
+  .agnav a:hover { text-decoration: underline; }
+  .agnav .sep { color: var(--rule); }
+  h3 { font-family: var(--display); font-weight: 600; font-size: 1.15rem; margin: 12px 0 0; }
+  a.camera { display: block; overflow-x: auto; }
+  a.camera img { display: block; box-sizing: border-box; width: 100%; min-width: 760px; height: auto; border: 1px solid var(--rule); border-radius: 6px; background: #fff; }
+</style>
+</head>
+<body>
+<main data-page="ag">
+  <header>
+    <h1>Auto-guiding</h1>
+    <p class="meta">{{META}}</p>
+    <nav class="agnav" aria-label="Sections">
+      <a href="{{RUN_URL}}">&lsaquo; {{RUN_TITLE}}</a><span class="sep">|</span>
+      <a href="#flags">Flags</a><a href="#states">Camera states</a><a href="#guiding">Guiding</a>
+      <a href="#focus">Focus</a><a href="#acquisition">Acquisition</a><a href="#cameras">Cameras</a>
+    </nav>
+  </header>
+{{BODY}}
+</main>
+</body>
+</html>
