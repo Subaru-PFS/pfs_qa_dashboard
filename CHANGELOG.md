@@ -29,6 +29,11 @@ or the Python API.
 
 ### Changed
 
+- **A night begins at 14:00 HST, not noon** (INSTRM-3073): the night a visit belongs to, on every page and both
+  clocks, rolls over at 14:00 HST, which is 00:00 UTC, when the date in the raw files' names changes; it is
+  still named by its HST evening's date. Frames taken between 12:00 and 14:00 HST (mostly the darks that follow
+  a night) move to the night before, and the whole-day clock runs from 14:00. The hour is drp_qa's
+  `comparison.runs.NIGHT_START`. Needs drp_qa 0.19.0.
 - The live server reads the opdb's AG tables as it starts (about 20 s for a full run), then only the night
   under way every 2 minutes, on a thread of its own: a slow opdb never holds up the other pages. The AG report
   is made again at most every 10 minutes.

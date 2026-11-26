@@ -25,16 +25,18 @@
     .filter(([cam]) => (!sel.arm || cam[0] === sel.arm) && (!sel.spec || cam[1] === sel.spec));
   // The worst keeps the list's own letters, so an all-awaiting, all-no-result or all-no-QA visit shows it.
   const worstOf = (list) => list.reduce((w, [, s]) => RANK[s] > RANK[w] ? s : w, list.length ? list[0][1] : "A");
-  // Minutes from noon (HST) of the night's date to the visit's start: every night shares that clock.
+  // The hour (HST) at which a night begins: 14:00, 00:00 UTC (drp_qa's NIGHT_START, filled in by the page).
+  const NIGHT_START = {{NIGHT_START}};
+  // Minutes from the start of the night (HST) to the visit's start: every night shares that clock.
   const minutesOf = (r) => {
     if (!r[1] || !r[9]) return null;
     const [date, clock] = r[1].split(" "), [hour, minute] = clock.split(":").map(Number);
-    return (date === r[9] ? hour - 12 : hour + 12) * 60 + minute;
+    return (date === r[9] ? hour - NIGHT_START : hour + 24 - NIGHT_START) * 60 + minute;
   };
   const STARTS = DATA.map(minutesOf);
   const lasts = (i) => (+DATA[i][4] || 0) / 60;
-  // The clock's span in hours from noon (HST): the night, 18:00 to 07:00, or the whole day.
-  const NIGHT = [6, 19], DAY = [0, 24];
+  // The clock's span in hours from the start of the night: the night, 18:00 to 07:00, or the whole day.
+  const NIGHT = [18 - NIGHT_START, 31 - NIGHT_START], DAY = [0, 24];
   function renderCal() {
     const byTime = sel.layout === "time";
     const nights = new Map();
@@ -65,7 +67,7 @@
       // As many hour labels as fit the width.
       const step = Math.max(1, Math.ceil(hours * 52 / Math.max(cal.clientWidth - 120, 200)));
       const ticks = [];
-      for (let hour = firstHour; hour <= lastHour; hour += step) ticks.push(`<span style="left:${along(hour * 60)}%">${String((hour + 12) % 24).padStart(2, "0")}:00</span>`);
+      for (let hour = firstHour; hour <= lastHour; hour += step) ticks.push(`<span style="left:${along(hour * 60)}%">${String((hour + NIGHT_START) % 24).padStart(2, "0")}:00</span>`);
       axis = `<div class="night"></div><div class="axis">${ticks.join("")}</div>`;
     }
     cal.style.setProperty("--hours", hours);

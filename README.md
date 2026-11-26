@@ -52,6 +52,11 @@ three share one stylesheet (`data/theme.css`). A visit takes the worst verdict a
   drp_qa's, read from the opdb's AG tables, so the page needs the opdb (`--opdb-host`) or a snapshot made
   with it. Offsets are in arcsec with an axis in AG pixels beside them (1 AG pixel = 13 µm = 0.14″).
 
+**A night** runs from 14:00 HST to 14:00 HST the next day and is named by its evening's date (HST). 14:00 HST is
+00:00 UTC, when the date in the raw files' names changes, so a night's frames all carry one UTC date, and the darks
+taken through the day after a night stay on its page. The hour is drp_qa's (`comparison.runs.NIGHT_START`), which
+its own night-by-night work uses too.
+
 Every visit on the run report and both clocks links to its `/visit/<n>` page (the every-visit table, the
 not-passing and no-result lists, and each heatmap square).
 

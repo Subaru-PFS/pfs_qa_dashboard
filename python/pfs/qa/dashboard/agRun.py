@@ -34,6 +34,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from pfs.drp.qa.comparison.runs import NIGHT_START
 from pfs.qa.dashboard.live import HST
 from pfs.qa.dashboard.runReport import _DATA, ReportCache, _fontFaces, _theme
 
@@ -86,8 +87,9 @@ _LEFT, _RIGHT, _TOP, _BOTTOM = 54, 46, 16, 22
 
 
 def nightStart(when: Any) -> pd.Timestamp:
-    """Return the noon (HST) that begins the night ``when`` is in: a night runs from noon to noon."""
-    return (pd.Timestamp(when) - pd.Timedelta(hours=12)).normalize() + pd.Timedelta(hours=12)
+    """Return the time (HST) the night ``when`` is in began: 14:00, drp_qa's ``NIGHT_START`` (00:00 UTC)."""
+    start = pd.Timedelta(hours=NIGHT_START)
+    return (pd.Timestamp(when) - start).normalize() + start
 
 
 def snapshotTables(tables: Mapping[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
@@ -124,7 +126,7 @@ def _combine(parts: list[Mapping[str, pd.DataFrame]]) -> dict[str, pd.DataFrame]
 class AgRunStore:
     """The AG tables of a run, read from the opdb a night at a time once the run so far has been read.
 
-    The first `refresh` reads the run up to the noon before now in one go, and the night under way
+    The first `refresh` reads the run up to the start of the night under way in one go, and that night
     beside it. Each later one reads only that night again; a night that has ended is read a last
     time and kept. Once the run's end has passed nothing more is read. qadb's conditions are read
     with each period, for its visits, so a value qadb gains for a night after that night was kept
@@ -630,7 +632,7 @@ def _nightly(frame: pd.DataFrame | None) -> pd.DataFrame:
     columns = ["night", "q25", "median", "q75", "n"]
     if frame is None or frame.empty:
         return pd.DataFrame(columns=columns)
-    night = (pd.to_datetime(frame["time"]) - pd.Timedelta(hours=12)).dt.normalize()
+    night = (pd.to_datetime(frame["time"]) - pd.Timedelta(hours=NIGHT_START)).dt.normalize()
     grouped = frame.groupby(night)["value"]
     out = grouped.quantile([0.25, 0.5, 0.75]).unstack()
     out.columns = ["q25", "median", "q75"]

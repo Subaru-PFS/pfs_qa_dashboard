@@ -19,6 +19,7 @@ from typing import Any
 
 import pandas as pd
 
+from pfs.drp.qa.comparison.runs import NIGHT_START
 from pfs.qa.dashboard.live import HST
 from pfs.qa.dashboard.runReport import (
     ARMS,
@@ -465,7 +466,7 @@ def buildVisitPage(
         )
         night = ""
         if infoRow is not None and not pd.isna(infoRow.get("time")):
-            night = (pd.to_datetime(infoRow["time"]) - pd.Timedelta(hours=12)).strftime("%Y-%m-%d")
+            night = (pd.to_datetime(infoRow["time"]) - pd.Timedelta(hours=NIGHT_START)).strftime("%Y-%m-%d")
         body = (
             _nav(int(visit), night)
             + "\n"

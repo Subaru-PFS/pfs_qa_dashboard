@@ -23,9 +23,9 @@ from pfs.qa.dashboard.agRun import (
 from pfs.qa.dashboard.qadbSource import readSnapshot, writeSnapshot
 from pfs.qa.dashboard.runReport import buildReport
 
-#: The first night of the synthetic run (its evening's date), and the noon that begins it.
+#: The first night of the synthetic run (its evening's date), and when it begins: 14:00 HST, 00:00 UTC.
 NIGHT = pd.Timestamp("2026-11-03")
-START = NIGHT + pd.Timedelta(hours=12)
+START = NIGHT + pd.Timedelta(hours=14)
 
 
 def agRunTables(nights=2, visits=3, exposures=30, dead=(), seed=3):
@@ -176,12 +176,15 @@ class Opdb:
         }
 
 
-def testNightStartIsTheNoonBefore():
-    assert nightStart("2026-11-04 02:00") == START
+def testANightBeginsAtMidnightUtc():
+    """A night begins at 14:00 HST, which is 00:00 UTC, and holds the darks taken the day after it."""
+    assert (START + pd.Timedelta(hours=10)) == pd.Timestamp("2026-11-04 00:00")  # HST is UTC - 10 h
     assert nightStart("2026-11-03 20:00") == START
-    assert nightStart("2026-11-03 12:00") == START
-    # Negative control: the morning before noon belongs to the night before.
-    assert nightStart("2026-11-03 11:59") == START - pd.Timedelta(days=1)
+    assert nightStart("2026-11-04 02:00") == START
+    assert nightStart("2026-11-04 13:00") == START  # the night's darks, past noon the next day
+    assert nightStart("2026-11-03 14:00") == START
+    # Negative control: the afternoon before 14:00 belongs to the night before.
+    assert nightStart("2026-11-03 13:59") == START - pd.Timedelta(days=1)
 
 
 def testStoreReadsTheRunOnceThenOnlyTheNightUnderWay():
@@ -201,7 +204,7 @@ def testStoreReadsTheRunOnceThenOnlyTheNightUnderWay():
     assert opdb.asked == [(second, clock[0])]
     # The next afternoon: the night that ended is read to its end and kept; the new night has nothing yet.
     opdb.asked.clear()
-    clock[0] = NIGHT + pd.Timedelta(days=2, hours=13)
+    clock[0] = NIGHT + pd.Timedelta(days=2, hours=15)
     store.refresh()
     assert opdb.asked == [(second, second + pd.Timedelta(days=1)), (second + pd.Timedelta(days=1), clock[0])]
     # Once the run is over, only its end is waited for: nothing after it is read.
@@ -587,20 +590,20 @@ def testAFailureToMakeTheNightsTilesLeavesThemOut(monkeypatch):
 def testAgWindowIsTheRunTheVisitsAreIn():
     """The AG report covers the observing run of the latest visit, from the first visit's night on."""
     cli = _cli()
-    run31 = (pd.Timestamp("2026-10-30 12:00"), pd.Timestamp("2026-12-01 12:00"))
+    run31 = (pd.Timestamp("2026-10-30 14:00"), pd.Timestamp("2026-12-01 14:00"))
 
     assert cli.agWindow([pd.Timestamp("2026-10-30 21:00"), pd.Timestamp("2026-11-10 03:00")]) == run31
     # Visits from the run's pre-run period on: the pre-run is covered too, from the first visit's night.
     preRun = cli.agWindow([pd.Timestamp("2026-10-25 15:00"), pd.Timestamp("2026-11-10 03:00")])
-    assert preRun == (pd.Timestamp("2026-10-25 12:00"), run31[1])
+    assert preRun == (pd.Timestamp("2026-10-25 14:00"), run31[1])
     # A collection that reaches back over earlier runs is still this run's report, not all of them.
     assert cli.agWindow([pd.Timestamp("2026-08-30 21:00"), pd.Timestamp("2026-11-10 03:00")])[
         0
-    ] == pd.Timestamp("2026-10-21 12:00")
+    ] == pd.Timestamp("2026-10-21 14:00")
     # Outside every known period: from the first visit's night to the day after the last.
     assert cli.agWindow([pd.Timestamp("2031-03-02 21:00"), pd.Timestamp("2031-03-04 01:00")]) == (
-        pd.Timestamp("2031-03-02 12:00"),
-        pd.Timestamp("2031-03-04 12:00"),
+        pd.Timestamp("2031-03-02 14:00"),
+        pd.Timestamp("2031-03-04 14:00"),
     )
     # Negative control: with no visit there is no run to place.
     assert cli.agWindow([]) is None and cli.agWindow(None) is None
@@ -732,9 +735,9 @@ def testSnapshotKeepsTheAgTablesReadFromTheOpdb(tmp_path, monkeypatch):
     read, _ = readSnapshot(tmp_path / "snap")
     assert len(agTables(read)["exposures"]) == len(run["exposures"]) and "seeing" in agTables(read)
     # The run is read from the first visit's night, without a gap, and not beyond its end (Run 31's).
-    assert opdb.asked[0][0] == pd.Timestamp("2026-11-03 12:00")
+    assert opdb.asked[0][0] == pd.Timestamp("2026-11-03 14:00")
     assert all(later[0] == earlier[1] for earlier, later in zip(opdb.asked, opdb.asked[1:], strict=False))
-    assert opdb.asked[-1][1] <= pd.Timestamp("2026-12-01 12:00")
+    assert opdb.asked[-1][1] <= pd.Timestamp("2026-12-01 14:00")
 
     # Negative control: when the AG read fails, the snapshot is written without it.
     def fail(start, end):

@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 
 from pfs.drp.qa.comparison.classify import shakaLabel, shakaOf
+from pfs.drp.qa.comparison.runs import NIGHT_START
 from pfs.drp.qa.metrics.registry import CHECKS, FIXED, specFor
 from pfs.qa.dashboard.live import GATE, HST, LAST_VISIT
 
@@ -646,7 +647,8 @@ def visitTable(
     when = pd.to_datetime(visits["time"])
     visits["time"] = when
     visits["hst"] = when.dt.strftime("%Y-%m-%d %H:%M").fillna("")
-    visits["night"] = (when - pd.Timedelta(hours=12)).dt.strftime("%Y-%m-%d").fillna("")
+    # A night begins at drp_qa's NIGHT_START (14:00 HST, 00:00 UTC) and is named by its evening's date.
+    visits["night"] = (when - pd.Timedelta(hours=NIGHT_START)).dt.strftime("%Y-%m-%d").fillna("")
     labels = []
     for kind, lamp, sequence in zip(visits["kind"], visits["lamp"], visits["sequenceType"], strict=True):
         if kind == "arc" and lamp:
@@ -693,7 +695,8 @@ def _clockControls() -> str:
 @functools.cache
 def _clockScript() -> str:
     """Return the shared time-map script (``data/clockScript.js``), for ``{{CLOCK_SCRIPT}}`` inside a page's script."""
-    return (_DATA / "clockScript.js").read_text()
+    # The clock counts from the hour a night begins, which the script takes from drp_qa's NIGHT_START.
+    return (_DATA / "clockScript.js").read_text().replace("{{NIGHT_START}}", str(NIGHT_START))
 
 
 @functools.cache
